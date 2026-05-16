@@ -32,3 +32,11 @@ class Policy(BaseModel):
     name: str
     mode: str
     protected_entities: list[str]
+
+
+class Alert(BaseModel):
+    id: str
+    title: str
+    severity: str
+    endpoint_id: str
+    recommended_action: str

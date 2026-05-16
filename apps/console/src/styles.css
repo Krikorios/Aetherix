@@ -84,7 +84,9 @@ button {
 .hero span,
 .panelHeader span,
 .metric span,
-.endpoint p {
+.endpoint p,
+.alert small,
+.finding small {
   color: var(--muted);
 }
 
@@ -123,6 +125,7 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   gap: 18px;
+  margin-bottom: 18px;
 }
 
 .panel {
@@ -162,8 +165,18 @@ button {
 }
 
 .endpoint p,
-.alert p {
+.alert p,
+.findings p {
   margin: 0;
+}
+
+.banner {
+  margin-bottom: 18px;
+  border: 1px solid rgba(180, 80, 24, 0.38);
+  background: rgba(180, 80, 24, 0.12);
+  color: var(--warning);
+  border-radius: 8px;
+  padding: 12px 14px;
 }
 
 .endpoint span {
@@ -207,6 +220,92 @@ meter {
   cursor: pointer;
 }
 
+.alert small {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.35;
+}
+
+.loadingRow {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.loadingRow svg {
+  animation: spin 1s linear infinite;
+}
+
+.scanner {
+  display: grid;
+  gap: 16px;
+}
+
+.scanner .panelHeader svg {
+  color: var(--accent);
+}
+
+.scanner form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 148px;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.scanner textarea {
+  min-height: 108px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffef9;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.scanner form button {
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: white;
+  cursor: pointer;
+}
+
+.scanner form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.findings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.finding {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffef9;
+}
+
+.finding span {
+  overflow-wrap: anywhere;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 820px) {
   .shell {
     grid-template-columns: 1fr;
@@ -230,7 +329,9 @@ meter {
   }
 
   .metrics,
-  .grid {
+  .grid,
+  .scanner form,
+  .findings {
     grid-template-columns: 1fr;
   }
 

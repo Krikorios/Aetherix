@@ -1,9 +1,18 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import DlpScanRequest, DlpScanResponse, Endpoint, Policy
+from app.schemas import Alert, DlpScanRequest, DlpScanResponse, Endpoint, Policy
 from app.services.dlp import scan_text
 
 app = FastAPI(title="Aetherix DLP API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")
@@ -33,3 +42,30 @@ def active_policy() -> Policy:
         mode="monitor",
         protected_entities=["EMAIL_ADDRESS", "PHONE_NUMBER", "CREDIT_CARD"],
     )
+
+
+@app.get("/alerts", response_model=list[Alert])
+def alerts() -> list[Alert]:
+    return [
+        Alert(
+            id="alert-001",
+            title="Possible customer PII pasted into browser AI session",
+            severity="high",
+            endpoint_id="win-014",
+            recommended_action="Review and redact before allowing upload",
+        ),
+        Alert(
+            id="alert-002",
+            title="Legal workstation missing critical browser patch",
+            severity="medium",
+            endpoint_id="win-014",
+            recommended_action="Schedule patch deployment during next maintenance window",
+        ),
+        Alert(
+            id="alert-003",
+            title="USB write policy changed to monitor mode",
+            severity="low",
+            endpoint_id="mac-001",
+            recommended_action="Confirm exception owner and expiration date",
+        ),
+    ]
