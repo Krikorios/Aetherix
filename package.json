@@ -1,0 +1,17 @@
+{
+  "name": "aetherix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native endpoint security POC monorepo.",
+  "workspaces": [
+    "apps/console"
+  ],
+  "scripts": {
+    "dev": "npm --workspace apps/console run dev",
+    "build": "npm --workspace apps/console run build",
+    "lint": "npm --workspace apps/console run lint"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

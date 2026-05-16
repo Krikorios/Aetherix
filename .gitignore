@@ -1,0 +1,13 @@
+.DS_Store
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+.venv/
+__pycache__/
+*.pyc
+target/
+.env
+.env.*
+!.env.example
+NextGen Endpoint Security Proposal (1).docx
