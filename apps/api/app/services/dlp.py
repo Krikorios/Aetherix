@@ -5,7 +5,8 @@ from functools import lru_cache
 
 from presidio_analyzer import AnalyzerEngine
 
-from app.schemas import DlpFinding, DlpScanRequest, DlpScanResponse
+from app.schemas import DlpFinding, DlpScanRequest, DlpScanResponse, Policy
+from app.services.semantic import BAND_RANK, analyze_context
 
 
 @dataclass(frozen=True)
@@ -53,5 +54,46 @@ def scan_text(request: DlpScanRequest) -> DlpScanResponse:
             for match in recognizer.pattern.finditer(request.text)
         ]
 
+    assessment = analyze_context(
+        text=request.text,
+        source=request.source,
+        finding_count=len(findings),
+        distinct_entities=len({finding.entity_type for finding in findings}),
+    )
+
     action = "review" if findings else "allow"
-    return DlpScanResponse(findings=findings, action=action)
+    return DlpScanResponse(
+        findings=findings,
+        action=action,
+        risk_score=assessment.risk_score,
+        risk_band=assessment.risk_band,
+        context_signals=list(assessment.signals),
+        rationale=assessment.rationale,
+    )
+
+
+def apply_policy(response: DlpScanResponse, policy: Policy) -> DlpScanResponse:
+    protected_entities = set(policy.protected_entities)
+    protected_findings = [finding for finding in response.findings if finding.entity_type in protected_entities]
+
+    if not protected_findings:
+        return response.model_copy(update={"findings": [], "action": "allow"})
+
+    if policy.mode == "block":
+        action = "block"
+    elif policy.mode == "review":
+        action = "review"
+    else:
+        action = "allow"
+
+    if policy.mode != "block":
+        rank = BAND_RANK.get(response.risk_band, 0)
+        threshold = BAND_RANK.get(policy.escalate_at, BAND_RANK["high"])
+        genai_trigger = policy.genai_guardrail and "genai_sink_detected" in response.context_signals
+
+        if rank >= threshold or genai_trigger:
+            action = "review" if policy.mode == "monitor" else "block"
+            if rank >= BAND_RANK["critical"] or (genai_trigger and rank >= BAND_RANK["high"]):
+                action = "block"
+
+    return response.model_copy(update={"findings": protected_findings, "action": action})

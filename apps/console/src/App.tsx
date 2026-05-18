@@ -1,230 +1,201 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Activity, Bell, BrainCircuit, LoaderCircle, ScanText, ShieldCheck, TriangleAlert } from "lucide-react";
+import { type ReactNode, useState } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Building2,
+  ChartSpline,
+  FileText,
+  FlaskConical,
+  Globe2,
+  Inbox,
+  Landmark,
+  LockKeyhole,
+  Mail,
+  Network,
+  Puzzle,
+  ScanText,
+  Settings,
+  ShieldCheck,
+  Smartphone,
+  UserCog,
+} from "lucide-react";
+import { DashboardPage } from "./pages/Dashboard";
+import { AlertsPage } from "./pages/AlertsPage";
+import { DlpScanPage } from "./pages/DlpScanPage";
+import { PolicyPage } from "./pages/PolicyPage";
+import { EnrollmentPage } from "./pages/EnrollmentPage";
+import { AccountsPage } from "./pages/AccountsPage";
+import { CompaniesPage } from "./pages/CompaniesPage";
 
-type Endpoint = {
-  id: string;
-  hostname: string;
-  os: string;
-  status: "healthy" | "attention";
-  risk_score: number;
-};
+type Page =
+  | "dashboard"
+  | "executive"
+  | "health"
+  | "asm"
+  | "alerts"
+  | "blocklist"
+  | "customRules"
+  | "agenticInvestigation"
+  | "scan"
+  | "network"
+  | "risk"
+  | "policy"
+  | "reports"
+  | "quarantine"
+  | "companies"
+  | "accounts"
+  | "sandbox"
+  | "email"
+  | "mobile"
+  | "insights"
+  | "integrations"
+  | "configuration"
+  | "enrollment";
 
-type Policy = {
-  id: string;
-  name: string;
-  mode: string;
-  protected_entities: string[];
-};
-
-type Alert = {
-  id: string;
-  title: string;
-  severity: "low" | "medium" | "high";
-  endpoint_id: string;
-  recommended_action: string;
-};
-
-type DlpFinding = {
-  entity_type: string;
-  start: number;
-  end: number;
-  score: number;
-  text: string;
-};
-
-type DlpScanResponse = {
-  findings: DlpFinding[];
-  action: "allow" | "review";
-};
-
-const apiBaseUrl = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
-const defaultScanText = "Send jane.doe@example.com the finance export before sharing card 4111 1111 1111 1111.";
+const NAV: { group: string; items: { id: Page; label: string; icon: ReactNode }[] }[] = [
+  {
+    group: "Monitoring",
+    items: [
+      { id: "dashboard", label: "Dashboard", icon: <Activity size={18} /> },
+      { id: "executive", label: "Executive Summary", icon: <BarChart3 size={18} /> },
+      { id: "health", label: "Health", icon: <ShieldCheck size={18} /> },
+      { id: "asm", label: "ASM", icon: <Globe2 size={18} /> },
+    ],
+  },
+  {
+    group: "Incidents",
+    items: [
+      { id: "alerts", label: "Search", icon: <AlertTriangle size={18} /> },
+      { id: "blocklist", label: "Blocklist", icon: <LockKeyhole size={18} /> },
+      { id: "customRules", label: "Custom Rules", icon: <FileText size={18} /> },
+      { id: "agenticInvestigation", label: "Agentic AI Investigation", icon: <ScanText size={18} /> },
+    ],
+  },
+  {
+    group: "Protection",
+    items: [
+      { id: "scan", label: "Threats Xplorer", icon: <ScanText size={18} /> },
+      { id: "network", label: "Network", icon: <Network size={18} /> },
+      { id: "risk", label: "Risk Management", icon: <ChartSpline size={18} /> },
+      { id: "policy", label: "Policies", icon: <FileText size={18} /> },
+      { id: "reports", label: "Reports", icon: <BarChart3 size={18} /> },
+      { id: "quarantine", label: "Quarantine", icon: <Inbox size={18} /> },
+    ],
+  },
+  {
+    group: "MSP Control",
+    items: [
+      { id: "companies", label: "Companies", icon: <Building2 size={18} /> },
+      { id: "accounts", label: "Accounts", icon: <UserCog size={18} /> },
+      { id: "enrollment", label: "Installers", icon: <Landmark size={18} /> },
+    ],
+  },
+  {
+    group: "Add-ons",
+    items: [
+      { id: "sandbox", label: "Sandbox Analyzer", icon: <FlaskConical size={18} /> },
+      { id: "email", label: "Email Security", icon: <Mail size={18} /> },
+      { id: "mobile", label: "Mobile Security", icon: <Smartphone size={18} /> },
+      { id: "insights", label: "Data Insights", icon: <BarChart3 size={18} /> },
+      { id: "integrations", label: "Integrations", icon: <Puzzle size={18} /> },
+      { id: "configuration", label: "Configuration", icon: <Settings size={18} /> },
+    ],
+  },
+];
 
 export function App() {
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [policy, setPolicy] = useState<Policy | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [scanText, setScanText] = useState(defaultScanText);
-  const [scanResult, setScanResult] = useState<DlpScanResponse | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
-
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadDashboard() {
-      try {
-        const [endpointsResponse, alertsResponse, policyResponse] = await Promise.all([
-          fetch(`${apiBaseUrl}/endpoints`),
-          fetch(`${apiBaseUrl}/alerts`),
-          fetch(`${apiBaseUrl}/policies/active`),
-        ]);
-
-        if (!endpointsResponse.ok || !alertsResponse.ok || !policyResponse.ok) {
-          throw new Error("Dashboard API request failed");
-        }
-
-        const [nextEndpoints, nextAlerts, nextPolicy] = await Promise.all([
-          endpointsResponse.json() as Promise<Endpoint[]>,
-          alertsResponse.json() as Promise<Alert[]>,
-          policyResponse.json() as Promise<Policy>,
-        ]);
-
-        if (isMounted) {
-          setEndpoints(nextEndpoints);
-          setAlerts(nextAlerts);
-          setPolicy(nextPolicy);
-          setLoadError(null);
-        }
-      } catch (error) {
-        if (isMounted) {
-          setLoadError(error instanceof Error ? error.message : "Unable to load dashboard data");
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    loadDashboard();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  async function scanSample(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIsScanning(true);
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/dlp/scan`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: scanText }),
-      });
-
-      if (!response.ok) {
-        throw new Error("DLP scan failed");
-      }
-
-      setScanResult((await response.json()) as DlpScanResponse);
-    } finally {
-      setIsScanning(false);
-    }
-  }
+  const [page, setPage] = useState<Page>("companies");
 
   return (
     <main className="shell">
       <aside className="rail" aria-label="Primary navigation">
-        <ShieldCheck aria-hidden="true" />
-        <button aria-label="Operations"><Activity /></button>
-        <button aria-label="AI investigations"><BrainCircuit /></button>
-        <button aria-label="Alerts"><Bell /></button>
+        <div className="brandMark">
+          <ShieldCheck className="railLogo" aria-hidden="true" />
+          <div>
+            <strong>Aetherix</strong>
+            <span>MSP Console</span>
+          </div>
+        </div>
+        {NAV.map((section) => (
+          <nav className="navGroup" key={section.group} aria-label={section.group}>
+            <span>{section.group}</span>
+            {section.items.map(({ id, label, icon }) => (
+              <button
+                key={id}
+                className={page === id ? "active" : ""}
+                title={label}
+                aria-label={label}
+                aria-current={page === id ? "page" : undefined}
+                onClick={() => setPage(id)}
+              >
+                {icon}
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
+        ))}
       </aside>
 
       <section className="workspace">
-        <header className="hero">
-          <p>Aetherix POC</p>
-          <h1>Endpoint security console</h1>
-          <span>{policy ? `${policy.name}: ${policy.mode}` : "Loading active policy"}</span>
-        </header>
-
-        {loadError ? <div className="banner">{loadError}</div> : null}
-
-        <section className="metrics" aria-label="Security metrics">
-          <Metric label="Protected endpoints" value={isLoading ? "..." : String(endpoints.length)} />
-          <Metric label="Open alerts" value={isLoading ? "..." : String(alerts.length)} />
-          <Metric label="DLP action" value={scanResult?.action ?? "Ready"} />
-        </section>
-
-        <section className="grid">
-          <div className="panel">
-            <div className="panelHeader">
-              <h2>Endpoint Inventory</h2>
-              <span>{isLoading ? "Loading" : "Live API data"}</span>
-            </div>
-            <div className="endpointList">
-              {endpoints.map((endpoint) => (
-                <article className="endpoint" key={endpoint.hostname}>
-                  <div>
-                    <strong>{endpoint.hostname}</strong>
-                    <p>{endpoint.os}</p>
-                  </div>
-                  <meter min="0" max="100" value={endpoint.risk_score} aria-label={`${endpoint.hostname} risk`} />
-                  <span className={endpoint.status}>{endpoint.status}</span>
-                </article>
-              ))}
-              {isLoading ? <LoadingRow /> : null}
-            </div>
-          </div>
-
-          <div className="panel alerts">
-            <div className="panelHeader">
-              <h2>High-Signal Alerts</h2>
-              <span>Human approval required</span>
-            </div>
-            {alerts.map((alert) => (
-              <article className="alert" key={alert.id}>
-                <TriangleAlert aria-hidden="true" />
-                <div>
-                  <p>{alert.title}</p>
-                  <small>{alert.severity} severity • {alert.recommended_action}</small>
-                </div>
-                <button>Review</button>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="panel scanner">
-          <div className="panelHeader">
-            <div>
-              <h2>GenAI DLP Scan</h2>
-              <span>Calls the running FastAPI scanner</span>
-            </div>
-            <ScanText aria-hidden="true" />
-          </div>
-          <form onSubmit={scanSample}>
-            <textarea value={scanText} onChange={(event) => setScanText(event.target.value)} />
-            <button disabled={isScanning || scanText.trim().length === 0}>
-              {isScanning ? "Scanning" : "Scan sample"}
-            </button>
-          </form>
-          {scanResult ? (
-            <div className="findings">
-              {scanResult.findings.map((finding) => (
-                <article className="finding" key={`${finding.entity_type}-${finding.start}-${finding.end}`}>
-                  <strong>{finding.entity_type}</strong>
-                  <span>{finding.text}</span>
-                  <small>{Math.round(finding.score * 100)}% confidence</small>
-                </article>
-              ))}
-              {scanResult.findings.length === 0 ? <p>No protected data detected.</p> : null}
-            </div>
-          ) : null}
-        </section>
+        {page === "dashboard" && <DashboardPage />}
+        {page === "alerts" && <AlertsPage />}
+        {page === "scan" && <DlpScanPage />}
+        {page === "policy" && <PolicyPage />}
+        {page === "enrollment" && <EnrollmentPage />}
+        {page === "companies" && <CompaniesPage />}
+        {page === "accounts" && <AccountsPage />}
+        {!["dashboard", "alerts", "scan", "policy", "enrollment", "companies", "accounts"].includes(page) ? (
+          <PlaceholderPage page={page} />
+        ) : null}
       </section>
     </main>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function PlaceholderPage({ page }: { page: Page }) {
+  const landing: Record<Page, string> = {
+    dashboard: "Platform Owner opens with partner revenue, AI efficiency, and cross-tenant risk.",
+    executive: "MSP Partner opens with a customer portfolio summary and executive report queue.",
+    health: "Company Administrator opens with endpoint health, policy drift, and action queues.",
+    asm: "External attack surface and asset exposure will land here.",
+    alerts: "Incident search is already wired to API alerts.",
+    blocklist: "Blocklist controls will cover hashes, domains, users, and tenant scope.",
+    customRules: "Custom detection rules will inherit the same partner/company isolation model.",
+    agenticInvestigation: "AI investigation will show auditable reasoning, evidence, and response playbooks.",
+    scan: "Threats Xplorer is currently backed by the DLP scanner POC.",
+    network: "Patch inventory, installation packages, tasks, and tags will share company scope.",
+    risk: "Findings, vulnerabilities, PHASR, EASM, and compliance will roll up by company.",
+    policy: "Policies are already backed by signed policy documents.",
+    reports: "Reports will start with AI executive summaries, ransomware, and integrity templates.",
+    quarantine: "Quarantine will provide scoped restore/release workflows.",
+    companies: "Companies are the MSP tenant hub.",
+    accounts: "Accounts are the hierarchy and permissions control plane.",
+    sandbox: "Sandbox Analyzer will be an add-on entitlement in licensing.",
+    email: "Email Security will be exposed as a subscription add-on.",
+    mobile: "Mobile Security will be exposed as a subscription add-on.",
+    insights: "Data Insights will report usage, efficiency, and billing signals.",
+    integrations: "Integrations will cover PSA, RMM, SIEM, identity, and billing systems.",
+    configuration: "Configuration will host MSP white-label branding, support, and global defaults.",
+    enrollment: "Installers are already backed by customer quick-deploy APIs.",
+  };
+
   return (
-    <article className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
+    <section className="panel placeholderPanel">
+      <div className="panelHeader">
+        <div>
+          <h2>{page.replace(/([A-Z])/g, " $1")}</h2>
+          <span>{landing[page]}</span>
+        </div>
+        <span className="badge">Roadmap</span>
+      </div>
+      <div className="roadmapSteps">
+        <article><strong>1</strong><span>Enforce tenant scope and role gates.</span></article>
+        <article><strong>2</strong><span>Add API contracts and audit events.</span></article>
+        <article><strong>3</strong><span>Connect dashboards, workflows, and reports.</span></article>
+      </div>
+    </section>
   );
 }
 
-function LoadingRow() {
-  return (
-    <article className="loadingRow">
-      <LoaderCircle aria-hidden="true" />
-      <span>Loading endpoint telemetry</span>
-    </article>
-  );
-}
+
