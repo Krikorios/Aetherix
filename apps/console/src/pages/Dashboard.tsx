@@ -79,8 +79,8 @@ export function DashboardPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Aetherix POC"
-        title="Endpoint security console"
+        eyebrow="MSP control plane"
+        title="Operations dashboard"
         subtitle={policy ? `${policy.name} · ${policy.mode} mode` : isLoading ? "Loading active policy…" : "No active policy"}
       />
 

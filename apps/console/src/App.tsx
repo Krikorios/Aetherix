@@ -203,46 +203,173 @@ export function App() {
   );
 }
 
-function PlaceholderPage({ page }: { page: Page }) {
-  const landing: Record<Page, string> = {
-    dashboard: "Platform Owner opens with partner revenue, AI efficiency, and cross-tenant risk.",
-    executive: "MSP Partner opens with a customer portfolio summary and executive report queue.",
-    health: "Company Administrator opens with endpoint health, policy drift, and action queues.",
-    asm: "External attack surface and asset exposure will land here.",
-    alerts: "Incident search is already wired to API alerts.",
-    blocklist: "Blocklist controls will cover hashes, domains, users, and tenant scope.",
-    customRules: "Custom detection rules will inherit the same partner/company isolation model.",
-    agenticInvestigation: "AI investigation will show auditable reasoning, evidence, and response playbooks.",
-    scan: "Threats Xplorer is currently backed by the DLP scanner POC.",
-    network: "Patch inventory, installation packages, tasks, and tags will share company scope.",
-    risk: "Findings, vulnerabilities, PHASR, EASM, and compliance will roll up by company.",
-    policy: "Policies are already backed by signed policy documents.",
-    reports: "Reports will start with AI executive summaries, ransomware, and integrity templates.",
-    quarantine: "Quarantine will provide scoped restore/release workflows.",
-    companies: "Companies are the MSP tenant hub.",
-    accounts: "Accounts are the hierarchy and permissions control plane.",
-    sandbox: "Sandbox Analyzer will be an add-on entitlement in licensing.",
-    email: "Email Security will be exposed as a subscription add-on.",
-    mobile: "Mobile Security will be exposed as a subscription add-on.",
-    insights: "Data Insights will report usage, efficiency, and billing signals.",
-    integrations: "Integrations will cover PSA, RMM, SIEM, identity, and billing systems.",
-    configuration: "Configuration will host MSP white-label branding, support, and global defaults.",
-    enrollment: "Installers are already backed by customer quick-deploy APIs.",
-  };
+type PlaceholderStatus = "designing" | "planned" | "add-on";
 
+const STATUS_LABEL: Record<PlaceholderStatus, string> = {
+  designing: "Designing",
+  planned: "Planned",
+  "add-on": "Add-on entitlement",
+};
+
+type PlaceholderMeta = {
+  title: string;
+  eyebrow: string;
+  status: PlaceholderStatus;
+  summary: string;
+  depends: string[];
+};
+
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "policy" | "enrollment" | "companies" | "accounts">, PlaceholderMeta> = {
+  executive: {
+    title: "Executive Summary",
+    eyebrow: "Partner reporting",
+    status: "planned",
+    summary:
+      "AI-generated portfolio summary for MSP partners: customer risk, license utilisation, top incidents, and weekly delta. Builds on /companies, /alerts, and the upcoming ai_reports table.",
+    depends: ["ai_reports table", "/companies tenant scope", "LLM gateway contract"],
+  },
+  health: {
+    title: "Endpoint Health",
+    eyebrow: "Company operations",
+    status: "planned",
+    summary:
+      "Per-company endpoint health view with policy drift, agent version skew, and action queues. Aggregates the existing /endpoints heartbeat data once company-scoped queries land.",
+    depends: ["tenant-scoped /endpoints", "policy drift signal", "action queue API"],
+  },
+  asm: {
+    title: "Attack Surface Management",
+    eyebrow: "External exposure",
+    status: "planned",
+    summary:
+      "External attack surface discovery (DNS, CT logs, passive DNS, safe scanners) feeding easm_assets and easm_findings. Tracks domains, subdomains, certificates, exposed services, and risky DNS.",
+    depends: ["easm_assets table", "asset-based licensing", "EASM collector workers"],
+  },
+  blocklist: {
+    title: "Blocklist",
+    eyebrow: "Response controls",
+    status: "planned",
+    summary:
+      "Tenant-scoped blocklists for hashes, domains, URLs, users, and processes. Pulled into agent policy on heartbeat alongside the existing signed policy document.",
+    depends: ["block list table", "policy document merge", "agent policy fetch"],
+  },
+  customRules: {
+    title: "Custom Detection Rules",
+    eyebrow: "Detection engineering",
+    status: "planned",
+    summary:
+      "Customer-authored detection rules layered on top of platform rules. Same partner/company isolation as policy documents, with simulation before promotion.",
+    depends: ["rules table", "rule simulator", "policy promotion flow"],
+  },
+  agenticInvestigation: {
+    title: "Agentic AI Investigation",
+    eyebrow: "Autonomous response",
+    status: "designing",
+    summary:
+      "Investigation agents correlate endpoint telemetry, DLP events, asset criticality, and threat intel into auditable timelines with confidence-scored response recommendations and approval gates.",
+    depends: ["incident_cases correlation", "LLM gateway", "response_actions table"],
+  },
+  network: {
+    title: "Network & Patch",
+    eyebrow: "Asset hardening",
+    status: "planned",
+    summary:
+      "Patch inventory, installation packages, tasks, and tags scoped to a company. Reuses the customer hierarchy already enforced on /companies and installer builds.",
+    depends: ["patch inventory ingestion", "task runner", "tag schema"],
+  },
+  risk: {
+    title: "Risk Management",
+    eyebrow: "Continuous threat exposure",
+    status: "planned",
+    summary:
+      "CVE ingestion enriched with EPSS, CISA KEV, exploit availability, compensating controls, and business criticality. Rolls up by company with PHASR and compliance evidence mapping.",
+    depends: ["vulnerability ingestion", "business-context model", "compliance map"],
+  },
+  reports: {
+    title: "Reports",
+    eyebrow: "Executive deliverables",
+    status: "planned",
+    summary:
+      "Templated AI executive reports, ransomware readiness, and integrity reports backed by ai_reports with structured confidence, source references, and deterministic fallbacks.",
+    depends: ["ai_reports table", "report templates", "object storage for evidence"],
+  },
+  quarantine: {
+    title: "Quarantine",
+    eyebrow: "Containment",
+    status: "planned",
+    summary:
+      "Scoped restore and release workflows for quarantined files, email items, and processes. Audit-trail mirrors the existing signed policy and enrollment audit events.",
+    depends: ["quarantine store", "restore workflow", "audit hash chain"],
+  },
+  sandbox: {
+    title: "Sandbox Analyzer",
+    eyebrow: "Add-on entitlement",
+    status: "add-on",
+    summary:
+      "Detonation and behavioural analysis of suspicious artefacts. Surfaces only when the subscription_entitlements row grants sandbox access for the customer.",
+    depends: ["subscription_entitlements", "sandbox worker", "verdict pipeline"],
+  },
+  email: {
+    title: "Email Security",
+    eyebrow: "Add-on entitlement",
+    status: "add-on",
+    summary:
+      "Inline and journaling protection for mailboxes. Gated on subscription_entitlements and integrated with quarantine, blocklist, and incident correlation.",
+    depends: ["mail connector", "subscription_entitlements", "quarantine integration"],
+  },
+  mobile: {
+    title: "Mobile Security",
+    eyebrow: "Add-on entitlement",
+    status: "add-on",
+    summary:
+      "iOS and Android protection with MDM bridge. Gated on subscription_entitlements; reuses the policy engine and enrollment token flow already shipping for desktop agents.",
+    depends: ["MDM bridge", "subscription_entitlements", "mobile agent profile"],
+  },
+  insights: {
+    title: "Data Insights",
+    eyebrow: "Usage and billing",
+    status: "planned",
+    summary:
+      "Usage, AI efficiency, and billing signals across partners and customers. Feeds the AI Efficiency Score already shown on the Companies hub.",
+    depends: ["usage metering", "billing export", "AI efficiency model"],
+  },
+  integrations: {
+    title: "Integrations",
+    eyebrow: "Ecosystem connectors",
+    status: "planned",
+    summary:
+      "PSA, RMM, SIEM, identity, and billing connectors. Wraps the existing FastAPI control plane behind a connector contract with per-tenant credentials.",
+    depends: ["connector framework", "credential vault", "SIEM event export"],
+  },
+  configuration: {
+    title: "Configuration",
+    eyebrow: "Platform settings",
+    status: "designing",
+    summary:
+      "MSP white-label branding, support contacts, and global defaults. Builds on the live /me branding resolver that already drives accent colour and product name in this console.",
+    depends: ["branding write API", "support contact schema", "global defaults"],
+  },
+};
+
+function PlaceholderPage({ page }: { page: Page }) {
+  const meta = PLACEHOLDERS[page as keyof typeof PLACEHOLDERS];
+  if (!meta) return null;
   return (
     <section className="panel placeholderPanel">
       <div className="panelHeader">
         <div>
-          <h2>{page.replace(/([A-Z])/g, " $1")}</h2>
-          <span>{landing[page]}</span>
+          <p className="placeholderEyebrow">{meta.eyebrow}</p>
+          <h2>{meta.title}</h2>
+          <span>{meta.summary}</span>
         </div>
-        <span className="badge">Roadmap</span>
+        <span className={`badge placeholderStatus status-${meta.status}`}>{STATUS_LABEL[meta.status]}</span>
       </div>
-      <div className="roadmapSteps">
-        <article><strong>1</strong><span>Enforce tenant scope and role gates.</span></article>
-        <article><strong>2</strong><span>Add API contracts and audit events.</span></article>
-        <article><strong>3</strong><span>Connect dashboards, workflows, and reports.</span></article>
+      <div className="placeholderDepends">
+        <span>Backend dependencies</span>
+        <ul>
+          {meta.depends.map((d) => (
+            <li key={d}>{d}</li>
+          ))}
+        </ul>
       </div>
     </section>
   );

@@ -1515,6 +1515,72 @@ meter {
   color: var(--accent);
 }
 
+.placeholderEyebrow {
+  margin: 0 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.placeholderStatus {
+  align-self: flex-start;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+
+.placeholderStatus.status-designing {
+  color: var(--accent);
+  background: rgba(11, 107, 87, 0.1);
+  border-color: rgba(11, 107, 87, 0.25);
+}
+
+.placeholderStatus.status-planned {
+  color: #5b4a16;
+  background: rgba(180, 140, 24, 0.12);
+  border-color: rgba(180, 140, 24, 0.25);
+}
+
+.placeholderStatus.status-add-on {
+  color: #4a3a6b;
+  background: rgba(90, 70, 140, 0.12);
+  border-color: rgba(90, 70, 140, 0.25);
+}
+
+.placeholderDepends {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.placeholderDepends > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.placeholderDepends ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.placeholderDepends li {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fffef9;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
 .companyTableHead,
 .companyTableRow {
   display: grid;
