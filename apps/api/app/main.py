@@ -8,13 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentHeartbeat, Alert, Customer, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, LicenseUsageDay, Subscription, SubscriptionCreate
+from app.schemas import AgentHeartbeat, Alert, Customer, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, LicenseUsageDay, Subscription, SubscriptionCreate
 from app.services import audit
 from app.services import tenancy
 from app.services import licensing
 from app.services.tenancy import TenancyError
 from app.services.licensing import LicensingError
-from app.services.customers import CustomerError, assigned_policy, create_customer, create_quick_deploy_links, customer_groups, generate_installers, get_customer, list_customers, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy
+from app.services.customers import CustomerError, assigned_policy, create_customer, create_quick_deploy_links, customer_groups, generate_installers, get_customer, list_customers, list_partners, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy
 from app.services.dlp import apply_policy, scan_text
 from app.services.enrollment import EnrollmentError, consume_enrollment_token, issue_enrollment_token
 from app.services.policy import active_policy_document, list_policy_documents, promote_policy_document, simulate as simulate_policy
@@ -650,6 +650,18 @@ def get_company_route(
     account: Account = Depends(current_account),
 ) -> Customer:
     return _require_company_access(customer_id, "companies", "view", account)
+
+
+@app.get("/partners", response_model=list[Partner])
+def list_partners_route(
+    account: Account = Depends(require("companies", "view")),
+) -> list[Partner]:
+    scope = tenancy.compute_scope(account)
+    partners = list_partners()
+    if scope.is_platform:
+        return partners
+    allowed = set(scope.partner_ids)
+    return [p for p in partners if p.id in allowed]
 
 
 # --- Subscriptions catalog -------------------------------------------------

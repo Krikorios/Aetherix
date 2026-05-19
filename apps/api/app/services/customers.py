@@ -84,6 +84,29 @@ def list_policy_packages() -> list[PolicyPackage]:
     return [_policy_package_from_row(row) for row in rows]
 
 
+def list_partners() -> list["Partner"]:
+    """Return all partners ordered by name."""
+
+    from app.schemas import Partner  # local to avoid circular import on type list
+
+    ensure_demo_seed()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select id, name, slug, deployment_mode, created_at from partners order by name"
+        )
+        rows = cur.fetchall()
+    return [
+        Partner(
+            id=row["id"],
+            name=row["name"],
+            slug=row["slug"],
+            deployment_mode=row["deployment_mode"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
 def list_customers() -> list[Customer]:
     ensure_demo_seed()
     with connection() as conn, conn.cursor() as cur:

@@ -137,6 +137,14 @@ export type PolicyPackage = {
   created_at: string;
 };
 
+export type Partner = {
+  id: string;
+  name: string;
+  slug: string;
+  deployment_mode: "cloud" | "on_prem";
+  created_at: string;
+};
+
 export type Customer = {
   id: string;
   partner_id: string;
@@ -216,14 +224,17 @@ export type RoleCode =
 
 export type PermissionLevel = "none" | "view" | "edit" | "manage";
 
-export type AccountStatus = "active" | "suspended" | "locked";
+export type AccountStatus = "invited" | "active" | "locked" | "suspended";
+export type TwoFactorState = "missing" | "enabled" | "enforced";
 
 export type Account = {
   id: string;
   email: string;
-  full_name: string | null;
+  full_name: string;
   status: AccountStatus;
-  two_factor: "disabled" | "pending" | "enrolled";
+  two_factor: TwoFactorState;
+  password_expires_at: string | null;
+  locked_until: string | null;
   last_login_at: string | null;
   created_at: string;
   roles: RoleAssignment[];
@@ -234,13 +245,26 @@ export type RoleAssignment = {
   role_code: RoleCode;
   partner_id: string | null;
   customer_id: string | null;
+  granted_by: string;
   granted_at: string;
+};
+
+export type RoleAssignmentRequest = {
+  role_code: RoleCode;
+  partner_id?: string | null;
+  customer_id?: string | null;
+};
+
+export type AccountCreatePayload = {
+  email: string;
+  full_name: string;
+  initial_role?: RoleAssignmentRequest | null;
+  created_by?: string;
 };
 
 export type Role = {
   code: RoleCode;
   display_name: string;
-  description: string;
   permissions: Record<string, PermissionLevel>;
 };
 
