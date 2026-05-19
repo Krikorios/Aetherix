@@ -2365,3 +2365,34 @@ meter {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Deploy tab — installer + quick-deploy lists */
+.installerList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.installerRow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.35);
+  font-size: 13.5px;
+}
+.installerRow > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.installerRow strong {
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.installerRow em {
+  font-style: normal;
+  font-size: 12px;
+}

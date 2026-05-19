@@ -3,11 +3,15 @@ import {
   AlertCircle,
   Building2,
   Check,
+  Clock,
   Copy,
+  Download,
   Hash,
   Key,
   Layers,
+  Link2,
   MoreHorizontal,
+  Package,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -22,9 +26,11 @@ import {
   type CompanyLicenseAssign,
   type Customer,
   type CustomerQuickCreateResult,
+  type InstallerBuild,
   type InstallerPlatform,
   type MeResponse,
   type PolicyPackage,
+  type QuickDeployLink,
   type Subscription,
 } from "../api";
 import {
@@ -448,7 +454,7 @@ function CreateCompanySheet({
 // Company Edit side-sheet — Details / Auth / Licensing / Products Hub
 // ---------------------------------------------------------------------------
 
-type EditTab = "details" | "auth" | "licensing" | "products";
+type EditTab = "details" | "auth" | "licensing" | "products" | "deploy";
 
 function CompanyEditSheet({
   row,
@@ -487,7 +493,7 @@ function CompanyEditSheet({
       width={720}
     >
       <nav className="tabBar" role="tablist">
-        {(["details", "auth", "licensing", "products"] as EditTab[]).map((t) => (
+        {(["details", "auth", "licensing", "products", "deploy"] as EditTab[]).map((t) => (
           <button
             key={t}
             role="tab"
@@ -513,6 +519,7 @@ function CompanyEditSheet({
         />
       ) : null}
       {tab === "products" ? <ProductsTab row={row} /> : null}
+      {tab === "deploy" ? <DeployTab row={row} onError={onError} /> : null}
     </SideSheet>
   );
 }
@@ -521,7 +528,8 @@ function tabLabel(tab: EditTab): string {
   if (tab === "details") return "Details";
   if (tab === "auth") return "Authentication";
   if (tab === "licensing") return "Licensing";
-  return "Products Hub";
+  if (tab === "products") return "Products Hub";
+  return "Deploy";
 }
 
 function DetailsTab({ row }: { row: CompanyRow }) {
@@ -806,6 +814,171 @@ function ProductsTab({ row }: { row: CompanyRow }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Deploy tab — generate installers + quick-deploy links
+// ---------------------------------------------------------------------------
+
+const TTL_OPTIONS: { value: number; label: string }[] = [
+  { value: 3600, label: "1 hour" },
+  { value: 14_400, label: "4 hours" },
+  { value: 86_400, label: "24 hours" },
+  { value: 259_200, label: "3 days" },
+  { value: 604_800, label: "7 days" },
+];
+
+function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: string) => void }) {
+  const [platforms, setPlatforms] = useState<InstallerPlatform[]>(["windows_msi"]);
+  const [ttl, setTtl] = useState<number>(86_400);
+  const [installers, setInstallers] = useState<InstallerBuild[]>([]);
+  const [links, setLinks] = useState<QuickDeployLink[]>([]);
+  const [busy, setBusy] = useState<"none" | "installers" | "links">("none");
+  const [info, setInfo] = useState<string | null>(null);
+
+  function toggle(p: InstallerPlatform) {
+    setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
+  }
+
+  async function generateInstallers() {
+    if (platforms.length === 0) {
+      onError("Pick at least one platform.");
+      return;
+    }
+    setBusy("installers");
+    setInfo(null);
+    try {
+      const created = await apiPost<InstallerBuild[]>(`/customers/${row.customer.id}/installers`, {
+        platforms,
+        ttl_seconds: ttl,
+        created_by: "console",
+      });
+      setInstallers((prev) => [...created, ...prev]);
+      setInfo(`Queued ${created.length} installer build(s).`);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to generate installers");
+    } finally {
+      setBusy("none");
+    }
+  }
+
+  async function generateLinks() {
+    if (platforms.length === 0) {
+      onError("Pick at least one platform.");
+      return;
+    }
+    setBusy("links");
+    setInfo(null);
+    try {
+      const created = await apiPost<QuickDeployLink[]>(`/customers/${row.customer.id}/quick-deploy`, {
+        platforms,
+        ttl_seconds: ttl,
+        created_by: "console",
+      });
+      setLinks((prev) => [...created, ...prev]);
+      setInfo(`Created ${created.length} quick-deploy link(s).`);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to create quick-deploy links");
+    } finally {
+      setBusy("none");
+    }
+  }
+
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setInfo("Copied to clipboard.");
+    } catch {
+      setInfo(text);
+    }
+  }
+
+  return (
+    <div className="tabPanel">
+      <fieldset className="fieldsetClean">
+        <legend><Package size={14} /> Generate installers</legend>
+        <p className="muted">Builds a signed installer per platform with the active policy package and a single-use enrollment token.</p>
+        <div className="formStack">
+          <div className="formRow">
+            <label>Platforms</label>
+            <div className="addonGrid" role="group" aria-label="Installer platforms">
+              {PLATFORMS.map((p) => (
+                <button
+                  type="button"
+                  key={p.value}
+                  className={`addonChip ${platforms.includes(p.value) ? "on" : ""}`}
+                  onClick={() => toggle(p.value)}
+                >
+                  {platforms.includes(p.value) ? <Check size={12} /> : <Plus size={12} />} {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="formGrid2">
+            <div className="formRow">
+              <label htmlFor="deployTtl">Token TTL</label>
+              <select id="deployTtl" value={ttl} onChange={(event) => setTtl(Number(event.target.value))}>
+                {TTL_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="formActions">
+            <button type="button" className="btnSecondary" onClick={() => void generateLinks()} disabled={busy !== "none"}>
+              {busy === "links" ? <RefreshCw size={16} className="spinIcon" /> : <Link2 size={16} />} Quick-deploy links
+            </button>
+            <button type="button" className="btnPrimary" onClick={() => void generateInstallers()} disabled={busy !== "none"}>
+              {busy === "installers" ? <RefreshCw size={16} className="spinIcon" /> : <Download size={16} />} Generate installers
+            </button>
+          </div>
+          {info ? <p className="muted"><Check size={12} /> {info}</p> : null}
+        </div>
+      </fieldset>
+
+      {installers.length > 0 ? (
+        <fieldset className="fieldsetClean">
+          <legend><Download size={14} /> Recent installers</legend>
+          <div className="installerList">
+            {installers.map((build) => (
+              <div className="installerRow" key={build.id}>
+                <div>
+                  <strong>{build.platform}</strong>
+                  <em className={`statusPill status-${build.status === "ready" ? "active" : build.status === "failed" ? "expired" : "trial"}`}>{build.status}</em>
+                </div>
+                <span className="muted"><Clock size={12} /> {build.expires_at ? formatDate(build.expires_at) : "no expiry"}</span>
+                {build.artifact_url ? (
+                  <button type="button" className="iconBtn" onClick={() => void copy(build.artifact_url ?? "")} aria-label="Copy artifact URL">
+                    <Copy size={14} />
+                  </button>
+                ) : <span className="muted">queued</span>}
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
+
+      {links.length > 0 ? (
+        <fieldset className="fieldsetClean">
+          <legend><Link2 size={14} /> Quick-deploy links</legend>
+          <div className="installerList">
+            {links.map((link) => (
+              <div className="installerRow" key={link.id}>
+                <div>
+                  <strong>{link.platform ?? "any"}</strong>
+                  <em className="muted">{link.download_count}{link.max_downloads ? ` / ${link.max_downloads}` : ""} downloads</em>
+                </div>
+                <span className="muted"><Clock size={12} /> {formatDate(link.expires_at)}</span>
+                <button type="button" className="iconBtn" onClick={() => void copy(link.url)} aria-label="Copy link">
+                  <Copy size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
     </div>
   );
 }
