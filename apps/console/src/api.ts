@@ -268,6 +268,18 @@ export type Role = {
   permissions: Record<string, PermissionLevel>;
 };
 
+export type Branding = {
+  product_name: string;
+  tagline: string;
+  primary_color: string;
+  accent_color: string;
+  logo_url: string | null;
+  support_email: string | null;
+  support_url: string | null;
+  footer_note: string | null;
+  source: "platform" | "partner" | "customer";
+};
+
 export type MeResponse = {
   account: Account;
   scope: {
@@ -276,6 +288,7 @@ export type MeResponse = {
     customer_ids: string[];
   };
   permissions: Record<string, PermissionLevel>;
+  branding: Branding;
 };
 
 export type Subscription = {
@@ -363,6 +376,7 @@ export function setAccountId(id: string | null): void {
     if (typeof window === "undefined") return;
     if (id) window.localStorage.setItem(ACCOUNT_STORAGE_KEY, id);
     else window.localStorage.removeItem(ACCOUNT_STORAGE_KEY);
+    window.dispatchEvent(new CustomEvent("aetherix:account-changed", { detail: id }));
   } catch {
     // ignore
   }

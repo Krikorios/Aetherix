@@ -22,6 +22,8 @@ from app.db import PERMISSION_LEVELS, connection
 from app.schemas import (
     Account,
     AccountCreate,
+    Branding,
+    DEFAULT_BRANDING,
     MeResponse,
     PermissionLevel,
     Role,
@@ -357,7 +359,75 @@ def me(account: Account) -> MeResponse:
         account=account,
         permissions=merged_permissions_for(account),
         scope=compute_scope(account),
+        branding=resolve_branding(account),
     )
+
+
+_BRANDING_FIELDS = {
+    "product_name",
+    "tagline",
+    "primary_color",
+    "accent_color",
+    "logo_url",
+    "support_email",
+    "support_url",
+    "footer_note",
+}
+
+
+def _merge_branding_layer(base: dict, layer: dict | None) -> dict:
+    if not layer:
+        return base
+    for key, value in layer.items():
+        if key in _BRANDING_FIELDS and value is not None and value != "":
+            base[key] = value
+    return base
+
+
+def resolve_branding(account: Account) -> Branding:
+    """Pick the most specific branding layer visible to ``account``.
+
+    Order of precedence (most specific wins): customer > partner > platform default.
+    Falls back to defaults when the account has no scoped assignments.
+    """
+
+    scope = compute_scope(account)
+    # Pick the first customer/partner the account is bound to. The console can
+    # later add a tenant switcher to let an MSP user preview other branding.
+    customer_id = scope.customer_ids[0] if scope.customer_ids else None
+    partner_id = scope.partner_ids[0] if scope.partner_ids else None
+
+    customer_branding: dict | None = None
+    partner_branding: dict | None = None
+    source = "platform"
+
+    with connection() as conn, conn.cursor() as cur:
+        if customer_id is not None:
+            cur.execute(
+                "select branding, partner_id from customers where id = %s",
+                (str(customer_id),),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                customer_branding = row["branding"] or {}
+                partner_id = row["partner_id"]
+                source = "customer"
+        if partner_id is not None:
+            cur.execute(
+                "select branding from partners where id = %s",
+                (str(partner_id),),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                partner_branding = row["branding"] or {}
+                if source == "platform":
+                    source = "partner"
+
+    merged: dict = DEFAULT_BRANDING.model_dump()
+    _merge_branding_layer(merged, partner_branding)
+    _merge_branding_layer(merged, customer_branding)
+    merged["source"] = source
+    return Branding(**merged)
 
 
 def has_permission(

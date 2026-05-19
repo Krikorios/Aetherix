@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -27,6 +27,19 @@ import { PolicyPage } from "./pages/PolicyPage";
 import { EnrollmentPage } from "./pages/EnrollmentPage";
 import { AccountsPage } from "./pages/AccountsPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
+import { apiGet, getAccountId, type Branding, type MeResponse } from "./api";
+
+const DEFAULT_BRANDING: Branding = {
+  product_name: "Aetherix",
+  tagline: "MSP Console",
+  primary_color: "#0b6b57",
+  accent_color: "#0b6b57",
+  logo_url: null,
+  support_email: null,
+  support_url: null,
+  footer_note: null,
+  source: "platform",
+};
 
 type Page =
   | "dashboard"
@@ -106,15 +119,52 @@ const NAV: { group: string; items: { id: Page; label: string; icon: ReactNode }[
 
 export function App() {
   const [page, setPage] = useState<Page>("companies");
+  const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!getAccountId()) {
+        if (!cancelled) setBranding(DEFAULT_BRANDING);
+        return;
+      }
+      try {
+        const me = await apiGet<MeResponse>("/me");
+        if (!cancelled) setBranding(me.branding ?? DEFAULT_BRANDING);
+      } catch {
+        if (!cancelled) setBranding(DEFAULT_BRANDING);
+      }
+    }
+    void load();
+    const onAccountChange = () => void load();
+    window.addEventListener("aetherix:account-changed", onAccountChange);
+    window.addEventListener("storage", onAccountChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("aetherix:account-changed", onAccountChange);
+      window.removeEventListener("storage", onAccountChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--accent", branding.accent_color || branding.primary_color);
+    root.style.setProperty("--brand-primary", branding.primary_color);
+    document.title = `${branding.product_name} — ${branding.tagline}`;
+  }, [branding.accent_color, branding.primary_color, branding.product_name, branding.tagline]);
 
   return (
     <main className="shell">
       <aside className="rail" aria-label="Primary navigation">
         <div className="brandMark">
-          <ShieldCheck className="railLogo" aria-hidden="true" />
+          {branding.logo_url ? (
+            <img className="railLogo" src={branding.logo_url} alt="" aria-hidden="true" />
+          ) : (
+            <ShieldCheck className="railLogo" aria-hidden="true" />
+          )}
           <div>
-            <strong>Aetherix</strong>
-            <span>MSP Console</span>
+            <strong>{branding.product_name}</strong>
+            <span>{branding.tagline}</span>
           </div>
         </div>
         {NAV.map((section) => (

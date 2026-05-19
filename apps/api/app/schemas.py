@@ -434,10 +434,33 @@ class TenantScope(BaseModel):
     customer_ids: list[UUID] = Field(default_factory=list)
 
 
+class Branding(BaseModel):
+    """Resolved white-label theme for the signed-in scope.
+
+    Field resolution: customer.branding overrides partner.branding which
+    overrides the platform default. Each field is merged independently so
+    partners can override only the keys they care about.
+    """
+
+    product_name: str = "Aetherix"
+    tagline: str = "MSP Console"
+    primary_color: str = "#0b6b57"
+    accent_color: str = "#0b6b57"
+    logo_url: str | None = None
+    support_email: str | None = None
+    support_url: str | None = None
+    footer_note: str | None = None
+    source: Literal["platform", "partner", "customer"] = "platform"
+
+
+DEFAULT_BRANDING = Branding()
+
+
 class MeResponse(BaseModel):
     account: Account
     permissions: dict[str, PermissionLevel]
     scope: TenantScope
+    branding: Branding = Field(default_factory=Branding)
 
 
 # --- Subscriptions + Licensing ---------------------------------------------
