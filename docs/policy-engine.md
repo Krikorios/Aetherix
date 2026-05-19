@@ -113,6 +113,10 @@ full_disk_encryption
 virtualized_container_mobile_security
 advanced_semantic_dlp
 ai_report_generation
+digital_risk_protection
+external_attack_surface_management
+threat_intelligence_takedown
+xdr_correlation_graph
 ```
 
 Backend enforcement rules:
@@ -121,6 +125,7 @@ Backend enforcement rules:
 - Assignment fails if the effective policy enables a module not licensed for the target customer.
 - Simulation may include unlicensed modules only when `preview: true`; promotion cannot.
 - Entitlement checks run at create, update, assignment, promotion, and policy resolution time.
+- Seat-based limits apply to endpoint and user modules; asset-based limits apply to DRP and EASM assets such as domains, executives, brands, IP ranges, and monitored social accounts.
 
 ## 4. Policy Data Model
 
@@ -428,7 +433,108 @@ Advanced semantic DLP is an add-on module. Basic deterministic DLP can remain av
 }
 ```
 
-### 4.10 White-Label Branding
+### 4.10 Digital Risk Protection
+
+Digital Risk Protection is an add-on module scoped to monitored company assets.
+It should default to monitor/review workflows until evidence quality is proven for
+each collector and source type.
+
+```jsonc
+{
+  "digital_risk_protection": {
+    "enabled": true,
+    "entitlement": "digital_risk_protection",
+    "asset_limits": {
+      "brands": 3,
+      "executives": 10,
+      "domains": 25,
+      "social_accounts": 50
+    },
+    "monitored_sources": [
+      "domain_registries",
+      "phishing_feeds",
+      "paste_sites",
+      "source_code_repos",
+      "social_networks",
+      "marketplaces",
+      "telegram_discord_irc",
+      "dark_web"
+    ],
+    "detections": {
+      "impersonation": { "enabled": true, "action": "review" },
+      "phishing": { "enabled": true, "action": "review" },
+      "typosquatting": { "enabled": true, "action": "review" },
+      "credential_leaks": { "enabled": true, "action": "review" },
+      "brand_or_executive_abuse": { "enabled": true, "action": "review" },
+      "malware_hosting": { "enabled": true, "action": "review" },
+      "repo_secrets": { "enabled": true, "action": "review" }
+    },
+    "ai_validation": {
+      "enabled": true,
+      "nlp_language_and_sentiment": true,
+      "computer_vision_logo_ocr_face_match": false,
+      "llm_explanations": true,
+      "minimum_confidence_for_auto_incident": 80
+    }
+  }
+}
+```
+
+### 4.11 External Attack Surface Management And Takedown
+
+EASM is an add-on module with asset-based licensing and strict safe-scanning
+defaults. Takedown is a separate entitlement because it creates external provider
+workflows and legal/operational obligations.
+
+```jsonc
+{
+  "external_attack_surface_management": {
+    "enabled": true,
+    "entitlement": "external_attack_surface_management",
+    "asset_limits": {
+      "root_domains": 10,
+      "subdomains": 1000,
+      "ip_addresses": 256,
+      "cloud_accounts": 3
+    },
+    "discovery": {
+      "dns": true,
+      "certificate_transparency": true,
+      "passive_dns": true,
+      "cloud_connectors": true,
+      "safe_port_scan": true,
+      "shadow_it_detection": true
+    },
+    "enrichment": {
+      "cvss": true,
+      "epss": true,
+      "cisa_kev": true,
+      "exploit_availability": true,
+      "business_criticality": true,
+      "ai_remediation_summary": true
+    },
+    "change_detection": {
+      "new_asset_action": "review",
+      "new_open_port_action": "review",
+      "expired_certificate_action": "review",
+      "critical_vulnerability_action": "review"
+    }
+  },
+  "threat_intelligence_takedown": {
+    "enabled": true,
+    "entitlement": "threat_intelligence_takedown",
+    "supported_workflows": ["domain", "social", "content", "repository", "marketplace"],
+    "automation": {
+      "draft_request": true,
+      "submit_requires_approval": true,
+      "track_provider_status": true,
+      "gdn_handoff": true
+    }
+  }
+}
+```
+
+### 4.12 White-Label Branding
 
 ```jsonc
 {
@@ -545,11 +651,14 @@ The editor should be organized as a left navigation with subscription-aware sect
 8. Behavior monitoring, anti-exploit, ransomware.
 9. Semantic DLP and GenAI guardrails.
 10. Agentic response.
-11. AI reports.
-12. White-label labels and descriptions.
-13. Exclusions.
-14. Simulation and impact preview.
-15. Audit and version history.
+11. DRP monitored assets and detections.
+12. EASM discovery and exposure management.
+13. Threat intelligence and takedown workflows.
+14. AI reports.
+15. White-label labels and descriptions.
+16. Exclusions.
+17. Simulation and impact preview.
+18. Audit and version history.
 
 Dynamic section states:
 

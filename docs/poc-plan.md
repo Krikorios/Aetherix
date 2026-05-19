@@ -89,6 +89,135 @@ Aetherix will be built around four strategic pillars.
 - Frontend: React/Next.js with TypeScript, focused operator workflows, and accessible enterprise UI patterns.
 - Observability: OpenTelemetry, Prometheus, Grafana, Loki, structured audit logs, and cost telemetry for LLM usage.
 
+### 4.1.1 Updated System Architecture: AI-Native MSP Security Platform
+
+```mermaid
+flowchart TB
+  Owner[Platform Owner / Menagenix] --> Console[White-Label MSP Console]
+  MSP[MSP Partner] --> Console
+  Company[Company Admin / Tech / Viewer] --> Console
+
+  Console --> API[FastAPI Control Plane]
+  Agent[Rust + eBPF Endpoint Agent] --> API
+  Browser[Browser / GenAI Guardrail Sensor] --> API
+
+  API --> Tenant[Tenant, Accounts, RBAC]
+  API --> Licensing[Subscription + Entitlements]
+  API --> Policy[Policy Engine + Inheritance]
+  API --> Endpoint[Endpoint Protection]
+  API --> DLP[Semantic + Contextual DLP]
+  API --> DRP[Digital Risk Protection]
+  API --> EASM[External Attack Surface Management]
+  API --> Intel[Threat Intelligence + Takedown]
+  API --> IR[Agentic Incident Response]
+  API --> Reports[AI Executive Reports]
+
+  Policy --> Agent
+  Policy --> DLP
+  Policy --> DRP
+  Policy --> EASM
+
+  Endpoint --> EventBus[Redis / Event Queue]
+  DLP --> EventBus
+  DRP --> EventBus
+  EASM --> EventBus
+  Intel --> EventBus
+  EventBus --> IR
+  IR --> Cases[Incident Cases + Response Actions]
+  Cases --> Audit[Hash-Chained Audit Log]
+
+  Tenant --> PG[(Postgres)]
+  Licensing --> PG
+  Policy --> PG
+  Endpoint --> PG
+  DLP --> PG
+  DRP --> PG
+  EASM --> PG
+  Intel --> PG
+  Cases --> PG
+  Reports --> ObjectStore[(Evidence + Report Store)]
+
+  DLP -. semantic scoring .-> LLM[LLM / Semantic Gateway]
+  DRP -. validation + explanation .-> LLM
+  EASM -. remediation summary .-> LLM
+  IR -. investigation plans .-> LLM
+  LLM --> Vector[(Vector Store)]
+
+  DRP -. collectors .-> OSINT[Social / Dark Web / Paste / Repo / Registry Feeds]
+  EASM -. discovery .-> Internet[DNS / CT Logs / Passive DNS / Safe Scanners]
+  Intel -. disruption .-> GDN[Global Disruption Network + Providers]
+```
+
+Architecture rule: endpoint, DLP, DRP, EASM, and intelligence all emit normalized
+tenant-scoped events into one incident graph. The console should feel unified to
+an MSP operator: one customer portfolio, one risk queue, one policy model, one
+audit trail, and subscription-aware modules that appear only when licensed.
+
+### 4.1.2 Core Data Model Changes
+
+Build on the existing `partners`, `customers`, `accounts`, `subscriptions`,
+`company_licenses`, `policy_packages`, `enrolled_agents`, `telemetry_events`,
+`security_alerts`, and `incident_cases` tables with these additions:
+
+| Table | Purpose | Tenant scope | Licensing basis |
+| --- | --- | --- | --- |
+| `subscription_entitlements` | Explicit Core/Add-on module access and limits | Partner + customer | Seats, assets, usage, trial |
+| `monitored_assets` | Canonical customer assets for DRP/EASM | Partner + customer | Asset count |
+| `asset_change_events` | Append-only EASM/DRP asset deltas | Partner + customer | Event volume |
+| `drp_policies` | Source coverage, watched terms, executive/brand/domain rules | Partner + customer/group | Add-on + asset count |
+| `drp_findings` | Impersonation, phishing, typo, leak, malware-hosting, brand abuse findings | Partner + customer | Finding volume |
+| `easm_assets` | Discovered domains, subdomains, IPs, ports, certificates, services | Partner + customer | Asset count |
+| `easm_findings` | Exposure, vulnerability, certificate, risky DNS, and shadow IT findings | Partner + customer | Asset count |
+| `intelligence_items` | Indicators, campaigns, leaked credentials, attacker infrastructure | Global, partner, or customer | Feed entitlement |
+| `takedown_requests` | Provider/GDN workflows and status tracking | Partner + customer | Takedown entitlement |
+| `response_actions` | One-click or autonomous remediation actions | Partner + customer + incident | Action type |
+| `ai_reports` | Executive/technical report generations and approval state | Partner + customer | Report entitlement |
+
+Required invariants:
+
+- Every operational row carries `partner_id` and `customer_id` unless it is a
+  truly global intelligence item.
+- Every module checks subscription entitlements before policy assignment,
+  collection, UI visibility, and report generation.
+- Seat-based limits cover endpoint and user modules; asset-based limits cover
+  DRP/EASM domains, brands, executives, social accounts, IPs, and cloud accounts.
+- Evidence is split from metadata: metadata stays in Postgres; screenshots,
+  HTML captures, paste snippets, scan artifacts, and reports go to object storage
+  with retention and privacy controls.
+- AI-generated summaries store structured confidence, source references, and
+  deterministic fallback fields so the product remains auditable.
+
+### 4.1.3 Prioritized MVP: Next 4 Weeks
+
+| Week | Priority | Deliverables | Acceptance signal |
+| --- | --- | --- | --- |
+| 1 | Tenancy, accounts, licensing enforcement | Persist account APIs, tenant-scoped auth/RBAC checks, `subscription_entitlements`, module visibility contract, partner/customer branding lookup | Platform Owner, MSP Partner, and Company roles can be represented and API tests prove cross-customer reads are blocked |
+| 2 | Semantic DLP + GenAI demo path | Presidio-compatible deterministic scanner hardening, semantic classifier stub behind gateway contract, GenAI destination context, policy simulation for keyword/regex/entity/semantic rules | Console can simulate and create alerts for sensitive text sent to Copilot/Claude/Gemini-style destinations without storing raw content |
+| 3 | Basic DRP monitoring | `monitored_assets`, `drp_policies`, `drp_findings`, source stubs for domains, paste/repo leaks, phishing feeds, AI explanation field, DRP console queue | MSP can add a brand/domain/executive asset and see normalized impersonation, typosquat, credential leak, and phishing findings for a customer |
+| 4 | Policy + incident integration | Core/Add-on policy sections for DLP/DRP/EASM, asset-based licensing validation, incident case correlation, smart notification draft, executive risk summary template | A customer can be onboarded, licensed, assigned policy, enrolled with an endpoint, and shown one cross-module incident tying endpoint/DLP/DRP evidence together |
+
+Do not start broad EASM scanning, takedown automation, or fully autonomous
+remediation before the tenant and entitlement checks are enforced. Those features
+have a high blast radius and need strong auditability from the first version.
+
+### 4.1.4 DRP + EASM Integration With Endpoint, DLP, And Agentic Modules
+
+DRP and EASM should amplify the existing Endpoint + DLP product rather than sit
+beside it.
+
+| Integration | How it works | Operator value |
+| --- | --- | --- |
+| DRP + DLP | Credential leaks, repo secrets, and paste findings reuse DLP entity detection, semantic classifiers, and GenAI-sensitive data labels | One classifier investment protects endpoints, AI tools, and external leak surfaces |
+| EASM + Endpoint | EASM-discovered assets are matched to enrolled endpoints, customer domains, certificates, and observed agent telemetry | MSPs can distinguish managed assets from shadow IT and prioritize exposed high-value systems |
+| DRP + Agentic IR | Phishing, impersonation, and leaked credential findings become incident triggers with investigation timelines and recommended response | Analysts receive a business-context incident instead of raw OSINT noise |
+| EASM + Agentic IR | New open ports, expired certs, vulnerable services, and KEV findings trigger playbooks for owner lookup, customer notification, patch guidance, or external block request | Exposure management becomes action-oriented and MSP-friendly |
+| Threat Intel + Endpoint | Indicators from DRP/EASM feed endpoint network protection, DNS reputation, and policy simulation after validation | External intelligence becomes endpoint protection without manual rule copying |
+| Reports + All Modules | Endpoint posture, GenAI DLP, DRP abuse, EASM exposure, takedown status, and remediation progress roll into white-label executive reports | MSPs can show reduced workload, risk reduction, and margin-supporting value every month |
+
+The product experience should optimize for fewer decisions per customer: group
+related findings, explain why they matter, recommend the smallest safe action,
+and let MSPs approve once across many similar companies when policy allows it.
+
 ### 4.2 Recommended Stack
 
 | Layer | Primary choice | Rationale |
@@ -309,11 +438,12 @@ The next development loop should build on the implemented MSP console foundation
 2. Add tenant-scoped authentication/RBAC middleware so all reads and writes are explicitly partner/customer bounded.
 3. Replace console-only Accounts and Licensing demo state with API-backed list/create/update flows and audit records.
 4. Add security event simulation tables and APIs: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/*` routes.
-5. Implement scenario generators for GenAI DLP paste, phishing click, USB copy, process anomaly, ransomware behavior, and vulnerability scan.
-6. Wire the console to a customer-scoped simulation workspace showing events, alerts, incident timeline, and recommended response.
-7. Replace installer metadata-only builds with real package assembly stubs: MSI/EXE, PKG, DEB, and RPM output directories plus signing-status tracking.
-8. Add AI risk report generation as structured deterministic templates first, then LLM gateway integration after provider abstraction, budget caps, and prompt audit exist.
-9. Build Policy Engine v2 from [docs/policy-engine.md](policy-engine.md): subscription entitlements, modular policy documents, inheritance, validation, templates, and dynamic console sections.
+5. Add external risk foundations: `monitored_assets`, `asset_change_events`, `drp_findings`, `easm_assets`, `easm_findings`, `intelligence_items`, and `takedown_requests`.
+6. Implement scenario generators for GenAI DLP paste, phishing click, USB copy, process anomaly, ransomware behavior, credential leak, typosquatting, exposed port, expired certificate, and critical vulnerability.
+7. Wire the console to a customer-scoped simulation workspace showing endpoint, DLP, DRP, EASM, and intelligence events in one incident timeline with recommended response.
+8. Replace installer metadata-only builds with real package assembly stubs: MSI/EXE, PKG, DEB, and RPM output directories plus signing-status tracking.
+9. Add AI risk report generation as structured deterministic templates first, then LLM gateway integration after provider abstraction, budget caps, and prompt audit exist.
+10. Build Policy Engine v2 from [docs/policy-engine.md](policy-engine.md): subscription entitlements, modular policy documents, inheritance, validation, templates, dynamic console sections, and asset-based DRP/EASM limits.
 
 Acceptance criteria for the next module:
 
@@ -321,7 +451,7 @@ Acceptance criteria for the next module:
 - Platform Owner, MSP Partner, and Company user scopes can be represented in persisted account records and enforced by API tests.
 - Licensing entitlements can distinguish Core features from add-ons before a policy or console section is enabled.
 - Simulation routes create durable events and alerts under the correct customer.
-- Alert records include category, confidence, recommended action, policy package id, and a concise AI-ready summary field.
+- Alert records include category, confidence, recommended action, policy package id, related external-risk finding ids, and a concise AI-ready summary field.
 - Tests cover each scenario route and prove cross-customer data is not returned by customer-scoped APIs.
 
 ## 16. Two-Week Proof-of-Concept Slice
