@@ -1,8 +1,40 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Building2, CheckCircle2, Download, Palette, Plus, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
-import { apiGet, apiPost } from "../api";
-import type { Customer, CustomerQuickCreateResult, InstallerPlatform, PolicyPackage } from "../api";
-import { EmptyState, ErrorBanner, LoadingRow, PageHeader, SuccessBanner } from "../components";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  AlertCircle,
+  Building2,
+  Check,
+  Copy,
+  Hash,
+  Key,
+  Layers,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
+import {
+  apiGet,
+  apiPost,
+  apiPut,
+  getAccountId,
+  setAccountId,
+  type CompanyLicense,
+  type CompanyLicenseAssign,
+  type Customer,
+  type CustomerQuickCreateResult,
+  type InstallerPlatform,
+  type MeResponse,
+  type PolicyPackage,
+  type Subscription,
+} from "../api";
+import {
+  EmptyState,
+  ErrorBanner,
+  LoadingRow,
+  PageHeader,
+  SideSheet,
+  SuccessBanner,
+} from "../components";
 
 const COMPANY_SIZES = ["1-10", "11-50", "51-250", "251-1000", "1000+"] as const;
 const PLATFORMS: { value: InstallerPlatform; label: string }[] = [
@@ -11,173 +43,823 @@ const PLATFORMS: { value: InstallerPlatform; label: string }[] = [
   { value: "linux_deb", label: "Linux DEB" },
 ];
 
-const ADD_ONS = [
-  { name: "Agentic Response", status: "Included", margin: "58%", detail: "Playbooks, investigation summaries, and guided remediation" },
-  { name: "Semantic DLP", status: "Included", margin: "56%", detail: "AI-native data loss prevention with explainable decisions" },
-  { name: "Sandbox Analyzer", status: "Add-on", margin: "49%", detail: "Detonation and artifact enrichment" },
-  { name: "Email Security", status: "Add-on", margin: "47%", detail: "Mailbox protection and phishing workflows" },
-  { name: "Mobile Security", status: "Add-on", margin: "45%", detail: "MDM-light posture and threat signals" },
-];
+const ADDON_LABELS: Record<string, string> = {
+  semantic_dlp: "Semantic DLP",
+  agentic_ir: "Agentic IR",
+  xdr: "XDR",
+  patch_management: "Patch Management",
+  sandbox_analyzer: "Sandbox Analyzer",
+  email_security: "Email Security",
+  mobile_security: "Mobile Security",
+  full_disk_encryption: "Full Disk Encryption",
+};
 
-const ROADMAP = [
-  "Build tenant model: Platform Owner, MSP Partner, Company, Company User, audit impersonation.",
-  "Ship Companies, Accounts, Licensing, policy assignment, and installer generation as the first console milestone.",
-  "Add dashboard variants per role, then incidents, risk, reports, and add-on billing telemetry.",
-  "Connect PSA/RMM integrations, white-label domains, usage-based pricing, and customer executive reporting.",
-];
+type CompanyRow = {
+  customer: Customer;
+  license: CompanyLicense | null;
+};
 
 export function CompaniesPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [me, setMe] = useState<MeResponse | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [accountInput, setAccountInput] = useState(getAccountId() ?? "");
+
+  const [rows, setRows] = useState<CompanyRow[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [policyPackages, setPolicyPackages] = useState<PolicyPackage[]>([]);
-  const [result, setResult] = useState<CustomerQuickCreateResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [selected, setSelected] = useState<CompanyRow | null>(null);
   const mountedRef = useRef(true);
 
-  const [name, setName] = useState("");
-  const [industry, setIndustry] = useState("Healthcare");
-  const [companySize, setCompanySize] = useState<(typeof COMPANY_SIZES)[number]>("11-50");
-  const [policyPackageId, setPolicyPackageId] = useState("");
-  const [platforms, setPlatforms] = useState<InstallerPlatform[]>(["windows_msi", "macos_pkg"]);
+  const canManageCompanies = (me?.permissions.companies ?? "none") === "manage";
+  const canViewLicensing = ["view", "edit", "manage"].includes(me?.permissions.licensing ?? "none");
 
-  async function load() {
+  const load = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const [nextCustomers, nextPackages] = await Promise.all([apiGet<Customer[]>("/customers"), apiGet<PolicyPackage[]>("/policy-packages")]);
-      if (mountedRef.current) {
-        setCustomers(nextCustomers);
-        setPolicyPackages(nextPackages);
-        setPolicyPackageId((current) => current || nextPackages[0]?.id || "");
-        setError(null);
-      }
+      const [companies, subs, packages] = await Promise.all([
+        apiGet<Customer[]>("/companies"),
+        apiGet<Subscription[]>("/subscriptions"),
+        apiGet<PolicyPackage[]>("/policy-packages"),
+      ]);
+      const licenses = await Promise.all(
+        companies.map(async (c) => {
+          try {
+            return await apiGet<CompanyLicense>(`/companies/${c.id}/license`);
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (!mountedRef.current) return;
+      setRows(companies.map((customer, idx) => ({ customer, license: licenses[idx] })));
+      setSubscriptions(subs);
+      setPolicyPackages(packages);
+      setError(null);
     } catch (err) {
       if (mountedRef.current) setError(err instanceof Error ? err.message : "Failed to load companies");
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
-  }
+  }, []);
+
+  const loadMe = useCallback(async () => {
+    if (!getAccountId()) {
+      setMe(null);
+      setAuthError("Sign in by pasting an account ID — temporary dev auth until SSO lands.");
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const next = await apiGet<MeResponse>("/me");
+      if (!mountedRef.current) return;
+      setMe(next);
+      setAuthError(null);
+      await load();
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setMe(null);
+      setAuthError(err instanceof Error ? err.message : "Auth failed");
+      setIsLoading(false);
+    }
+  }, [load]);
 
   useEffect(() => {
     mountedRef.current = true;
-    queueMicrotask(() => void load());
-    return () => { mountedRef.current = false; };
-  }, []);
+    void loadMe();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [loadMe]);
 
-  const selectedPackage = useMemo(() => policyPackages.find((item) => item.id === policyPackageId) ?? policyPackages[0] ?? null, [policyPackageId, policyPackages]);
-  const protectedEndpointEstimate = customers.reduce((total, customer) => total + sizeEstimate(customer.company_size), 0);
-  const averageEfficiency = customers.length > 0 ? Math.round(customers.reduce((total, customer) => total + efficiencyScore(customer), 0) / customers.length) : 92;
+  function handleSignIn(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = accountInput.trim();
+    if (!trimmed) return;
+    setAccountId(trimmed);
+    void loadMe();
+  }
+
+  function handleSignOut() {
+    setAccountId(null);
+    setAccountInput("");
+    setMe(null);
+    setRows([]);
+    setAuthError("Signed out.");
+  }
+
+  if (!me) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="MSP tenant foundation"
+          title="Companies + Licensing"
+          subtitle="Sign in with an account ID to load tenant-scoped data."
+        />
+        {authError ? <ErrorBanner message={authError} /> : null}
+        <section className="panel" style={{ maxWidth: 520 }}>
+          <div className="panelHeader">
+            <div>
+              <h2>Dev sign-in</h2>
+              <span>Paste a platform owner / partner / company account UUID.</span>
+            </div>
+            <Key size={18} />
+          </div>
+          <form className="formStack" onSubmit={handleSignIn}>
+            <div className="formRow">
+              <label htmlFor="accountId">Account ID</label>
+              <input
+                id="accountId"
+                placeholder="00000000-0000-0000-0000-000000000000"
+                value={accountInput}
+                onChange={(event) => setAccountInput(event.target.value)}
+              />
+            </div>
+            <div className="formActions">
+              <button type="submit" className="btnPrimary" disabled={!accountInput.trim()}>
+                Sign in
+              </button>
+            </div>
+          </form>
+        </section>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow={me.scope.is_platform ? "Platform owner" : me.scope.partner_ids.length ? "MSP partner" : "Company user"}
+        title="Companies + Licensing"
+        subtitle={`Signed in as ${me.account.email}. ${rows.length} ${rows.length === 1 ? "company" : "companies"} in scope.`}
+      />
+      {error ? <ErrorBanner message={error} /> : null}
+      {success ? <SuccessBanner message={success} /> : null}
+
+      <section className="panel companyTablePanel">
+        <div className="panelHeader">
+          <div>
+            <h2>Company Hub</h2>
+            <span>Licensing posture, seat usage, and per-company configuration in one place.</span>
+          </div>
+          <div className="panelActions">
+            <button type="button" className="btnGhost" onClick={() => void load()} aria-label="Refresh">
+              <RefreshCw size={16} /> Refresh
+            </button>
+            {canManageCompanies ? (
+              <button type="button" className="btnPrimary" onClick={() => setShowCreate(true)}>
+                <Plus size={16} /> Add company
+              </button>
+            ) : null}
+            <button type="button" className="btnGhost" onClick={handleSignOut}>
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        <div className="companyGrid">
+          <div className="companyGridHead">
+            <span>Company</span>
+            <span>Type</span>
+            <span>Status</span>
+            <span>License key</span>
+            <span>Expires</span>
+            <span>Seats (used / reserved / total)</span>
+            <span>Renewal</span>
+            <span />
+          </div>
+          {isLoading ? <LoadingRow label="Loading companies" /> : null}
+          {!isLoading && rows.length === 0 ? (
+            <EmptyState>No companies in scope yet. Add one to begin.</EmptyState>
+          ) : null}
+          {rows.map((row) => (
+            <button
+              type="button"
+              className="companyGridRow"
+              key={row.customer.id}
+              onClick={() => setSelected(row)}
+            >
+              <span className="cellCompany">
+                <Building2 size={16} />
+                <strong>{row.customer.name}</strong>
+                <em>{row.customer.customer_number}</em>
+              </span>
+              <span>{row.customer.industry ?? "—"}</span>
+              <span className={`statusPill status-${row.customer.status}`}>{row.customer.status}</span>
+              <span className="mono">
+                {row.license ? row.license.license_key : <em className="muted">Unlicensed</em>}
+              </span>
+              <span>{row.license?.expires_at ? formatDate(row.license.expires_at) : "—"}</span>
+              <span>
+                {row.license
+                  ? `${row.license.products.reduce((a, p) => a + p.used_seats, 0)} / ${row.license.reserved_seats} / ${row.license.total_seats}`
+                  : "—"}
+              </span>
+              <span>
+                {row.license ? (
+                  row.license.auto_renewal ? (
+                    <span className="pillSubtle"><Check size={12} /> Auto</span>
+                  ) : (
+                    <span className="pillSubtle"><AlertCircle size={12} /> Manual</span>
+                  )
+                ) : (
+                  "—"
+                )}
+              </span>
+              <span className="cellActions">
+                <MoreHorizontal size={16} />
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <CreateCompanySheet
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        policyPackages={policyPackages}
+        onCreated={(message) => {
+          setShowCreate(false);
+          setSuccess(message);
+          void load();
+        }}
+        onError={(message) => setError(message)}
+      />
+
+      <CompanyEditSheet
+        row={selected}
+        onClose={() => setSelected(null)}
+        subscriptions={subscriptions}
+        canManageLicensing={(me.permissions.licensing ?? "none") === "manage"}
+        canViewLicensing={canViewLicensing}
+        onLicenseAssigned={(updated) => {
+          setSuccess(`License updated for ${updated.customer.name}.`);
+          setSelected(updated);
+          setRows((current) =>
+            current.map((r) => (r.customer.id === updated.customer.id ? updated : r)),
+          );
+        }}
+        onError={(message) => setError(message)}
+      />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Create Company side-sheet (wraps existing /customers/quick-create)
+// ---------------------------------------------------------------------------
+
+function CreateCompanySheet({
+  open,
+  onClose,
+  policyPackages,
+  onCreated,
+  onError,
+}: {
+  open: boolean;
+  onClose: () => void;
+  policyPackages: PolicyPackage[];
+  onCreated: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [industry, setIndustry] = useState("Healthcare");
+  const [companySize, setCompanySize] =
+    useState<(typeof COMPANY_SIZES)[number]>("11-50");
+  const [policyPackageId, setPolicyPackageId] = useState("");
+  const [platforms, setPlatforms] = useState<InstallerPlatform[]>([
+    "windows_msi",
+    "macos_pkg",
+  ]);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (open && policyPackages[0] && !policyPackageId) {
+      setPolicyPackageId(policyPackages[0].id);
+    }
+  }, [open, policyPackages, policyPackageId]);
 
   function togglePlatform(platform: InstallerPlatform) {
-    setPlatforms((current) => current.includes(platform) ? current.filter((item) => item !== platform) : [...current, platform]);
+    setPlatforms((current) =>
+      current.includes(platform)
+        ? current.filter((item) => item !== platform)
+        : [...current, platform],
+    );
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setIsCreating(true);
-    setError(null);
-    setSuccess(null);
-    setResult(null);
+    setIsSaving(true);
     try {
       const created = await apiPost<CustomerQuickCreateResult>("/customers/quick-create", {
         name: name.trim(),
         industry,
         country: "US",
         company_size: companySize,
-        policy_package_id: selectedPackage?.id ?? null,
+        policy_package_id: policyPackageId || null,
         platforms,
         installer_ttl_seconds: 86_400,
-        created_by: "msp-partner",
+        created_by: "console",
       });
-      setResult(created);
-      setSuccess(`${created.customer.name} is created, licensed, assigned to policy, and ready for installer deployment.`);
       setName("");
-      await load();
+      onCreated(
+        `${created.customer.name} is created, policy assigned, and installers queued.`,
+      );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Company creation failed");
+      onError(err instanceof Error ? err.message : "Company creation failed");
     } finally {
-      setIsCreating(false);
+      setIsSaving(false);
     }
   }
 
   return (
-    <>
-      <PageHeader
-        eyebrow="MSP tenant foundation"
-        title="Companies + Licensing"
-        subtitle="Create customer companies, attach Core + add-ons, assign policies, and generate installers from one calm workflow"
-      />
-      {error ? <ErrorBanner message={error} /> : null}
-      {success ? <SuccessBanner message={success} /> : null}
-
-      <section className="metrics mspMetrics" aria-label="MSP company metrics">
-        <Metric label="Companies" value={isLoading ? "..." : String(customers.length)} />
-        <Metric label="Protected endpoints" value={String(protectedEndpointEstimate)} />
-        <Metric label="AI efficiency score" value={`${averageEfficiency}%`} />
-        <Metric label="Partner margin target" value="45-60%" />
-      </section>
-
-      <section className="grid companyFoundationGrid">
-        <form className="panel companyCreatePanel" onSubmit={submit}>
-          <div className="panelHeader">
-            <div><h2>Add Company</h2><span>Company creation flows directly into policy assignment and customized installer generation.</span></div>
-            <span className="badge">Core</span>
+    <SideSheet open={open} onClose={onClose} title="Add company" subtitle="Quick create with policy and installers" width={560}>
+      <form className="formStack" onSubmit={submit}>
+        <div className="formRow">
+          <label htmlFor="newCompanyName">Company name</label>
+          <input
+            id="newCompanyName"
+            required
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Northwind Dental"
+          />
+        </div>
+        <div className="formGrid2">
+          <div className="formRow">
+            <label htmlFor="newIndustry">Industry</label>
+            <input id="newIndustry" value={industry} onChange={(event) => setIndustry(event.target.value)} />
           </div>
-          <div className="formRow"><label htmlFor="companyName">Company name</label><input id="companyName" required maxLength={160} value={name} onChange={(event) => setName(event.target.value)} placeholder="Northwind Dental" /></div>
-          <div className="formGrid2">
-            <div className="formRow"><label htmlFor="industry">Industry</label><input id="industry" value={industry} onChange={(event) => setIndustry(event.target.value)} /></div>
-            <div className="formRow"><label htmlFor="companySize">Company size</label><select id="companySize" value={companySize} onChange={(event) => setCompanySize(event.target.value as typeof companySize)}>{COMPANY_SIZES.map((size) => <option key={size}>{size}</option>)}</select></div>
+          <div className="formRow">
+            <label htmlFor="newSize">Company size</label>
+            <select id="newSize" value={companySize} onChange={(event) => setCompanySize(event.target.value as typeof companySize)}>
+              {COMPANY_SIZES.map((size) => (
+                <option key={size}>{size}</option>
+              ))}
+            </select>
           </div>
-          <div className="formRow"><label htmlFor="policyPackage">Configuration profile</label><select id="policyPackage" value={policyPackageId} onChange={(event) => setPolicyPackageId(event.target.value)}>{policyPackages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
+        </div>
+        <div className="formRow">
+          <label htmlFor="newPolicy">Configuration profile</label>
+          <select id="newPolicy" value={policyPackageId} onChange={(event) => setPolicyPackageId(event.target.value)}>
+            <option value="">— None —</option>
+            {policyPackages.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="formRow">
+          <label>Platforms</label>
           <div className="platformCheckGrid">
-            {PLATFORMS.map((platform) => <label key={platform.value} className={platforms.includes(platform.value) ? "platformCheck active" : "platformCheck"}><input type="checkbox" checked={platforms.includes(platform.value)} onChange={() => togglePlatform(platform.value)} /><span>{platform.label.split(" ").at(-1)}</span>{platform.label}</label>)}
+            {PLATFORMS.map((platform) => (
+              <label
+                key={platform.value}
+                className={platforms.includes(platform.value) ? "platformCheck active" : "platformCheck"}
+              >
+                <input
+                  type="checkbox"
+                  checked={platforms.includes(platform.value)}
+                  onChange={() => togglePlatform(platform.value)}
+                />
+                <span>{platform.label}</span>
+              </label>
+            ))}
           </div>
-          <div className="formActions"><button className="btnPrimary" type="submit" disabled={isCreating || !name.trim() || platforms.length === 0}>{isCreating ? <RefreshCw size={16} className="spinIcon" /> : <Plus size={16} />} {isCreating ? "Creating" : "Create Company"}</button></div>
-        </form>
-
-        <aside className="panel licensePanel">
-          <div className="panelHeader">
-            <div><h2>Licensing</h2><span>Subscription-aware Core + add-ons for high-margin MSP packaging.</span></div>
-            <ShieldCheck size={20} />
-          </div>
-          <div className="licenseBase"><strong>Aetherix Core</strong><span>EDR, DLP, policies, endpoint health, installers, and executive reporting</span><b>$6.80 endpoint / month</b></div>
-          <div className="addonList">
-            {ADD_ONS.map((addon) => <article key={addon.name}><div><strong>{addon.name}</strong><span>{addon.detail}</span></div><b>{addon.status}</b><em>{addon.margin}</em></article>)}
-          </div>
-        </aside>
-      </section>
-
-      {result ? <section className="panel readyFlow"><div className="panelHeader"><div><h2>{result.customer.name} deployment path</h2><span>Direct link: Company creation → Policy assignment → Customized installer generation.</span></div><span className="badge">Ready</span></div><div className="flowSteps"><article><CheckCircle2 size={18} /><strong>Company</strong><span>{result.customer.customer_number}</span></article><article><ShieldCheck size={18} /><strong>Policy</strong><span>{result.assignment.policy_name}</span></article><article><Download size={18} /><strong>Installers</strong><span>{result.installers.length} generated</span></article><article><Sparkles size={18} /><strong>AI Efficiency</strong><span>{efficiencyScore(result.customer)}%</span></article></div></section> : null}
-
-      <section className="panel companyTablePanel">
-        <div className="panelHeader"><div><h2>Company Hub</h2><span>Platform Owner sees all partners; MSP Partners see only their own company tree; company users see one assigned company.</span></div><button className="btnSecondary" type="button"><Palette size={16} /> White-label</button></div>
-        <div className="companyTableHead"><span>Company</span><span>Policy</span><span>Core</span><span>Add-ons</span><span>AI Efficiency</span><span>Status</span></div>
-        {customers.map((customer) => <article className="companyTableRow" key={customer.id}><div><Building2 size={17} /><strong>{customer.name}</strong><span>{customer.customer_number} · {customer.industry ?? "General"}</span></div><span>{customer.assigned_policy_name ?? "Unassigned"}</span><span>{sizeEstimate(customer.company_size)} endpoints</span><span>Semantic DLP, Agentic Response</span><span>{efficiencyScore(customer)}%</span><span className="statusPill status-active">{customer.status}</span></article>)}
-        {isLoading ? <LoadingRow label="Loading companies" /> : null}
-        {!isLoading && customers.length === 0 ? <EmptyState>No companies yet. Create the first company to seed the MSP hierarchy.</EmptyState> : null}
-      </section>
-
-      <section className="architectureGrid">
-        <article className="panel"><div className="panelHeader"><div><h2>Console Architecture</h2><span>High-level service split for the next implementation phase.</span></div></div><div className="architectureList"><span>React console with role-aware navigation, partner theme tokens, and scoped API clients.</span><span>FastAPI control plane for tenants, accounts, policies, licensing, installers, and audit.</span><span>Postgres as source of truth with tenant-scoped rows and immutable audit chain.</span><span>Agent services for enrollment, heartbeat, policy delivery, telemetry, and response.</span></div></article>
-        <article className="panel"><div className="panelHeader"><div><h2>Implementation Roadmap</h2><span>Foundation first, then the rest of the platform surface.</span></div></div><ol className="roadmapList">{ROADMAP.map((item) => <li key={item}>{item}</li>)}</ol></article>
-      </section>
-    </>
+        </div>
+        <div className="formActions">
+          <button type="button" className="btnGhost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btnPrimary" type="submit" disabled={isSaving || !name.trim() || platforms.length === 0}>
+            {isSaving ? <RefreshCw size={16} className="spinIcon" /> : <Plus size={16} />} {isSaving ? "Creating" : "Create"}
+          </button>
+        </div>
+      </form>
+    </SideSheet>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <article className="metric"><span>{label}</span><strong>{value}</strong></article>;
+// ---------------------------------------------------------------------------
+// Company Edit side-sheet — Details / Auth / Licensing / Products Hub
+// ---------------------------------------------------------------------------
+
+type EditTab = "details" | "auth" | "licensing" | "products";
+
+function CompanyEditSheet({
+  row,
+  onClose,
+  subscriptions,
+  canManageLicensing,
+  canViewLicensing,
+  onLicenseAssigned,
+  onError,
+}: {
+  row: CompanyRow | null;
+  onClose: () => void;
+  subscriptions: Subscription[];
+  canManageLicensing: boolean;
+  canViewLicensing: boolean;
+  onLicenseAssigned: (updated: CompanyRow) => void;
+  onError: (message: string) => void;
+}) {
+  const [tab, setTab] = useState<EditTab>("details");
+  const customerId = row?.customer.id;
+
+  useEffect(() => {
+    if (customerId) setTab("details");
+  }, [customerId]);
+
+  if (!row) {
+    return null;
+  }
+
+  return (
+    <SideSheet
+      open={!!row}
+      onClose={onClose}
+      title={row.customer.name}
+      subtitle={`${row.customer.customer_number} · ${row.customer.industry ?? "General"}`}
+      width={720}
+    >
+      <nav className="tabBar" role="tablist">
+        {(["details", "auth", "licensing", "products"] as EditTab[]).map((t) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            className={tab === t ? "tabBtn active" : "tabBtn"}
+            onClick={() => setTab(t)}
+          >
+            {tabLabel(t)}
+          </button>
+        ))}
+      </nav>
+
+      {tab === "details" ? <DetailsTab row={row} /> : null}
+      {tab === "auth" ? <AuthTab row={row} /> : null}
+      {tab === "licensing" ? (
+        <LicensingTab
+          row={row}
+          subscriptions={subscriptions}
+          canManage={canManageLicensing}
+          canView={canViewLicensing}
+          onAssigned={onLicenseAssigned}
+          onError={onError}
+        />
+      ) : null}
+      {tab === "products" ? <ProductsTab row={row} /> : null}
+    </SideSheet>
+  );
 }
 
-function sizeEstimate(size: Customer["company_size"]): number {
-  if (size === "1-10") return 8;
-  if (size === "11-50") return 34;
-  if (size === "51-250") return 140;
-  if (size === "251-1000") return 620;
-  if (size === "1000+") return 1450;
-  return 25;
+function tabLabel(tab: EditTab): string {
+  if (tab === "details") return "Details";
+  if (tab === "auth") return "Authentication";
+  if (tab === "licensing") return "Licensing";
+  return "Products Hub";
 }
 
-function efficiencyScore(customer: Customer): number {
-  return Math.min(98, 86 + (customer.name.length % 9));
+function DetailsTab({ row }: { row: CompanyRow }) {
+  const { customer } = row;
+  return (
+    <div className="tabPanel">
+      <KvList
+        items={[
+          ["Company ID", customer.id],
+          ["Customer number", customer.customer_number],
+          ["Industry", customer.industry ?? "—"],
+          ["Country", customer.country ?? "—"],
+          ["Company size", customer.company_size ?? "—"],
+          ["Status", customer.status],
+          ["Created", formatDate(customer.created_at)],
+          ["Created by", customer.created_by],
+        ]}
+      />
+    </div>
+  );
+}
+
+function AuthTab({ row }: { row: CompanyRow }) {
+  return (
+    <div className="tabPanel">
+      <p className="muted">
+        Account management for {row.customer.name} lives on the Accounts page. Per-company SSO,
+        2FA enforcement, and impersonation policy land in a later step.
+      </p>
+    </div>
+  );
+}
+
+function LicensingTab({
+  row,
+  subscriptions,
+  canManage,
+  canView,
+  onAssigned,
+  onError,
+}: {
+  row: CompanyRow;
+  subscriptions: Subscription[];
+  canManage: boolean;
+  canView: boolean;
+  onAssigned: (updated: CompanyRow) => void;
+  onError: (message: string) => void;
+}) {
+  const initialLicense = row.license;
+  const [sku, setSku] = useState(initialLicense?.subscription_sku ?? subscriptions[0]?.sku ?? "");
+  const [paymentPlan, setPaymentPlan] = useState<NonNullable<CompanyLicenseAssign["payment_plan"]>>(
+    initialLicense?.payment_plan ?? "monthly",
+  );
+  const [totalSeats, setTotalSeats] = useState<number>(initialLicense?.total_seats ?? 10);
+  const [reservedSeats, setReservedSeats] = useState<number>(initialLicense?.reserved_seats ?? 0);
+  const [autoRenewal, setAutoRenewal] = useState<boolean>(initialLicense?.auto_renewal ?? true);
+  const [minimumUsage, setMinimumUsage] = useState<number>(initialLicense?.minimum_usage ?? 0);
+  const [expiresAt, setExpiresAt] = useState<string>(
+    initialLicense?.expires_at ? initialLicense.expires_at.slice(0, 10) : "",
+  );
+  const [addons, setAddons] = useState<string[]>(initialLicense?.addons ?? []);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const licenseKey = initialLicense?.id;
+  useEffect(() => {
+    setSku(initialLicense?.subscription_sku ?? subscriptions[0]?.sku ?? "");
+    setPaymentPlan(initialLicense?.payment_plan ?? "monthly");
+    setTotalSeats(initialLicense?.total_seats ?? 10);
+    setReservedSeats(initialLicense?.reserved_seats ?? 0);
+    setAutoRenewal(initialLicense?.auto_renewal ?? true);
+    setMinimumUsage(initialLicense?.minimum_usage ?? 0);
+    setExpiresAt(initialLicense?.expires_at ? initialLicense.expires_at.slice(0, 10) : "");
+    setAddons(initialLicense?.addons ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [licenseKey, subscriptions]);
+
+  const selected = useMemo(() => subscriptions.find((s) => s.sku === sku), [subscriptions, sku]);
+
+  if (!canView) {
+    return (
+      <div className="tabPanel">
+        <p className="muted">You don't have permission to view licensing for this company.</p>
+      </div>
+    );
+  }
+
+  function toggleAddon(addon: string) {
+    setAddons((current) =>
+      current.includes(addon) ? current.filter((a) => a !== addon) : [...current, addon],
+    );
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!sku) return;
+    setIsSaving(true);
+    try {
+      const payload: CompanyLicenseAssign = {
+        subscription_sku: sku,
+        payment_plan: paymentPlan,
+        total_seats: totalSeats,
+        reserved_seats: reservedSeats,
+        auto_renewal: autoRenewal,
+        minimum_usage: minimumUsage,
+        addons,
+        expires_at: expiresAt ? new Date(`${expiresAt}T00:00:00Z`).toISOString() : null,
+      };
+      const license = await apiPut<CompanyLicense>(`/companies/${row.customer.id}/license`, payload);
+      onAssigned({ customer: row.customer, license });
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to update license");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <form className="tabPanel formStack" onSubmit={save}>
+      <div className="licensingIds">
+        <CopyChip label="Company ID" value={row.customer.id} icon={<Building2 size={14} />} />
+        {initialLicense ? (
+          <>
+            <CopyChip label="License key" value={initialLicense.license_key} icon={<Key size={14} />} />
+            <CopyChip label="Company hash" value={initialLicense.company_hash} icon={<Hash size={14} />} />
+          </>
+        ) : null}
+      </div>
+
+      <fieldset disabled={!canManage} className="fieldsetClean">
+        <div className="formGrid2">
+          <div className="formRow">
+            <label htmlFor="lcnSku">Subscription</label>
+            <select id="lcnSku" value={sku} onChange={(event) => setSku(event.target.value)}>
+              {subscriptions.map((s) => (
+                <option key={s.sku} value={s.sku}>
+                  {s.display_name} · ${s.list_price_per_seat.toFixed(2)}/seat
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="formRow">
+            <label htmlFor="lcnPlan">Payment plan</label>
+            <select
+              id="lcnPlan"
+              value={paymentPlan}
+              onChange={(event) => setPaymentPlan(event.target.value as typeof paymentPlan)}
+            >
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annual</option>
+              <option value="usage">Usage-based</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="formGrid3">
+          <div className="formRow">
+            <label htmlFor="lcnTotal">Total seats</label>
+            <input
+              id="lcnTotal"
+              type="number"
+              min={0}
+              value={totalSeats}
+              onChange={(event) => setTotalSeats(Math.max(0, Number(event.target.value)))}
+            />
+          </div>
+          <div className="formRow">
+            <label htmlFor="lcnReserved">Reserved seats</label>
+            <input
+              id="lcnReserved"
+              type="number"
+              min={0}
+              value={reservedSeats}
+              onChange={(event) => setReservedSeats(Math.max(0, Number(event.target.value)))}
+            />
+          </div>
+          <div className="formRow">
+            <label htmlFor="lcnMinUsage">Minimum usage</label>
+            <input
+              id="lcnMinUsage"
+              type="number"
+              min={0}
+              value={minimumUsage}
+              onChange={(event) => setMinimumUsage(Math.max(0, Number(event.target.value)))}
+            />
+          </div>
+        </div>
+
+        <div className="formGrid2">
+          <div className="formRow">
+            <label htmlFor="lcnExpires">Expires on</label>
+            <input
+              id="lcnExpires"
+              type="date"
+              value={expiresAt}
+              onChange={(event) => setExpiresAt(event.target.value)}
+            />
+          </div>
+          <div className="formRow toggleRow">
+            <label htmlFor="lcnAuto">Auto-renewal</label>
+            <label className="switch">
+              <input
+                id="lcnAuto"
+                type="checkbox"
+                checked={autoRenewal}
+                onChange={(event) => setAutoRenewal(event.target.checked)}
+              />
+              <span />
+            </label>
+          </div>
+        </div>
+
+        <div className="addonGrid">
+          <div className="addonGridHead">
+            <ShieldCheck size={14} /> Add-ons
+            {selected ? <em className="muted">{selected.available_addons.length} available on {selected.display_name}</em> : null}
+          </div>
+          <div className="addonGridBody">
+            {(selected?.available_addons ?? []).map((addon) => {
+              const isOn = addons.includes(addon);
+              return (
+                <button
+                  key={addon}
+                  type="button"
+                  className={isOn ? "addonChip on" : "addonChip"}
+                  onClick={() => toggleAddon(addon)}
+                  disabled={!canManage}
+                >
+                  <span>{ADDON_LABELS[addon] ?? addon}</span>
+                  {isOn ? <Check size={14} /> : <Plus size={14} />}
+                </button>
+              );
+            })}
+            {!selected ? <em className="muted">Select a subscription to view add-ons.</em> : null}
+          </div>
+        </div>
+
+        {canManage ? (
+          <div className="formActions">
+            <button type="submit" className="btnPrimary" disabled={isSaving || !sku}>
+              {isSaving ? <RefreshCw size={16} className="spinIcon" /> : <ShieldCheck size={16} />} {isSaving ? "Saving" : initialLicense ? "Update license" : "Assign license"}
+            </button>
+          </div>
+        ) : (
+          <p className="muted">Read-only — requires the <code>licensing:manage</code> permission.</p>
+        )}
+      </fieldset>
+    </form>
+  );
+}
+
+function ProductsTab({ row }: { row: CompanyRow }) {
+  const products = row.license?.products ?? [];
+  if (!row.license) {
+    return (
+      <div className="tabPanel">
+        <p className="muted">No license assigned yet. Assign a subscription on the Licensing tab to materialize product entitlements.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="tabPanel">
+      <div className="productHead">
+        <Layers size={14} /> {products.length} product {products.length === 1 ? "line" : "lines"} active
+      </div>
+      <div className="productTable">
+        <div className="productTableHead">
+          <span>Product</span>
+          <span>Type</span>
+          <span>Model</span>
+          <span>Used / Total</span>
+          <span>Reserved</span>
+          <span>Status</span>
+        </div>
+        {products.map((p) => (
+          <div className="productTableRow" key={p.id}>
+            <span><strong>{p.product_name}</strong><em>{p.product_code}</em></span>
+            <span>{p.product_type}</span>
+            <span>{p.protection_model === "bundled" ? "Bundled" : "À la carte"}</span>
+            <span>{p.used_seats} / {p.total_seats}</span>
+            <span>{p.reserved_seats}</span>
+            <span className={`statusPill status-${p.status}`}>{p.status}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small helpers / sub-components
+// ---------------------------------------------------------------------------
+
+function KvList({ items }: { items: [string, string][] }) {
+  return (
+    <dl className="kvList">
+      {items.map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function CopyChip({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon?: ReactNode;
+}) {
+  const [copied, setCopied] = useState(false);
+  async function onCopy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+  return (
+    <button type="button" className="copyChip" onClick={onCopy} title={value}>
+      {icon}
+      <span className="copyChipLabel">{label}</span>
+      <code>{value.length > 24 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value}</code>
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch {
+    return iso;
+  }
 }

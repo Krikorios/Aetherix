@@ -326,7 +326,247 @@ _SCHEMA_STATEMENTS = (
         updated_at timestamptz not null
     )
     """,
+    # --- Companies + Licensing + Accounts module ---------------------------
+    """
+    create extension if not exists citext
+    """,
+    """
+    alter table partners add column if not exists tier text not null default 'msp'
+    """,
+    """
+    alter table partners add column if not exists branding jsonb not null default '{}'::jsonb
+    """,
+    """
+    alter table partners add column if not exists status text not null default 'active'
+    """,
+    """
+    alter table partners add column if not exists contact_email text
+    """,
+    """
+    alter table customers add column if not exists company_type text not null default 'standard'
+    """,
+    """
+    alter table customers add column if not exists branding jsonb not null default '{}'::jsonb
+    """,
+    """
+    alter table customers add column if not exists auto_renewal boolean not null default true
+    """,
+    """
+    alter table customers add column if not exists minimum_usage integer not null default 0
+    """,
+    """
+    alter table customers add column if not exists ai_features jsonb not null default '{}'::jsonb
+    """,
+    """
+    create table if not exists subscriptions (
+        id uuid primary key,
+        sku text not null unique,
+        display_name text not null,
+        tier text not null,
+        core_features jsonb not null default '[]'::jsonb,
+        available_addons jsonb not null default '[]'::jsonb,
+        billing_model text not null default 'monthly',
+        list_price_per_seat numeric(10,2) not null default 0,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create table if not exists company_licenses (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        subscription_id uuid not null references subscriptions(id),
+        license_key text not null unique,
+        company_hash text not null unique,
+        payment_plan text not null default 'monthly',
+        status text not null default 'active',
+        issued_at timestamptz not null,
+        expires_at timestamptz,
+        total_seats integer not null default 0,
+        reserved_seats integer not null default 0,
+        auto_renewal boolean not null default true,
+        minimum_usage integer not null default 0,
+        addons jsonb not null default '[]'::jsonb,
+        created_by text not null,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists company_licenses_customer_idx on company_licenses(customer_id)
+    """,
+    """
+    create table if not exists license_products (
+        id uuid primary key,
+        license_id uuid not null references company_licenses(id) on delete cascade,
+        product_code text not null,
+        product_name text not null,
+        product_type text not null,
+        protection_model text not null,
+        status text not null default 'active',
+        total_seats integer not null default 0,
+        used_seats integer not null default 0,
+        reserved_seats integer not null default 0,
+        unique (license_id, product_code)
+    )
+    """,
+    """
+    create table if not exists license_usage_daily (
+        license_id uuid not null references company_licenses(id) on delete cascade,
+        product_code text not null,
+        day date not null,
+        active_seats integer not null default 0,
+        peak_seats integer not null default 0,
+        primary key (license_id, product_code, day)
+    )
+    """,
+    """
+    create table if not exists accounts (
+        id uuid primary key,
+        email citext not null unique,
+        full_name text not null,
+        password_hash text,
+        status text not null default 'invited',
+        two_factor text not null default 'missing',
+        password_expires_at timestamptz,
+        locked_until timestamptz,
+        last_login_at timestamptz,
+        created_by text not null,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create table if not exists roles (
+        code text primary key,
+        display_name text not null,
+        permissions jsonb not null
+    )
+    """,
+    """
+    create table if not exists account_roles (
+        id uuid primary key,
+        account_id uuid not null references accounts(id) on delete cascade,
+        role_code text not null references roles(code),
+        partner_id uuid references partners(id),
+        customer_id uuid references customers(id),
+        granted_by text not null,
+        granted_at timestamptz not null
+    )
+    """,
+    """
+    create unique index if not exists account_roles_unique_scope on account_roles(
+        account_id,
+        role_code,
+        coalesce(partner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        coalesce(customer_id, '00000000-0000-0000-0000-000000000000'::uuid)
+    )
+    """,
+    """
+    create index if not exists account_roles_account_idx on account_roles(account_id)
+    """,
+    """
+    create index if not exists account_roles_partner_idx on account_roles(partner_id)
+    """,
+    """
+    create index if not exists account_roles_customer_idx on account_roles(customer_id)
+    """,
+    """
+    create table if not exists impersonation_sessions (
+        id uuid primary key,
+        actor_account_id uuid not null references accounts(id),
+        target_account_id uuid not null references accounts(id),
+        reason text not null,
+        started_at timestamptz not null,
+        ended_at timestamptz
+    )
+    """,
 )
+
+
+# Permission levels used across roles. Higher index => more privilege.
+PERMISSION_LEVELS = ("none", "view", "edit", "manage")
+
+# Seeded role catalog. The permission keys are the resource domains used
+# by ``require(...)`` checks at the API layer.
+ROLE_SEED: tuple[dict, ...] = (
+    {
+        "code": "platform_owner",
+        "display_name": "Platform Owner",
+        "permissions": {
+            "companies": "manage",
+            "accounts": "manage",
+            "licensing": "manage",
+            "policies": "manage",
+            "incidents": "manage",
+            "impersonate": "manage",
+        },
+    },
+    {
+        "code": "msp_partner",
+        "display_name": "MSP Partner",
+        "permissions": {
+            "companies": "manage",
+            "accounts": "manage",
+            "licensing": "manage",
+            "policies": "manage",
+            "incidents": "manage",
+            "impersonate": "edit",
+        },
+    },
+    {
+        "code": "company_admin",
+        "display_name": "Company Administrator",
+        "permissions": {
+            "companies": "view",
+            "accounts": "manage",
+            "licensing": "view",
+            "policies": "edit",
+            "incidents": "manage",
+            "impersonate": "none",
+        },
+    },
+    {
+        "code": "company_tech",
+        "display_name": "Company Technician",
+        "permissions": {
+            "companies": "view",
+            "accounts": "none",
+            "licensing": "none",
+            "policies": "edit",
+            "incidents": "edit",
+            "impersonate": "none",
+        },
+    },
+    {
+        "code": "company_viewer",
+        "display_name": "Company Viewer",
+        "permissions": {
+            "companies": "view",
+            "accounts": "none",
+            "licensing": "view",
+            "policies": "view",
+            "incidents": "view",
+            "impersonate": "none",
+        },
+    },
+)
+
+
+def _seed_roles() -> None:
+    """Upsert the role catalog. Permissions reflect the latest definition."""
+
+    import json as _json
+
+    with connection() as conn, conn.cursor() as cur:
+        for role in ROLE_SEED:
+            cur.execute(
+                """
+                insert into roles (code, display_name, permissions)
+                values (%s, %s, %s::jsonb)
+                on conflict (code) do update
+                    set display_name = excluded.display_name,
+                        permissions = excluded.permissions
+                """,
+                (role["code"], role["display_name"], _json.dumps(role["permissions"])),
+            )
 
 
 def init_schema() -> None:
@@ -336,3 +576,4 @@ def init_schema() -> None:
         with conn.cursor() as cur:
             for statement in _SCHEMA_STATEMENTS:
                 cur.execute(statement)
+    _seed_roles()

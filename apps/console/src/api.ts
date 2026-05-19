@@ -204,11 +204,154 @@ export type CustomerQuickCreateResult = {
 };
 
 // ---------------------------------------------------------------------------
+// Tenancy & licensing
+// ---------------------------------------------------------------------------
+
+export type RoleCode =
+  | "platform_owner"
+  | "msp_partner"
+  | "company_admin"
+  | "company_tech"
+  | "company_viewer";
+
+export type PermissionLevel = "none" | "view" | "edit" | "manage";
+
+export type AccountStatus = "active" | "suspended" | "locked";
+
+export type Account = {
+  id: string;
+  email: string;
+  full_name: string | null;
+  status: AccountStatus;
+  two_factor: "disabled" | "pending" | "enrolled";
+  last_login_at: string | null;
+  created_at: string;
+  roles: RoleAssignment[];
+};
+
+export type RoleAssignment = {
+  id: string;
+  role_code: RoleCode;
+  partner_id: string | null;
+  customer_id: string | null;
+  granted_at: string;
+};
+
+export type Role = {
+  code: RoleCode;
+  display_name: string;
+  description: string;
+  permissions: Record<string, PermissionLevel>;
+};
+
+export type MeResponse = {
+  account: Account;
+  scope: {
+    is_platform: boolean;
+    partner_ids: string[];
+    customer_ids: string[];
+  };
+  permissions: Record<string, PermissionLevel>;
+};
+
+export type Subscription = {
+  id: string;
+  sku: string;
+  display_name: string;
+  tier: "core" | "advanced" | "enterprise";
+  core_features: string[];
+  available_addons: string[];
+  billing_model: "monthly" | "annual" | "usage";
+  list_price_per_seat: number;
+  created_at: string;
+};
+
+export type LicenseStatus = "active" | "trial" | "expired" | "suspended";
+export type ProtectionModel = "bundled" | "a_la_carte";
+
+export type LicenseProduct = {
+  id: string;
+  license_id: string;
+  product_code: string;
+  product_name: string;
+  product_type: string;
+  protection_model: ProtectionModel;
+  status: LicenseStatus;
+  total_seats: number;
+  used_seats: number;
+  reserved_seats: number;
+};
+
+export type CompanyLicense = {
+  id: string;
+  customer_id: string;
+  subscription_id: string;
+  subscription_sku: string;
+  license_key: string;
+  company_hash: string;
+  payment_plan: "monthly" | "annual" | "usage";
+  status: LicenseStatus;
+  issued_at: string;
+  expires_at: string | null;
+  total_seats: number;
+  reserved_seats: number;
+  auto_renewal: boolean;
+  minimum_usage: number;
+  addons: string[];
+  products: LicenseProduct[];
+  created_at: string;
+};
+
+export type CompanyLicenseAssign = {
+  subscription_sku: string;
+  payment_plan?: "monthly" | "annual" | "usage";
+  total_seats: number;
+  reserved_seats?: number;
+  expires_at?: string | null;
+  auto_renewal?: boolean;
+  minimum_usage?: number;
+  addons?: string[];
+};
+
+export type LicenseUsageDay = {
+  product_code: string;
+  day: string;
+  active_seats: number;
+  peak_seats: number;
+};
+
+// ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+const ACCOUNT_STORAGE_KEY = "aetherix.account_id";
+
+export function getAccountId(): string | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage.getItem(ACCOUNT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAccountId(id: string | null): void {
+  try {
+    if (typeof window === "undefined") return;
+    if (id) window.localStorage.setItem(ACCOUNT_STORAGE_KEY, id);
+    else window.localStorage.removeItem(ACCOUNT_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, init);
+  const headers = new Headers(init?.headers);
+  const accountId = getAccountId();
+  if (accountId) headers.set("X-Aetherix-Account", accountId);
+  if (init?.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await fetch(`${API}${path}`, { ...init, headers });
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
@@ -219,6 +362,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(detail);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -227,11 +371,15 @@ export function apiGet<T>(path: string): Promise<T> {
 }
 
 export function apiPost<T>(path: string, body: unknown): Promise<T> {
-  return apiFetch<T>(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return apiFetch<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiFetch<T>(path, { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function apiDelete<T = void>(path: string): Promise<T> {
+  return apiFetch<T>(path, { method: "DELETE" });
 }
 
 export function apiPatch<T>(path: string): Promise<T> {

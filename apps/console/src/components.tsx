@@ -1,4 +1,5 @@
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, X } from "lucide-react";
+import { useEffect, type ReactNode } from "react";
 import type { RiskBand } from "./api";
 
 export function LoadingRow({ label = "Loading…" }: { label?: string }) {
@@ -50,5 +51,55 @@ export function PageHeader({
       <h1>{title}</h1>
       {subtitle ? <span>{subtitle}</span> : null}
     </header>
+  );
+}
+
+export function SideSheet({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  width = 720,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  width?: number;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div className="sideSheetOverlay" onClick={onClose} role="presentation">
+      <aside
+        className="sideSheet"
+        style={{ width }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="sideSheetHead">
+          <div>
+            <h2>{title}</h2>
+            {subtitle ? <span>{subtitle}</span> : null}
+          </div>
+          <button type="button" className="iconBtn" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </header>
+        <div className="sideSheetBody">{children}</div>
+      </aside>
+    </div>
   );
 }

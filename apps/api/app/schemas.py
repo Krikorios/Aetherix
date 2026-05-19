@@ -369,3 +369,152 @@ class IncidentCase(BaseModel):
 class SimulationRequest(BaseModel):
     scenario: str
     agent_id: str
+
+
+# --- Companies + Licensing + Accounts module --------------------------------
+
+RoleCode = Literal[
+    "platform_owner",
+    "msp_partner",
+    "company_admin",
+    "company_tech",
+    "company_viewer",
+]
+PermissionLevel = Literal["none", "view", "edit", "manage"]
+AccountStatus = Literal["invited", "active", "locked", "suspended"]
+TwoFactorState = Literal["missing", "enabled", "enforced"]
+
+
+class Role(BaseModel):
+    code: RoleCode
+    display_name: str
+    permissions: dict[str, PermissionLevel]
+
+
+class RoleAssignment(BaseModel):
+    id: UUID
+    role_code: RoleCode
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+    granted_by: str
+    granted_at: datetime
+
+
+class RoleAssignmentRequest(BaseModel):
+    role_code: RoleCode
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+
+
+class AccountCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=240)
+    full_name: str = Field(min_length=1, max_length=160)
+    initial_role: RoleAssignmentRequest | None = None
+    created_by: str = Field(default="operator", min_length=1, max_length=120)
+
+
+class Account(BaseModel):
+    id: UUID
+    email: str
+    full_name: str
+    status: AccountStatus = "invited"
+    two_factor: TwoFactorState = "missing"
+    password_expires_at: datetime | None = None
+    locked_until: datetime | None = None
+    last_login_at: datetime | None = None
+    created_at: datetime
+    roles: list[RoleAssignment] = Field(default_factory=list)
+
+
+class TenantScope(BaseModel):
+    """Effective tenant visibility derived from an account's role assignments."""
+
+    is_platform: bool = False
+    partner_ids: list[UUID] = Field(default_factory=list)
+    customer_ids: list[UUID] = Field(default_factory=list)
+
+
+class MeResponse(BaseModel):
+    account: Account
+    permissions: dict[str, PermissionLevel]
+    scope: TenantScope
+
+
+# --- Subscriptions + Licensing ---------------------------------------------
+
+BillingModel = Literal["monthly", "annual", "usage"]
+PaymentPlan = BillingModel
+LicenseStatus = Literal["active", "expired", "suspended", "trial"]
+ProtectionModel = Literal["a_la_carte", "bundled"]
+
+
+class SubscriptionCreate(BaseModel):
+    sku: str = Field(min_length=1, max_length=80)
+    display_name: str = Field(min_length=1, max_length=200)
+    tier: Literal["core", "advanced", "enterprise"] = "core"
+    core_features: list[str] = Field(default_factory=list)
+    available_addons: list[str] = Field(default_factory=list)
+    billing_model: BillingModel = "monthly"
+    list_price_per_seat: float = Field(default=0, ge=0)
+
+
+class Subscription(SubscriptionCreate):
+    id: UUID
+    created_at: datetime
+
+
+class LicenseProduct(BaseModel):
+    id: UUID
+    license_id: UUID
+    product_code: str
+    product_name: str
+    product_type: str
+    protection_model: ProtectionModel
+    status: Literal["active", "suspended"] = "active"
+    total_seats: int = 0
+    used_seats: int = 0
+    reserved_seats: int = 0
+
+
+class LicenseProductSeats(BaseModel):
+    total_seats: int = Field(ge=0)
+    reserved_seats: int = Field(ge=0)
+
+
+class CompanyLicense(BaseModel):
+    id: UUID
+    customer_id: UUID
+    subscription_id: UUID
+    subscription_sku: str
+    license_key: str
+    company_hash: str
+    payment_plan: PaymentPlan
+    status: LicenseStatus
+    issued_at: datetime
+    expires_at: datetime | None = None
+    total_seats: int = 0
+    reserved_seats: int = 0
+    auto_renewal: bool = True
+    minimum_usage: int = 0
+    addons: list[str] = Field(default_factory=list)
+    products: list[LicenseProduct] = Field(default_factory=list)
+    created_at: datetime
+
+
+class CompanyLicenseAssign(BaseModel):
+    subscription_sku: str = Field(min_length=1, max_length=80)
+    payment_plan: PaymentPlan = "monthly"
+    total_seats: int = Field(default=0, ge=0)
+    reserved_seats: int = Field(default=0, ge=0)
+    addons: list[str] = Field(default_factory=list)
+    auto_renewal: bool = True
+    minimum_usage: int = Field(default=0, ge=0)
+    expires_at: datetime | None = None
+    products: list[LicenseProduct] | None = None
+
+
+class LicenseUsageDay(BaseModel):
+    product_code: str
+    day: datetime  # midnight UTC of the bucketed day
+    active_seats: int
+    peak_seats: int

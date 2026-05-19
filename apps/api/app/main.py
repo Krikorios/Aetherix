@@ -3,13 +3,17 @@ import psycopg
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentHeartbeat, Alert, Customer, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase
+from app.schemas import AgentHeartbeat, Alert, Customer, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, LicenseUsageDay, Subscription, SubscriptionCreate
 from app.services import audit
+from app.services import tenancy
+from app.services import licensing
+from app.services.tenancy import TenancyError
+from app.services.licensing import LicensingError
 from app.services.customers import CustomerError, assigned_policy, create_customer, create_quick_deploy_links, customer_groups, generate_installers, get_customer, list_customers, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy
 from app.services.dlp import apply_policy, scan_text
 from app.services.enrollment import EnrollmentError, consume_enrollment_token, issue_enrollment_token
@@ -434,3 +438,312 @@ def get_customer_incidents(customer_id: UUID):
         with conn.cursor() as cur:
             cur.execute("select * from incident_cases where customer_id = %s order by updated_at desc", (customer_id,))
             return cur.fetchall()
+
+
+# --- Accounts + RBAC --------------------------------------------------------
+#
+# Authentication is intentionally minimal until session auth ships: the
+# caller identifies themselves with the ``X-Aetherix-Account`` header
+# containing an account UUID. Every protected endpoint depends on
+# ``current_account`` and (where applicable) ``require(...)``.
+
+
+def current_account(
+    x_aetherix_account: str | None = Header(default=None, alias="X-Aetherix-Account"),
+) -> Account:
+    if not x_aetherix_account:
+        raise HTTPException(status_code=401, detail="missing X-Aetherix-Account header")
+    try:
+        account_id = UUID(x_aetherix_account)
+    except ValueError as error:
+        raise HTTPException(status_code=401, detail="invalid account id") from error
+    account = tenancy.get_account(account_id)
+    if account is None:
+        raise HTTPException(status_code=401, detail="unknown account")
+    if account.status in ("locked", "suspended"):
+        raise HTTPException(status_code=403, detail=f"account is {account.status}")
+    return account
+
+
+def require(
+    resource: str,
+    level: PermissionLevel,
+    *,
+    partner_id: UUID | None = None,
+    customer_id: UUID | None = None,
+):
+    """Build a FastAPI dependency that checks one permission."""
+
+    def _checker(account: Account = Depends(current_account)) -> Account:
+        if not tenancy.has_permission(
+            account,
+            resource,
+            level,
+            partner_id=partner_id,
+            customer_id=customer_id,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"requires {level} on {resource}",
+            )
+        return account
+
+    return _checker
+
+
+@app.get("/me", response_model=MeResponse)
+def me(account: Account = Depends(current_account)) -> MeResponse:
+    return tenancy.me(account)
+
+
+@app.get("/roles", response_model=list[Role])
+def list_roles_route(_: Account = Depends(current_account)) -> list[Role]:
+    return tenancy.list_roles()
+
+
+@app.get("/accounts", response_model=list[Account])
+def list_accounts_route(
+    _: Account = Depends(require("accounts", "view")),
+) -> list[Account]:
+    return tenancy.list_accounts()
+
+
+@app.post("/accounts", response_model=Account, status_code=201)
+def create_account_route(
+    payload: AccountCreate,
+    http_request: Request,
+    actor: Account = Depends(require("accounts", "manage")),
+) -> Account:
+    payload.created_by = str(actor.id)
+    try:
+        account = tenancy.create_account(payload)
+    except TenancyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="account.create",
+        resource=f"account:{account.id}",
+        actor=str(actor.id),
+        after={"email": account.email, "full_name": account.full_name},
+        request_id=_request_id(http_request),
+    )
+    return account
+
+
+@app.get("/accounts/{account_id}", response_model=Account)
+def get_account_route(
+    account_id: UUID,
+    _: Account = Depends(require("accounts", "view")),
+) -> Account:
+    account = tenancy.get_account(account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    return account
+
+
+@app.post(
+    "/accounts/{account_id}/roles",
+    response_model=RoleAssignment,
+    status_code=201,
+)
+def assign_role_route(
+    account_id: UUID,
+    payload: RoleAssignmentRequest,
+    http_request: Request,
+    actor: Account = Depends(require("accounts", "manage")),
+) -> RoleAssignment:
+    try:
+        assignment = tenancy.assign_role(account_id, payload, granted_by=str(actor.id))
+    except TenancyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="account.role.assign",
+        resource=f"account:{account_id}",
+        actor=str(actor.id),
+        after={
+            "role_code": assignment.role_code,
+            "partner_id": str(assignment.partner_id) if assignment.partner_id else None,
+            "customer_id": str(assignment.customer_id) if assignment.customer_id else None,
+        },
+        request_id=_request_id(http_request),
+    )
+    return assignment
+
+
+@app.delete("/accounts/{account_id}/roles/{assignment_id}", status_code=204)
+def revoke_role_route(
+    account_id: UUID,
+    assignment_id: UUID,
+    http_request: Request,
+    actor: Account = Depends(require("accounts", "manage")),
+) -> None:
+    removed = tenancy.revoke_role(account_id, assignment_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="role assignment not found")
+    audit.record(
+        action="account.role.revoke",
+        resource=f"account:{account_id}",
+        actor=str(actor.id),
+        after={"assignment_id": str(assignment_id)},
+        request_id=_request_id(http_request),
+    )
+
+
+# --- Companies (tenant-scoped) ---------------------------------------------
+
+
+def _company_or_404(customer_id: UUID) -> Customer:
+    company = get_customer(customer_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="company not found")
+    return company
+
+
+def _require_company_access(
+    customer_id: UUID,
+    resource: str,
+    level: PermissionLevel,
+    account: Account,
+) -> Customer:
+    """Resolve a company and verify the caller can act on it.
+
+    Translates ``customer_id`` to ``partner_id`` so MSP partner role
+    assignments are evaluated against the company's owning partner.
+    """
+
+    company = _company_or_404(customer_id)
+    if not tenancy.has_permission(
+        account,
+        resource,
+        level,
+        partner_id=company.partner_id,
+        customer_id=customer_id,
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"requires {level} on {resource} for this company",
+        )
+    return company
+
+
+def _filter_companies_for_scope(account: Account, all_companies: list[Customer]) -> list[Customer]:
+    scope = tenancy.compute_scope(account)
+    if scope.is_platform:
+        return all_companies
+    partner_ids = set(scope.partner_ids)
+    customer_ids = set(scope.customer_ids)
+    return [
+        c for c in all_companies
+        if c.partner_id in partner_ids or c.id in customer_ids
+    ]
+
+
+@app.get("/companies", response_model=list[Customer])
+def list_companies_route(
+    account: Account = Depends(require("companies", "view")),
+) -> list[Customer]:
+    return _filter_companies_for_scope(account, list_customers())
+
+
+@app.get("/companies/{customer_id}", response_model=Customer)
+def get_company_route(
+    customer_id: UUID,
+    account: Account = Depends(current_account),
+) -> Customer:
+    return _require_company_access(customer_id, "companies", "view", account)
+
+
+# --- Subscriptions catalog -------------------------------------------------
+
+
+@app.get("/subscriptions", response_model=list[Subscription])
+def list_subscriptions_route(
+    _: Account = Depends(current_account),
+) -> list[Subscription]:
+    licensing.ensure_default_catalog()
+    return licensing.list_subscriptions()
+
+
+@app.post("/subscriptions", response_model=Subscription, status_code=201)
+def create_subscription_route(
+    payload: SubscriptionCreate,
+    http_request: Request,
+    actor: Account = Depends(require("licensing", "manage")),
+) -> Subscription:
+    try:
+        subscription = licensing.create_subscription(payload)
+    except LicensingError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="subscription.create",
+        resource=f"subscription:{subscription.id}",
+        actor=str(actor.id),
+        after={"sku": subscription.sku, "tier": subscription.tier},
+        request_id=_request_id(http_request),
+    )
+    return subscription
+
+
+# --- Company license -------------------------------------------------------
+
+
+@app.get("/companies/{customer_id}/license", response_model=CompanyLicense)
+def get_company_license_route(
+    customer_id: UUID,
+    account: Account = Depends(current_account),
+) -> CompanyLicense:
+    _require_company_access(customer_id, "licensing", "view", account)
+    license_ = licensing.get_license(customer_id)
+    if license_ is None:
+        raise HTTPException(status_code=404, detail="license not assigned")
+    return license_
+
+
+@app.put("/companies/{customer_id}/license", response_model=CompanyLicense)
+def assign_company_license_route(
+    customer_id: UUID,
+    payload: CompanyLicenseAssign,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> CompanyLicense:
+    _require_company_access(customer_id, "licensing", "manage", account)
+    try:
+        license_ = licensing.assign_license(
+            customer_id, payload, actor=str(account.id)
+        )
+    except LicensingError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="company.license.assign",
+        resource=f"company:{customer_id}",
+        actor=str(account.id),
+        after={
+            "subscription_sku": payload.subscription_sku,
+            "payment_plan": payload.payment_plan,
+            "total_seats": payload.total_seats,
+            "reserved_seats": payload.reserved_seats,
+            "addons": payload.addons,
+        },
+        request_id=_request_id(http_request),
+    )
+    return license_
+
+
+@app.get(
+    "/companies/{customer_id}/license/usage",
+    response_model=list[LicenseUsageDay],
+)
+def get_company_license_usage_route(
+    customer_id: UUID,
+    since: str | None = None,
+    until: str | None = None,
+    account: Account = Depends(current_account),
+) -> list[LicenseUsageDay]:
+    from datetime import date as _date
+
+    _require_company_access(customer_id, "licensing", "view", account)
+    try:
+        since_d = _date.fromisoformat(since) if since else None
+        until_d = _date.fromisoformat(until) if until else None
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return licensing.list_usage(customer_id, since=since_d, until=until_d)
