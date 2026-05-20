@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Building2,
   Check,
+  ChevronDown,
   Clock,
   Copy,
   Download,
@@ -14,17 +15,27 @@ import {
   Package,
   Plus,
   RefreshCw,
+  Search,
+  Settings,
   ShieldCheck,
+  Sparkles,
+  Trash2,
 } from "lucide-react";
 import {
   apiGet,
   apiPost,
   apiPut,
+  apiDelete,
   getAccountId,
   setAccountId,
+  type AiProvider,
+  type BulkActionResult,
   type CompanyLicense,
   type CompanyLicenseAssign,
+  type CompanySummaryPage,
   type Customer,
+  type CustomerAiSettings,
+  type CustomerAiSettingsUpdate,
   type CustomerQuickCreateResult,
   type InstallerBuild,
   type InstallerPlatform,
@@ -43,6 +54,7 @@ import {
 } from "../components";
 
 const COMPANY_SIZES = ["1-10", "11-50", "51-250", "251-1000", "1000+"] as const;
+const COMPANY_TYPES = ["customer", "partner"] as const;
 const PLATFORMS: { value: InstallerPlatform; label: string }[] = [
   { value: "windows_msi", label: "Windows MSI" },
   { value: "macos_pkg", label: "macOS PKG" },
@@ -65,6 +77,256 @@ type CompanyRow = {
   license: CompanyLicense | null;
 };
 
+type ColumnId =
+  | "name"
+  | "type"
+  | "status"
+  | "managed"
+  | "payment_plan"
+  | "product_name"
+  | "product_type"
+  | "product_status"
+  | "license_key"
+  | "expires"
+  | "total_seats"
+  | "usage_breakdown"
+  | "unlicensed"
+  | "company_id"
+  | "auto_renewal"
+  | "minimum_usage"
+  | "subscription_end"
+  | "msp_trials"
+  | "industry"
+  | "country"
+  | "size"
+  | "created_at";
+
+type ColumnDef = {
+  id: ColumnId;
+  label: string;
+  defaultVisible: boolean;
+  align?: "left" | "right" | "center";
+  render: (row: CompanyRow, ctx: { subscriptions: Subscription[] }) => ReactNode;
+};
+
+const COLUMNS_STORAGE_KEY = "aetherix:companies:columns";
+
+const PRODUCT_TYPE_LABELS: Record<string, string> = {
+  core: "Core",
+  advanced: "Advanced",
+  enterprise: "Enterprise",
+};
+
+function formatCompanyType(value: "partner" | "customer"): string {
+  return value === "partner" ? "Partner" : "Customer";
+}
+
+function sumUsed(license: CompanyLicense | null): number {
+  if (!license) return 0;
+  return license.products.reduce((acc, p) => acc + p.used_seats, 0);
+}
+
+function yesNo(value: boolean | null | undefined): ReactNode {
+  if (value === null || value === undefined) return <span className="muted">—</span>;
+  return value ? (
+    <span className="pillSubtle"><Check size={12} /> Yes</span>
+  ) : (
+    <span className="muted">No</span>
+  );
+}
+
+const COLUMN_DEFS: ColumnDef[] = [
+  {
+    id: "name",
+    label: "Company name",
+    defaultVisible: true,
+    render: (row) => (
+      <span className="cellCompany">
+        <Building2 size={16} />
+        <strong>{row.customer.name}</strong>
+      </span>
+    ),
+  },
+  {
+    id: "type",
+    label: "Company type",
+    defaultVisible: true,
+    render: (row) => <span>{formatCompanyType(row.customer.company_type)}</span>,
+  },
+  {
+    id: "status",
+    label: "Company status",
+    defaultVisible: true,
+    render: (row) => (
+      <span className={`statusPill status-${row.customer.status}`}>{row.customer.status}</span>
+    ),
+  },
+  {
+    id: "managed",
+    label: "Managed",
+    defaultVisible: true,
+    render: (row) => yesNo(Boolean(row.customer.assigned_policy_package_id)),
+  },
+  {
+    id: "payment_plan",
+    label: "Payment plan",
+    defaultVisible: true,
+    render: (row) => row.license?.payment_plan ?? <span className="muted">—</span>,
+  },
+  {
+    id: "product_name",
+    label: "Product name",
+    defaultVisible: true,
+    render: (row, ctx) => {
+      if (!row.license) return <span className="muted">—</span>;
+      const sub = ctx.subscriptions.find((s) => s.sku === row.license!.subscription_sku);
+      return sub?.display_name ?? row.license.subscription_sku;
+    },
+  },
+  {
+    id: "product_type",
+    label: "Product type",
+    defaultVisible: false,
+    render: (row, ctx) => {
+      if (!row.license) return <span className="muted">—</span>;
+      const sub = ctx.subscriptions.find((s) => s.sku === row.license!.subscription_sku);
+      return PRODUCT_TYPE_LABELS[sub?.tier ?? ""] ?? <span className="muted">—</span>;
+    },
+  },
+  {
+    id: "product_status",
+    label: "Product status",
+    defaultVisible: true,
+    render: (row) =>
+      row.license ? (
+        <span className={`statusPill status-${row.license.status}`}>{row.license.status}</span>
+      ) : (
+        <span className="muted">Unlicensed</span>
+      ),
+  },
+  {
+    id: "license_key",
+    label: "License key",
+    defaultVisible: false,
+    render: (row) =>
+      row.license ? <span className="mono">{row.license.license_key}</span> : <span className="muted">—</span>,
+  },
+  {
+    id: "expires",
+    label: "Expires",
+    defaultVisible: true,
+    render: (row) => (row.license?.expires_at ? formatDate(row.license.expires_at) : <span className="muted">—</span>),
+  },
+  {
+    id: "total_seats",
+    label: "Total seats",
+    defaultVisible: false,
+    align: "right",
+    render: (row) => (row.license ? row.license.total_seats : <span className="muted">—</span>),
+  },
+  {
+    id: "usage_breakdown",
+    label: "Usage breakdown",
+    defaultVisible: true,
+    render: (row) => {
+      if (!row.license) return <span className="muted">—</span>;
+      const used = sumUsed(row.license);
+      const reserved = row.license.reserved_seats;
+      const available = Math.max(0, row.license.total_seats - used - reserved);
+      return (
+        <span style={{ fontSize: 12.5 }}>
+          {used} used &middot; {reserved} reserved &middot; {available} available
+        </span>
+      );
+    },
+  },
+  {
+    id: "unlicensed",
+    label: "Unlicensed",
+    defaultVisible: false,
+    align: "right",
+    render: (row) => {
+      if (!row.license) return <span className="muted">—</span>;
+      const used = sumUsed(row.license);
+      const overflow = Math.max(0, used - row.license.total_seats);
+      return overflow > 0 ? <strong style={{ color: "#b3261e" }}>{overflow}</strong> : <span>0</span>;
+    },
+  },
+  {
+    id: "company_id",
+    label: "Company ID",
+    defaultVisible: true,
+    render: (row) => <span className="mono">{row.customer.customer_number}</span>,
+  },
+  {
+    id: "auto_renewal",
+    label: "Auto renewal",
+    defaultVisible: false,
+    render: (row) => yesNo(row.license?.auto_renewal ?? null),
+  },
+  {
+    id: "minimum_usage",
+    label: "Minimum usage",
+    defaultVisible: false,
+    align: "right",
+    render: (row) => row.license?.minimum_usage ?? <span className="muted">—</span>,
+  },
+  {
+    id: "subscription_end",
+    label: "Subscription end",
+    defaultVisible: false,
+    render: (row) => (row.license?.expires_at ? formatDate(row.license.expires_at) : <span className="muted">—</span>),
+  },
+  {
+    id: "msp_trials",
+    label: "MSP trials status",
+    defaultVisible: false,
+    render: (row) =>
+      row.license?.status === "trial" ? (
+        <span className="statusPill status-trial">Trial</span>
+      ) : (
+        <span className="muted">—</span>
+      ),
+  },
+  {
+    id: "industry",
+    label: "Industry",
+    defaultVisible: false,
+    render: (row) => row.customer.industry ?? <span className="muted">—</span>,
+  },
+  {
+    id: "country",
+    label: "Country",
+    defaultVisible: false,
+    render: (row) => row.customer.country ?? <span className="muted">—</span>,
+  },
+  {
+    id: "size",
+    label: "Company size",
+    defaultVisible: false,
+    render: (row) => row.customer.company_size ?? <span className="muted">—</span>,
+  },
+  {
+    id: "created_at",
+    label: "Created",
+    defaultVisible: false,
+    render: (row) => formatDate(row.customer.created_at),
+  },
+];
+
+function loadVisibleColumns(): ColumnId[] {
+  try {
+    const raw = window.localStorage.getItem(COLUMNS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as ColumnId[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+  return COLUMN_DEFS.filter((c) => c.defaultVisible).map((c) => c.id);
+}
+
 export function CompaniesPage() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -78,7 +340,121 @@ export function CompaniesPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [selected, setSelected] = useState<CompanyRow | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [visibleCols, setVisibleCols] = useState<ColumnId[]>(loadVisibleColumns);
+  const [compactRows, setCompactRows] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [colSearch, setColSearch] = useState("");
+  const [filterQuery, setFilterQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"" | "active" | "suspended" | "archived">("");
+  const [pageSize, setPageSize] = useState(50);
+  const [offset, setOffset] = useState(0);
+  const [totalRows, setTotalRows] = useState(0);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const mountedRef = useRef(true);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COLUMNS_STORAGE_KEY, JSON.stringify(visibleCols));
+    } catch {
+      /* ignore */
+    }
+  }, [visibleCols]);
+
+  const orderedVisibleColumns = useMemo<ColumnDef[]>(() => {
+    const set = new Set(visibleCols);
+    return COLUMN_DEFS.filter((c) => set.has(c.id));
+  }, [visibleCols]);
+
+  const visibleRows = rows;
+  const pageStart = totalRows === 0 ? 0 : offset + 1;
+  const pageEnd = Math.min(offset + rows.length, totalRows);
+
+  function toggleRow(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((current) => {
+      const allSelected = visibleRows.every((r) => current.has(r.customer.id));
+      if (allSelected) {
+        const next = new Set(current);
+        visibleRows.forEach((r) => next.delete(r.customer.id));
+        return next;
+      }
+      const next = new Set(current);
+      visibleRows.forEach((r) => next.add(r.customer.id));
+      return next;
+    });
+  }
+
+  function toggleColumn(id: ColumnId) {
+    setVisibleCols((current) =>
+      current.includes(id) ? current.filter((c) => c !== id) : [...current, id],
+    );
+  }
+
+  async function applyBulkStatus(status: "active" | "suspended" | "archived") {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const label =
+      status === "suspended" ? "Suspend" : status === "archived" ? "Archive" : "Activate";
+    if (!window.confirm(`${label} ${ids.length} ${ids.length === 1 ? "company" : "companies"}?`)) {
+      return;
+    }
+    setBulkBusy(true);
+    setShowMoreMenu(false);
+    try {
+      const result = await apiPost<BulkActionResult>("/companies/bulk-status", { ids, status });
+      if (result.failures.length) {
+        setError(`${result.failures.length} update(s) failed: ${result.failures[0].error}`);
+      } else {
+        setError(null);
+      }
+      setSuccess(`${label}d ${result.ok_count} ${result.ok_count === 1 ? "company" : "companies"}.`);
+      setSelectedIds(new Set());
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk status update failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function applyBulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `Permanently delete ${ids.length} ${ids.length === 1 ? "company" : "companies"}? This removes all of their agents, policies, alerts, and licensing. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    setShowMoreMenu(false);
+    try {
+      const result = await apiPost<BulkActionResult>("/companies/bulk-delete", { ids });
+      if (result.failures.length) {
+        setError(`${result.failures.length} delete(s) failed: ${result.failures[0].error}`);
+      } else {
+        setError(null);
+      }
+      setSuccess(`Deleted ${result.ok_count} ${result.ok_count === 1 ? "company" : "companies"}.`);
+      setSelectedIds(new Set());
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk delete failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   const canManageCompanies = (me?.permissions.companies ?? "none") === "manage";
   const canViewLicensing = ["view", "edit", "manage"].includes(me?.permissions.licensing ?? "none");
@@ -86,22 +462,18 @@ export function CompaniesPage() {
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [companies, subs, packages] = await Promise.all([
-        apiGet<Customer[]>("/companies"),
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset) });
+      const q = filterQuery.trim();
+      if (q) params.set("q", q);
+      if (filterStatus) params.set("status", filterStatus);
+      const [summaries, subs, packages] = await Promise.all([
+        apiGet<CompanySummaryPage>(`/companies/summary?${params.toString()}`),
         apiGet<Subscription[]>("/subscriptions"),
         apiGet<PolicyPackage[]>("/policy-packages"),
       ]);
-      const licenses = await Promise.all(
-        companies.map(async (c) => {
-          try {
-            return await apiGet<CompanyLicense>(`/companies/${c.id}/license`);
-          } catch {
-            return null;
-          }
-        }),
-      );
       if (!mountedRef.current) return;
-      setRows(companies.map((customer, idx) => ({ customer, license: licenses[idx] })));
+      setRows(summaries.items);
+      setTotalRows(summaries.total);
       setSubscriptions(subs);
       setPolicyPackages(packages);
       setError(null);
@@ -110,7 +482,11 @@ export function CompaniesPage() {
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
-  }, []);
+  }, [filterQuery, filterStatus, offset, pageSize]);
+
+  useEffect(() => {
+    setOffset(0);
+  }, [filterQuery, filterStatus, pageSize]);
 
   const loadMe = useCallback(async () => {
     if (!getAccountId()) {
@@ -226,62 +602,222 @@ export function CompaniesPage() {
           </div>
         </div>
 
-        <div className="companyGrid">
-          <div className="companyGridHead">
-            <span>Company</span>
-            <span>Type</span>
-            <span>Status</span>
-            <span>License key</span>
-            <span>Expires</span>
-            <span>Seats (used / reserved / total)</span>
-            <span>Renewal</span>
-            <span />
+        <div className="dataToolbar">
+          <div className="dataToolbarLeft">
+            {canManageCompanies ? (
+              <>
+                <button
+                  type="button"
+                  className="btnDanger"
+                  onClick={() => void applyBulkDelete()}
+                  disabled={selectedIds.size === 0 || bulkBusy}
+                  title="Permanently delete selected companies and all of their data"
+                >
+                  <Trash2 size={14} /> Delete ({selectedIds.size})
+                </button>
+                <div className="moreActionsWrap">
+                  <button
+                    type="button"
+                    className="btnGhost"
+                    onClick={() => setShowMoreMenu((v) => !v)}
+                    disabled={selectedIds.size === 0 || bulkBusy}
+                  >
+                    More actions <ChevronDown size={14} />
+                  </button>
+                  {showMoreMenu ? (
+                    <div className="moreActionsMenu" role="menu">
+                      <button type="button" onClick={() => void applyBulkStatus("active")}>
+                        Activate selected
+                      </button>
+                      <button type="button" onClick={() => void applyBulkStatus("suspended")}>
+                        Suspend selected
+                      </button>
+                      <button type="button" onClick={() => void applyBulkStatus("archived")}>
+                        Archive selected
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
-          {isLoading ? <LoadingRow label="Loading companies" /> : null}
-          {!isLoading && rows.length === 0 ? (
-            <EmptyState>No companies in scope yet. Add one to begin.</EmptyState>
-          ) : null}
-          {rows.map((row) => (
+          <div className="dataToolbarRight">
+            <div className="searchField">
+              <Search size={14} />
+              <input
+                placeholder="Search by name, type, company ID, or license key"
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+              />
+            </div>
+            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}>
+              <option value="">All statuses</option>
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+              <option value="archived">Archived</option>
+            </select>
             <button
               type="button"
-              className="companyGridRow"
-              key={row.customer.id}
-              onClick={() => setSelected(row)}
+              className="iconBtn"
+              aria-label="Settings"
+              onClick={() => setShowSettings(true)}
             >
-              <span className="cellCompany">
-                <Building2 size={16} />
-                <strong>{row.customer.name}</strong>
-                <em>{row.customer.customer_number}</em>
-              </span>
-              <span>{row.customer.industry ?? "—"}</span>
-              <span className={`statusPill status-${row.customer.status}`}>{row.customer.status}</span>
-              <span className="mono">
-                {row.license ? row.license.license_key : <em className="muted">Unlicensed</em>}
-              </span>
-              <span>{row.license?.expires_at ? formatDate(row.license.expires_at) : "—"}</span>
-              <span>
-                {row.license
-                  ? `${row.license.products.reduce((a, p) => a + p.used_seats, 0)} / ${row.license.reserved_seats} / ${row.license.total_seats}`
-                  : "—"}
-              </span>
-              <span>
-                {row.license ? (
-                  row.license.auto_renewal ? (
-                    <span className="pillSubtle"><Check size={12} /> Auto</span>
-                  ) : (
-                    <span className="pillSubtle"><AlertCircle size={12} /> Manual</span>
-                  )
-                ) : (
-                  "—"
-                )}
-              </span>
-              <span className="cellActions">
-                <MoreHorizontal size={16} />
-              </span>
+              <Settings size={16} />
             </button>
-          ))}
+          </div>
+        </div>
+
+        <div className={`dataTableWrap${compactRows ? " compact" : ""}`}>
+          <table className="dataTable">
+            <thead>
+              <tr>
+                <th className="checkboxCell">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={visibleRows.length > 0 && visibleRows.every((r) => selectedIds.has(r.customer.id))}
+                    onChange={toggleAllVisible}
+                  />
+                </th>
+                {orderedVisibleColumns.map((col) => (
+                  <th key={col.id} style={{ textAlign: col.align ?? "left" }}>{col.label}</th>
+                ))}
+                <th className="checkboxCell" />
+              </tr>
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={orderedVisibleColumns.length + 2}>
+                    <LoadingRow label="Loading companies" />
+                  </td>
+                </tr>
+              ) : null}
+              {!isLoading && visibleRows.length === 0 ? (
+                <tr>
+                  <td colSpan={orderedVisibleColumns.length + 2}>
+                    <EmptyState>No companies match the current filters.</EmptyState>
+                  </td>
+                </tr>
+              ) : null}
+              {visibleRows.map((row) => {
+                const isSelected = selectedIds.has(row.customer.id);
+                return (
+                  <tr
+                    key={row.customer.id}
+                    className={isSelected ? "selected" : undefined}
+                    onClick={(e) => {
+                      const target = e.target as HTMLElement;
+                      if (target.closest("input,button,a,select")) return;
+                      setSelected(row);
+                    }}
+                  >
+                    <td className="checkboxCell" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.customer.name}`}
+                        checked={isSelected}
+                        onChange={() => toggleRow(row.customer.id)}
+                      />
+                    </td>
+                    {orderedVisibleColumns.map((col) => (
+                      <td key={col.id} style={{ textAlign: col.align ?? "left" }}>
+                        {col.render(row, { subscriptions })}
+                      </td>
+                    ))}
+                    <td className="checkboxCell">
+                      <MoreHorizontal size={16} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="tablePager">
+          <span>{totalRows === 0 ? "0 companies" : `${pageStart}-${pageEnd} of ${totalRows} companies`}</span>
+          <div className="pagerControls">
+            <select
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+              aria-label="Rows per page"
+            >
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
+              <option value={250}>250 / page</option>
+            </select>
+            <button
+              type="button"
+              className="btnGhost"
+              onClick={() => setOffset((current) => Math.max(0, current - pageSize))}
+              disabled={offset === 0 || isLoading}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="btnGhost"
+              onClick={() => setOffset((current) => current + pageSize)}
+              disabled={offset + pageSize >= totalRows || isLoading}
+            >
+              Next
+            </button>
+          </div>
         </div>
       </section>
+
+      <SideSheet open={showSettings} onClose={() => setShowSettings(false)} title="Table settings">
+        <div className="settingsDrawer">
+          <label className="checkboxRow">
+            <input
+              type="checkbox"
+              checked={compactRows}
+              onChange={(e) => setCompactRows(e.target.checked)}
+            />
+            <span>Compact rows</span>
+          </label>
+          <div className="settingsSection">
+            <div className="settingsLabel">Visible columns ({visibleCols.length}/{COLUMN_DEFS.length})</div>
+            <div className="searchField">
+              <Search size={14} />
+              <input
+                placeholder="Search columns"
+                value={colSearch}
+                onChange={(e) => setColSearch(e.target.value)}
+              />
+            </div>
+            <div className="columnList">
+              {COLUMN_DEFS.filter((c) => c.label.toLowerCase().includes(colSearch.trim().toLowerCase())).map((col) => (
+                <label key={col.id} className="checkboxRow">
+                  <input
+                    type="checkbox"
+                    checked={visibleCols.includes(col.id)}
+                    onChange={() => toggleColumn(col.id)}
+                  />
+                  <span>{col.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="settingsActions">
+              <button
+                type="button"
+                className="btnGhost"
+                onClick={() => setVisibleCols(COLUMN_DEFS.filter((c) => c.defaultVisible).map((c) => c.id))}
+              >
+                Reset to defaults
+              </button>
+              <button
+                type="button"
+                className="btnGhost"
+                onClick={() => setVisibleCols(COLUMN_DEFS.map((c) => c.id))}
+              >
+                Show all
+              </button>
+            </div>
+          </div>
+        </div>
+      </SideSheet>
 
       <CreateCompanySheet
         open={showCreate}
@@ -301,6 +837,8 @@ export function CompaniesPage() {
         subscriptions={subscriptions}
         canManageLicensing={(me.permissions.licensing ?? "none") === "manage"}
         canViewLicensing={canViewLicensing}
+        canManageCompany={canManageCompanies}
+        canViewCompany={["view", "edit", "manage"].includes(me.permissions.companies ?? "none")}
         onLicenseAssigned={(updated) => {
           setSuccess(`License updated for ${updated.customer.name}.`);
           setSelected(updated);
@@ -333,6 +871,8 @@ function CreateCompanySheet({
 }) {
   const [name, setName] = useState("");
   const [industry, setIndustry] = useState("Healthcare");
+  const [companyType, setCompanyType] =
+    useState<(typeof COMPANY_TYPES)[number]>("customer");
   const [companySize, setCompanySize] =
     useState<(typeof COMPANY_SIZES)[number]>("11-50");
   const [policyPackageId, setPolicyPackageId] = useState("");
@@ -362,6 +902,7 @@ function CreateCompanySheet({
     try {
       const created = await apiPost<CustomerQuickCreateResult>("/customers/quick-create", {
         name: name.trim(),
+        company_type: companyType,
         industry,
         country: "US",
         company_size: companySize,
@@ -396,9 +937,25 @@ function CreateCompanySheet({
         </div>
         <div className="formGrid2">
           <div className="formRow">
+            <label htmlFor="newCompanyType">Company type</label>
+            <select
+              id="newCompanyType"
+              value={companyType}
+              onChange={(event) => setCompanyType(event.target.value as typeof companyType)}
+            >
+              {COMPANY_TYPES.map((type) => (
+                <option key={type} value={type} style={{ textTransform: "capitalize" }}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="formRow">
             <label htmlFor="newIndustry">Industry</label>
             <input id="newIndustry" value={industry} onChange={(event) => setIndustry(event.target.value)} />
           </div>
+        </div>
+        <div className="formGrid2">
           <div className="formRow">
             <label htmlFor="newSize">Company size</label>
             <select id="newSize" value={companySize} onChange={(event) => setCompanySize(event.target.value as typeof companySize)}>
@@ -454,7 +1011,7 @@ function CreateCompanySheet({
 // Company Edit side-sheet — Details / Auth / Licensing / Products Hub
 // ---------------------------------------------------------------------------
 
-type EditTab = "details" | "auth" | "licensing" | "products" | "deploy";
+type EditTab = "details" | "auth" | "licensing" | "products" | "ai" | "deploy";
 
 function CompanyEditSheet({
   row,
@@ -462,6 +1019,8 @@ function CompanyEditSheet({
   subscriptions,
   canManageLicensing,
   canViewLicensing,
+  canManageCompany,
+  canViewCompany,
   onLicenseAssigned,
   onError,
 }: {
@@ -470,6 +1029,8 @@ function CompanyEditSheet({
   subscriptions: Subscription[];
   canManageLicensing: boolean;
   canViewLicensing: boolean;
+  canManageCompany: boolean;
+  canViewCompany: boolean;
   onLicenseAssigned: (updated: CompanyRow) => void;
   onError: (message: string) => void;
 }) {
@@ -493,7 +1054,7 @@ function CompanyEditSheet({
       width={720}
     >
       <nav className="tabBar" role="tablist">
-        {(["details", "auth", "licensing", "products", "deploy"] as EditTab[]).map((t) => (
+        {(["details", "auth", "licensing", "products", "ai", "deploy"] as EditTab[]).map((t) => (
           <button
             key={t}
             role="tab"
@@ -519,6 +1080,14 @@ function CompanyEditSheet({
         />
       ) : null}
       {tab === "products" ? <ProductsTab row={row} /> : null}
+      {tab === "ai" ? (
+        <AiTab
+          row={row}
+          canManage={canManageCompany}
+          canView={canViewCompany}
+          onError={onError}
+        />
+      ) : null}
       {tab === "deploy" ? <DeployTab row={row} onError={onError} /> : null}
     </SideSheet>
   );
@@ -529,6 +1098,7 @@ function tabLabel(tab: EditTab): string {
   if (tab === "auth") return "Authentication";
   if (tab === "licensing") return "Licensing";
   if (tab === "products") return "Products Hub";
+  if (tab === "ai") return "AI";
   return "Deploy";
 }
 
@@ -540,6 +1110,7 @@ function DetailsTab({ row }: { row: CompanyRow }) {
         items={[
           ["Company ID", customer.id],
           ["Customer number", customer.customer_number],
+          ["Company type", formatCompanyType(customer.company_type)],
           ["Industry", customer.industry ?? "—"],
           ["Country", customer.country ?? "—"],
           ["Company size", customer.company_size ?? "—"],
@@ -815,6 +1386,338 @@ function ProductsTab({ row }: { row: CompanyRow }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AI tab — per-tenant AI provider + BYO key
+// ---------------------------------------------------------------------------
+
+const DEFAULT_AI_FORM: CustomerAiSettingsUpdate = {
+  provider_slug: "disabled",
+  model: "none",
+  endpoint: null,
+  redact_pii_before_send: true,
+  enabled: false,
+  max_calls_per_day: 1000,
+};
+
+function AiTab({
+  row,
+  canManage,
+  canView,
+  onError,
+}: {
+  row: CompanyRow;
+  canManage: boolean;
+  canView: boolean;
+  onError: (message: string) => void;
+}) {
+  const customerId = row.customer.id;
+  const [providers, setProviders] = useState<AiProvider[]>([]);
+  const [settings, setSettings] = useState<CustomerAiSettings | null>(null);
+  const [form, setForm] = useState<CustomerAiSettingsUpdate>(DEFAULT_AI_FORM);
+  const [apiKey, setApiKey] = useState<string>("");
+  const [clearKey, setClearKey] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const provider = useMemo(
+    () => providers.find((p) => p.slug === form.provider_slug) ?? null,
+    [providers, form.provider_slug],
+  );
+
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const [provs, current] = await Promise.all([
+        apiGet<AiProvider[]>("/ai/providers"),
+        apiGet<CustomerAiSettings | null>(`/companies/${customerId}/ai`),
+      ]);
+      setProviders(provs);
+      setSettings(current);
+      if (current) {
+        setForm({
+          provider_slug: current.provider_slug,
+          model: current.model,
+          endpoint: current.endpoint,
+          redact_pii_before_send: current.redact_pii_before_send,
+          enabled: current.enabled,
+          max_calls_per_day: current.max_calls_per_day,
+          data_residency: current.data_residency,
+        });
+      } else {
+        setForm(DEFAULT_AI_FORM);
+      }
+      setApiKey("");
+      setClearKey(false);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to load AI settings");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [customerId, onError]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!canView) {
+    return (
+      <div className="tabPanel">
+        <p className="muted">You don't have permission to view AI settings for this company.</p>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="tabPanel">
+        <p className="muted">Loading AI settings…</p>
+      </div>
+    );
+  }
+
+  function chooseProvider(slug: string) {
+    const next = providers.find((p) => p.slug === slug);
+    if (!next) return;
+    const firstModel = next.supported_models[0] ?? "";
+    setForm((cur) => ({
+      ...cur,
+      provider_slug: slug,
+      model: firstModel || cur.model,
+      endpoint: next.default_endpoint,
+    }));
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!canManage) return;
+    setIsSaving(true);
+    setSuccess(null);
+    try {
+      const payload: CustomerAiSettingsUpdate = {
+        ...form,
+        api_key: apiKey.trim() ? apiKey.trim() : null,
+        clear_api_key: clearKey,
+      };
+      const updated = await apiPut<CustomerAiSettings>(
+        `/companies/${customerId}/ai`,
+        payload,
+      );
+      setSettings(updated);
+      setApiKey("");
+      setClearKey(false);
+      setSuccess("AI settings saved.");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to save AI settings");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!canManage || !settings) return;
+    if (!window.confirm("Remove AI settings for this company? Tenant calls will fall back to platform defaults.")) {
+      return;
+    }
+    setIsDeleting(true);
+    setSuccess(null);
+    try {
+      await apiDelete(`/companies/${customerId}/ai`);
+      setSettings(null);
+      setForm(DEFAULT_AI_FORM);
+      setApiKey("");
+      setClearKey(false);
+      setSuccess("AI settings cleared.");
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to clear AI settings");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  const requiresKey = provider?.requires_byo_key === true;
+  const hasStoredKey = settings?.has_api_key === true;
+  const disabledForm = !canManage;
+
+  return (
+    <form className="tabPanel" onSubmit={save}>
+      <div className="muted formIntro">
+        <Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+        Choose how semantic DLP and alert summarization route AI calls for{" "}
+        <strong>{row.customer.name}</strong>. BYO API keys are encrypted at rest and never
+        returned by the API.
+      </div>
+
+      {success ? <SuccessBanner message={success} /> : null}
+
+      <fieldset disabled={disabledForm} className="fieldsetClean">
+        <div className="formGrid2">
+          <div className="formRow">
+            <label htmlFor="aiProvider">Provider</label>
+            <select
+              id="aiProvider"
+              value={form.provider_slug}
+              onChange={(e) => chooseProvider(e.target.value)}
+            >
+              {providers.map((p) => (
+                <option key={p.slug} value={p.slug}>
+                  {p.display_name}
+                  {p.requires_byo_key ? " · BYO key" : ""}
+                </option>
+              ))}
+            </select>
+            {provider?.notes ? <em className="muted">{provider.notes}</em> : null}
+          </div>
+          <div className="formRow">
+            <label htmlFor="aiModel">Model</label>
+            {provider && provider.supported_models.length > 0 ? (
+              <select
+                id="aiModel"
+                value={form.model}
+                onChange={(e) => setForm((cur) => ({ ...cur, model: e.target.value }))}
+              >
+                {provider.supported_models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                id="aiModel"
+                type="text"
+                value={form.model}
+                onChange={(e) => setForm((cur) => ({ ...cur, model: e.target.value }))}
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="formRow">
+          <label htmlFor="aiEndpoint">Endpoint (optional override)</label>
+          <input
+            id="aiEndpoint"
+            type="url"
+            placeholder={provider?.default_endpoint ?? "Leave blank to use the provider default"}
+            value={form.endpoint ?? ""}
+            onChange={(e) =>
+              setForm((cur) => ({
+                ...cur,
+                endpoint: e.target.value ? e.target.value : null,
+              }))
+            }
+          />
+        </div>
+
+        {requiresKey ? (
+          <div className="formRow">
+            <label htmlFor="aiKey">
+              API key
+              <span className="muted" style={{ marginLeft: 8 }}>
+                {hasStoredKey
+                  ? `stored · ****${settings?.api_key_last4 ?? ""}`
+                  : "not configured"}
+              </span>
+            </label>
+            <input
+              id="aiKey"
+              type="password"
+              autoComplete="off"
+              placeholder={hasStoredKey ? "Leave blank to keep existing key" : "Paste BYO API key"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            {hasStoredKey ? (
+              <label className="checkboxRow">
+                <input
+                  type="checkbox"
+                  checked={clearKey}
+                  onChange={(e) => setClearKey(e.target.checked)}
+                />
+                <span>Remove stored API key</span>
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="formGrid2">
+          <div className="formRow">
+            <label htmlFor="aiLimit">Daily call limit</label>
+            <input
+              id="aiLimit"
+              type="number"
+              min={0}
+              max={1_000_000}
+              value={form.max_calls_per_day ?? 1000}
+              onChange={(e) =>
+                setForm((cur) => ({
+                  ...cur,
+                  max_calls_per_day: Math.max(0, Number(e.target.value) || 0),
+                }))
+              }
+            />
+          </div>
+          <div className="formRow">
+            <label htmlFor="aiResidency">Data residency (optional)</label>
+            <input
+              id="aiResidency"
+              type="text"
+              placeholder="e.g. EU, US, on-prem"
+              value={form.data_residency ?? ""}
+              onChange={(e) =>
+                setForm((cur) => ({
+                  ...cur,
+                  data_residency: e.target.value ? e.target.value : null,
+                }))
+              }
+            />
+          </div>
+        </div>
+
+        <label className="checkboxRow">
+          <input
+            type="checkbox"
+            checked={form.redact_pii_before_send ?? true}
+            onChange={(e) =>
+              setForm((cur) => ({ ...cur, redact_pii_before_send: e.target.checked }))
+            }
+          />
+          <span>Redact PII before sending to provider</span>
+        </label>
+
+        <label className="checkboxRow">
+          <input
+            type="checkbox"
+            checked={form.enabled ?? false}
+            onChange={(e) => setForm((cur) => ({ ...cur, enabled: e.target.checked }))}
+          />
+          <span>Enable AI calls for this company</span>
+        </label>
+      </fieldset>
+
+      <div className="formActions">
+        <button type="submit" className="btnPrimary" disabled={disabledForm || isSaving}>
+          {isSaving ? "Saving…" : settings ? "Save changes" : "Save settings"}
+        </button>
+        {settings ? (
+          <button
+            type="button"
+            className="btnGhost"
+            onClick={remove}
+            disabled={disabledForm || isDeleting}
+          >
+            {isDeleting ? "Removing…" : "Reset to platform default"}
+          </button>
+        ) : null}
+        {!canManage ? (
+          <span className="muted">Read-only — companies:manage required to change AI settings.</span>
+        ) : null}
+      </div>
+    </form>
   );
 }
 

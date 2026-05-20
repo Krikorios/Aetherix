@@ -149,6 +149,7 @@ export type Customer = {
   id: string;
   partner_id: string;
   customer_number: string;
+  company_type: "partner" | "customer";
   name: string;
   industry: string | null;
   country: string | null;
@@ -160,6 +161,15 @@ export type Customer = {
   assigned_policy_name: string | null;
   created_by: string;
   created_at: string;
+};
+
+export type CustomerUpdatePayload = {
+  name: string;
+  industry?: string | null;
+  country?: string | null;
+  company_size?: Customer["company_size"];
+  policy_package_id?: string | null;
+  updated_by?: string;
 };
 
 export type PolicyAssignment = {
@@ -211,6 +221,23 @@ export type CustomerQuickCreateResult = {
   quick_deploy_links: QuickDeployLink[];
 };
 
+export type CompanySummary = {
+  customer: Customer;
+  license: CompanyLicense | null;
+};
+
+export type CompanySummaryPage = {
+  items: CompanySummary[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type BulkActionResult = {
+  ok_count: number;
+  failures: { id: string; error: string }[];
+};
+
 // ---------------------------------------------------------------------------
 // Tenancy & licensing
 // ---------------------------------------------------------------------------
@@ -259,7 +286,24 @@ export type AccountCreatePayload = {
   email: string;
   full_name: string;
   initial_role?: RoleAssignmentRequest | null;
+  password?: string | null;
+  delivery?: InviteDelivery;
   created_by?: string;
+};
+
+export type InviteDelivery = "email" | "link";
+
+export type AccountCreated = {
+  account: Account;
+  delivery: InviteDelivery;
+  invite_url: string | null;
+  invite_expires_at: string | null;
+};
+
+export type InviteAcceptPayload = {
+  token: string;
+  password: string;
+  full_name?: string | null;
 };
 
 export type Role = {
@@ -358,6 +402,49 @@ export type LicenseUsageDay = {
 };
 
 // ---------------------------------------------------------------------------
+// AI provider settings (per-tenant)
+// ---------------------------------------------------------------------------
+
+export type AiProviderKind = "classifier" | "chat" | "embedding";
+
+export type AiProvider = {
+  slug: string;
+  display_name: string;
+  kind: AiProviderKind;
+  requires_byo_key: boolean;
+  default_endpoint: string | null;
+  supported_models: string[];
+  notes: string | null;
+};
+
+export type CustomerAiSettings = {
+  customer_id: string;
+  provider_slug: string;
+  model: string;
+  endpoint: string | null;
+  has_api_key: boolean;
+  api_key_last4: string | null;
+  data_residency: string | null;
+  redact_pii_before_send: boolean;
+  enabled: boolean;
+  max_calls_per_day: number;
+  updated_at: string;
+  updated_by: string | null;
+};
+
+export type CustomerAiSettingsUpdate = {
+  provider_slug: string;
+  model: string;
+  endpoint?: string | null;
+  api_key?: string | null;
+  clear_api_key?: boolean;
+  data_residency?: string | null;
+  redact_pii_before_send?: boolean;
+  enabled?: boolean;
+  max_calls_per_day?: number;
+};
+
+// ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
@@ -393,8 +480,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
-      const json = (await res.json()) as { detail?: string };
-      if (json.detail) detail = String(json.detail);
+      const json = (await res.json()) as { detail?: unknown };
+      if (typeof json.detail === "string") {
+        detail = json.detail;
+      } else if (json.detail !== undefined) {
+        detail = JSON.stringify(json.detail);
+      }
     } catch {
       // ignore parse errors — use status code message
     }
@@ -420,6 +511,13 @@ export function apiDelete<T = void>(path: string): Promise<T> {
   return apiFetch<T>(path, { method: "DELETE" });
 }
 
-export function apiPatch<T>(path: string): Promise<T> {
-  return apiFetch<T>(path, { method: "PATCH" });
+export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  return apiFetch<T>(path, {
+    method: "PATCH",
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+export function logout(): void {
+  setAccountId(null);
 }
