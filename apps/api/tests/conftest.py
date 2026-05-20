@@ -55,6 +55,7 @@ def _truncate_tables() -> None:
                 impersonation_sessions,
                 account_roles,
                 accounts,
+                customer_ai_settings,
                 customers,
                 partners,
                 policy_documents,

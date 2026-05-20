@@ -1,4 +1,6 @@
 import uuid
+import logging
+import os
 import psycopg
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -8,13 +10,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentHeartbeat, Alert, Customer, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, LicenseUsageDay, Subscription, SubscriptionCreate
+from app.schemas import AgentHeartbeat, Alert, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
 from app.services import audit
 from app.services import tenancy
 from app.services import licensing
+from app.services import totp as totp_service
+from app.services import ai_settings as ai_settings_service
+from app.services.ai_settings import AiSettingsError
 from app.services.tenancy import TenancyError
 from app.services.licensing import LicensingError
-from app.services.customers import CustomerError, assigned_policy, create_customer, create_quick_deploy_links, customer_groups, generate_installers, get_customer, list_customers, list_partners, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy
+from app.services.customers import CustomerError, assigned_policy, create_customer, create_quick_deploy_links, customer_groups, delete_customer, generate_installers, get_customer, list_customers, list_customers_page, list_partners, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy, update_customer, update_customer_status
 from app.services.dlp import apply_policy, scan_text
 from app.services.enrollment import EnrollmentError, consume_enrollment_token, issue_enrollment_token
 from app.services.policy import active_policy_document, list_policy_documents, promote_policy_document, simulate as simulate_policy
@@ -26,7 +31,10 @@ async def lifespan(_: FastAPI):
     # Postgres is the single source of truth. Ensure the schema exists
     # before serving the first request; do not seed any sample data.
     init_schema()
-    yield
+    try:
+        yield
+    finally:
+        db.reset_pool()
 
 
 app = FastAPI(title="Aetherix DLP API", version="0.1.0", lifespan=lifespan)
@@ -51,6 +59,27 @@ async def request_id_middleware(request: Request, call_next):
 
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+_logger = logging.getLogger("aetherix.api")
+
+
+def _build_invite_url(request: Request, token: str) -> str:
+    """Build the URL the invitee follows to set their password.
+
+    Priority order:
+      1. ``AETHERIX_CONSOLE_URL`` env var (preferred for prod / when the
+         console runs on a different origin than the API).
+      2. The request's ``Origin`` header (covers most browser-driven cases).
+      3. The request base URL as a last resort (will point at the API,
+         which is wrong in split-deploy setups but fine for tests).
+    """
+
+    base = os.environ.get("AETHERIX_CONSOLE_URL") or request.headers.get("origin")
+    if not base:
+        base = str(request.base_url).rstrip("/")
+    base = base.rstrip("/")
+    return f"{base}/#/invite/{token}"
 
 
 @app.get("/health")
@@ -208,6 +237,24 @@ def customer_detail(customer_id: UUID) -> Customer:
     customer = get_customer(customer_id)
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
+    return customer
+
+
+@app.put("/customers/{customer_id}", response_model=Customer)
+def update_customer_route(customer_id: UUID, payload: CustomerUpdate, http_request: Request) -> Customer:
+    try:
+        customer = update_customer(customer_id, payload)
+    except CustomerError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    audit.record(
+        action="customer.update",
+        resource=f"customer:{customer_id}",
+        actor=payload.updated_by,
+        after={"customer": customer.model_dump(mode="json")},
+        request_id=_request_id(http_request),
+    )
     return customer
 
 
@@ -496,6 +543,129 @@ def me(account: Account = Depends(current_account)) -> MeResponse:
     return tenancy.me(account)
 
 
+_TOTP_ISSUER = "Aetherix"
+_TOTP_SETUP_TTL_SECONDS = 600   # 10 min to scan QR + enter first code
+_TOTP_VERIFY_TTL_SECONDS = 300  # 5 min for returning users
+
+
+@app.post("/auth/login", response_model=TotpChallenge)
+def auth_login(payload: LoginRequest, http_request: Request) -> TotpChallenge:
+    try:
+        snapshot = tenancy.authenticate(payload.email, payload.password)
+    except TenancyError as error:
+        audit.record(
+            action="auth.login.failed",
+            resource=f"email:{payload.email.strip().lower()}",
+            actor="anonymous",
+            after={"reason": str(error)},
+            request_id=_request_id(http_request),
+        )
+        raise HTTPException(status_code=401, detail="invalid email or password") from error
+
+    account_id: UUID = snapshot["account_id"]
+    needs_enrollment = (
+        snapshot["two_factor"] != "enabled" or not snapshot["totp_secret"]
+    )
+
+    if needs_enrollment:
+        # Generate (or regenerate) the shared secret. We replace any
+        # half-finished setup so abandoned QR codes can't be reused.
+        secret = totp_service.generate_secret()
+        tenancy.store_totp_secret(account_id, secret)
+        challenge_id = tenancy.create_login_challenge(
+            account_id, "totp_setup", _TOTP_SETUP_TTL_SECONDS
+        )
+        otpauth = totp_service.otpauth_url(
+            account_name=snapshot["email"], secret=secret, issuer=_TOTP_ISSUER
+        )
+        audit.record(
+            action="auth.totp.setup_started",
+            resource=f"account:{account_id}",
+            actor=str(account_id),
+            request_id=_request_id(http_request),
+        )
+        return TotpChallenge(
+            status="totp_setup_required",
+            challenge_id=challenge_id,
+            email=snapshot["email"],
+            otpauth_url=otpauth,
+            secret=secret,
+            issuer=_TOTP_ISSUER,
+        )
+
+    challenge_id = tenancy.create_login_challenge(
+        account_id, "totp_verify", _TOTP_VERIFY_TTL_SECONDS
+    )
+    return TotpChallenge(
+        status="totp_required",
+        challenge_id=challenge_id,
+        email=snapshot["email"],
+    )
+
+
+@app.post("/auth/totp/verify", response_model=MeResponse)
+def auth_totp_verify(payload: TotpVerifyRequest, http_request: Request) -> MeResponse:
+    try:
+        ctx = tenancy.consume_login_challenge(payload.challenge_id)
+    except TenancyError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+    secret = ctx["totp_secret"]
+    if not secret or not totp_service.verify(secret, payload.code):
+        audit.record(
+            action="auth.totp.failed",
+            resource=f"account:{ctx['account_id']}",
+            actor=str(ctx["account_id"]),
+            after={"purpose": ctx["purpose"]},
+            request_id=_request_id(http_request),
+        )
+        raise HTTPException(status_code=401, detail="invalid verification code")
+
+    if ctx["purpose"] == "totp_setup":
+        tenancy.mark_totp_enrolled(ctx["account_id"])
+    tenancy.touch_last_login(ctx["account_id"])
+
+    account = tenancy.get_account(ctx["account_id"])
+    if account is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    audit.record(
+        action="auth.login",
+        resource=f"account:{account.id}",
+        actor=str(account.id),
+        after={"email": account.email, "via": ctx["purpose"]},
+        request_id=_request_id(http_request),
+    )
+    return tenancy.me(account)
+
+
+@app.post("/accounts/{account_id}/password", status_code=204)
+def set_account_password_route(
+    account_id: UUID,
+    payload: PasswordSetRequest,
+    http_request: Request,
+    actor: Account = Depends(current_account),
+) -> None:
+    # Self-service password change is always allowed; otherwise the actor
+    # needs ``accounts:manage`` on the target's scope. We delegate the
+    # scope check to ``has_permission`` (manage on accounts implies any
+    # tenant they cover).
+    if actor.id != account_id:
+        if not tenancy.has_permission(actor, "accounts", "manage"):
+            raise HTTPException(status_code=403, detail="requires manage on accounts")
+    try:
+        tenancy.set_password(account_id, payload.password)
+    except TenancyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="account.password.set",
+        resource=f"account:{account_id}",
+        actor=str(actor.id),
+        request_id=_request_id(http_request),
+    )
+
+
 @app.get("/roles", response_model=list[Role])
 def list_roles_route(_: Account = Depends(current_account)) -> list[Role]:
     return tenancy.list_roles()
@@ -508,22 +678,104 @@ def list_accounts_route(
     return tenancy.list_accounts()
 
 
-@app.post("/accounts", response_model=Account, status_code=201)
+@app.post("/accounts/bulk-delete", response_model=BulkActionResult)
+def bulk_delete_accounts_route(
+    payload: BulkIdsRequest,
+    http_request: Request,
+    actor: Account = Depends(require("accounts", "manage")),
+) -> BulkActionResult:
+    ok_count = 0
+    failures: list[BulkActionFailure] = []
+    for account_id in payload.ids:
+        if account_id == actor.id:
+            failures.append(BulkActionFailure(id=account_id, error="cannot delete your own account"))
+            continue
+        target = tenancy.get_account(account_id)
+        if target is None:
+            failures.append(BulkActionFailure(id=account_id, error="account not found"))
+            continue
+        if not tenancy.delete_account(account_id):
+            failures.append(BulkActionFailure(id=account_id, error="account not found"))
+            continue
+        ok_count += 1
+        audit.record(
+            action="account.delete",
+            resource=f"account:{account_id}",
+            actor=str(actor.id),
+            before={"email": target.email, "status": target.status},
+            request_id=_request_id(http_request),
+        )
+    return BulkActionResult(ok_count=ok_count, failures=failures)
+
+
+@app.post("/accounts", response_model=AccountCreated, status_code=201)
 def create_account_route(
     payload: AccountCreate,
     http_request: Request,
     actor: Account = Depends(require("accounts", "manage")),
-) -> Account:
+) -> AccountCreated:
     payload.created_by = str(actor.id)
     try:
         account = tenancy.create_account(payload)
     except TenancyError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+    invite_url: str | None = None
+    invite_expires_at = None
+    # Only issue an invite token when the account was created without a
+    # password (i.e. it is in "invited" status). Pre-set passwords skip the
+    # invite flow entirely.
+    if payload.password is None:
+        token, invite_expires_at = tenancy.issue_invite_token(account.id)
+        invite_url = _build_invite_url(http_request, token)
+        if payload.delivery == "email":
+            # Email delivery is stubbed until an SMTP/transactional provider
+            # is wired in. Log the link so dev/ops can hand-deliver if needed,
+            # but do not return it to the creator.
+            _logger.info(
+                "account.invite.email_pending account=%s email=%s url=%s",
+                account.id,
+                account.email,
+                invite_url,
+            )
+
     audit.record(
         action="account.create",
         resource=f"account:{account.id}",
         actor=str(actor.id),
-        after={"email": account.email, "full_name": account.full_name},
+        after={
+            "email": account.email,
+            "full_name": account.full_name,
+            "delivery": payload.delivery,
+        },
+        request_id=_request_id(http_request),
+    )
+    return AccountCreated(
+        account=account,
+        delivery=payload.delivery,
+        invite_url=invite_url if payload.delivery == "link" else None,
+        invite_expires_at=invite_expires_at if payload.delivery == "link" else None,
+    )
+
+
+@app.post("/auth/accept-invite", response_model=Account)
+def accept_invite_route(
+    payload: InviteAcceptRequest,
+    http_request: Request,
+) -> Account:
+    try:
+        account = tenancy.accept_invite(
+            payload.token,
+            payload.password,
+            full_name=payload.full_name,
+        )
+    except TenancyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="account.invite.accept",
+        resource=f"account:{account.id}",
+        actor=str(account.id),
+        after={"email": account.email},
         request_id=_request_id(http_request),
     )
     return account
@@ -538,6 +790,31 @@ def get_account_route(
     if account is None:
         raise HTTPException(status_code=404, detail="account not found")
     return account
+
+
+@app.delete("/accounts/{account_id}", status_code=204)
+def delete_account_route(
+    account_id: UUID,
+    http_request: Request,
+    actor: Account = Depends(require("accounts", "manage")),
+) -> None:
+    """Hard-delete a user account. Refuses to delete the caller themselves."""
+
+    if account_id == actor.id:
+        raise HTTPException(status_code=400, detail="cannot delete your own account")
+    target = tenancy.get_account(account_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    removed = tenancy.delete_account(account_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="account not found")
+    audit.record(
+        action="account.delete",
+        resource=f"account:{account_id}",
+        actor=str(actor.id),
+        before={"email": target.email, "status": target.status},
+        request_id=_request_id(http_request),
+    )
 
 
 @app.post(
@@ -644,12 +921,152 @@ def list_companies_route(
     return _filter_companies_for_scope(account, list_customers())
 
 
+@app.get("/companies/summary", response_model=CompanySummaryPage)
+def list_company_summaries_route(
+    q: str | None = Query(default=None, max_length=160),
+    status: str | None = Query(default=None, pattern="^(active|suspended|archived)$"),
+    limit: int = Query(default=50, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
+    account: Account = Depends(require("companies", "view")),
+) -> CompanySummaryPage:
+    scope = tenancy.compute_scope(account)
+    companies, total = list_customers_page(
+        partner_ids=None if scope.is_platform else scope.partner_ids,
+        customer_ids=None if scope.is_platform else scope.customer_ids,
+        search=q,
+        status=status,  # type: ignore[arg-type]
+        limit=limit,
+        offset=offset,
+    )
+    if not tenancy.has_permission(account, "licensing", "view"):
+        return CompanySummaryPage(
+            items=[CompanySummary(customer=company, license=None) for company in companies],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+    licenses = licensing.list_licenses([company.id for company in companies])
+    return CompanySummaryPage(
+        items=[CompanySummary(customer=company, license=licenses.get(company.id)) for company in companies],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.post("/companies/bulk-status", response_model=BulkActionResult)
+def bulk_update_company_status_route(
+    payload: CompanyBulkStatusRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> BulkActionResult:
+    ok_count = 0
+    failures: list[BulkActionFailure] = []
+    for customer_id in payload.ids:
+        try:
+            company = _require_company_access(customer_id, "companies", "manage", account)
+            updated = update_customer_status(customer_id, payload.status)
+            if updated is None:
+                failures.append(BulkActionFailure(id=customer_id, error="company not found"))
+                continue
+            ok_count += 1
+            audit.record(
+                action="company.status.update",
+                resource=f"company:{customer_id}",
+                actor=str(account.id),
+                before={"status": company.status},
+                after={"status": updated.status},
+                request_id=_request_id(http_request),
+            )
+        except HTTPException as error:
+            failures.append(BulkActionFailure(id=customer_id, error=str(error.detail)))
+        except CustomerError as error:
+            failures.append(BulkActionFailure(id=customer_id, error=str(error)))
+    return BulkActionResult(ok_count=ok_count, failures=failures)
+
+
+@app.post("/companies/bulk-delete", response_model=BulkActionResult)
+def bulk_delete_companies_route(
+    payload: BulkIdsRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> BulkActionResult:
+    ok_count = 0
+    failures: list[BulkActionFailure] = []
+    for customer_id in payload.ids:
+        try:
+            company = _require_company_access(customer_id, "companies", "manage", account)
+            if not delete_customer(customer_id):
+                failures.append(BulkActionFailure(id=customer_id, error="company not found"))
+                continue
+            ok_count += 1
+            audit.record(
+                action="company.delete",
+                resource=f"company:{customer_id}",
+                actor=str(account.id),
+                before={"name": company.name, "status": company.status},
+                request_id=_request_id(http_request),
+            )
+        except HTTPException as error:
+            failures.append(BulkActionFailure(id=customer_id, error=str(error.detail)))
+    return BulkActionResult(ok_count=ok_count, failures=failures)
+
+
 @app.get("/companies/{customer_id}", response_model=Customer)
 def get_company_route(
     customer_id: UUID,
     account: Account = Depends(current_account),
 ) -> Customer:
     return _require_company_access(customer_id, "companies", "view", account)
+
+
+@app.patch("/companies/{customer_id}/status", response_model=Customer)
+def update_company_status_route(
+    customer_id: UUID,
+    payload: CustomerStatusUpdate,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> Customer:
+    """Soft lifecycle change for a company: active / suspended / archived."""
+
+    company = _require_company_access(customer_id, "companies", "manage", account)
+    before_status = company.status
+    try:
+        updated = update_customer_status(customer_id, payload.status)
+    except CustomerError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if updated is None:
+        raise HTTPException(status_code=404, detail="company not found")
+    audit.record(
+        action="company.status.update",
+        resource=f"company:{customer_id}",
+        actor=str(account.id),
+        before={"status": before_status},
+        after={"status": updated.status},
+        request_id=_request_id(http_request),
+    )
+    return updated
+
+
+@app.delete("/companies/{customer_id}", status_code=204)
+def delete_company_route(
+    customer_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> None:
+    """Hard-delete a company and every record that references it."""
+
+    company = _require_company_access(customer_id, "companies", "manage", account)
+    removed = delete_customer(customer_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="company not found")
+    audit.record(
+        action="company.delete",
+        resource=f"company:{customer_id}",
+        actor=str(account.id),
+        before={"name": company.name, "status": company.status},
+        request_id=_request_id(http_request),
+    )
 
 
 @app.get("/partners", response_model=list[Partner])
@@ -698,16 +1115,13 @@ def create_subscription_route(
 # --- Company license -------------------------------------------------------
 
 
-@app.get("/companies/{customer_id}/license", response_model=CompanyLicense)
+@app.get("/companies/{customer_id}/license", response_model=CompanyLicense | None)
 def get_company_license_route(
     customer_id: UUID,
     account: Account = Depends(current_account),
-) -> CompanyLicense:
+) -> CompanyLicense | None:
     _require_company_access(customer_id, "licensing", "view", account)
-    license_ = licensing.get_license(customer_id)
-    if license_ is None:
-        raise HTTPException(status_code=404, detail="license not assigned")
-    return license_
+    return licensing.get_license(customer_id)
 
 
 @app.put("/companies/{customer_id}/license", response_model=CompanyLicense)
@@ -759,3 +1173,76 @@ def get_company_license_usage_route(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return licensing.list_usage(customer_id, since=since_d, until=until_d)
+
+
+# --- AI providers + per-company AI settings --------------------------------
+
+
+@app.get("/ai/providers", response_model=list[AiProvider])
+def list_ai_providers_route(
+    _: Account = Depends(current_account),
+) -> list[AiProvider]:
+    return ai_settings_service.list_providers()
+
+
+@app.get(
+    "/companies/{customer_id}/ai",
+    response_model=CustomerAiSettings | None,
+)
+def get_company_ai_settings_route(
+    customer_id: UUID,
+    account: Account = Depends(current_account),
+) -> CustomerAiSettings | None:
+    _require_company_access(customer_id, "companies", "view", account)
+    return ai_settings_service.get_settings(customer_id)
+
+
+@app.put(
+    "/companies/{customer_id}/ai",
+    response_model=CustomerAiSettings,
+)
+def upsert_company_ai_settings_route(
+    customer_id: UUID,
+    payload: CustomerAiSettingsUpdate,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> CustomerAiSettings:
+    _require_company_access(customer_id, "companies", "manage", account)
+    try:
+        settings = ai_settings_service.upsert_settings(
+            customer_id, payload, actor_id=account.id
+        )
+    except AiSettingsError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="company.ai.update",
+        resource=f"company:{customer_id}",
+        actor=str(account.id),
+        after={
+            "provider": settings.provider_slug,
+            "model": settings.model,
+            "enabled": settings.enabled,
+            "has_api_key": settings.has_api_key,
+            "redact_pii_before_send": settings.redact_pii_before_send,
+        },
+        request_id=_request_id(http_request),
+    )
+    return settings
+
+
+@app.delete("/companies/{customer_id}/ai", status_code=204)
+def delete_company_ai_settings_route(
+    customer_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> None:
+    _require_company_access(customer_id, "companies", "manage", account)
+    removed = ai_settings_service.delete_settings(customer_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="ai settings not found")
+    audit.record(
+        action="company.ai.delete",
+        resource=f"company:{customer_id}",
+        actor=str(account.id),
+        request_id=_request_id(http_request),
+    )

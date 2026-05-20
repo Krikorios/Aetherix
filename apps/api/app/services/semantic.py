@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def analyze_context(
     source: str | None,
     finding_count: int,
     distinct_entities: int,
+    customer_id: UUID | None = None,
 ) -> SemanticAssessment:
     """Produce a :class:`SemanticAssessment` for the given scan payload."""
 
@@ -140,7 +142,9 @@ def analyze_context(
         )
     rationale = "; ".join(rationale_parts) or "no elevated semantic signals detected"
 
-    llm_signals, llm_boost, llm_rationale = _consult_external_llm(text, source, signals)
+    llm_signals, llm_boost, llm_rationale = _consult_external_llm(
+        text, source, signals, customer_id
+    )
     if llm_signals or llm_boost or llm_rationale:
         signals.extend(signal for signal in llm_signals if signal not in signals)
         score = min(100, score + max(0, llm_boost))
@@ -166,26 +170,45 @@ def analyze_context(
 
 
 def _consult_external_llm(
-    text: str, source: str | None, signals: list[str]
+    text: str,
+    source: str | None,
+    signals: list[str],
+    customer_id: UUID | None = None,
 ) -> tuple[list[str], int, str]:
     """Optionally enrich the assessment with an external LLM classifier.
 
-    Enabled when ``AETHERIX_SEMANTIC_LLM_URL`` is set. The endpoint receives
-    ``{text, source, signals}`` as JSON and may return any subset of
-    ``{additional_signals: list[str], risk_score_boost: int, rationale: str}``.
-    Failures (network, timeout, malformed payload) are logged and swallowed so
-    the deterministic rule-based assessment remains authoritative.
+    Resolution order:
+
+    1. **Per-tenant settings** — when ``customer_id`` is provided and the
+       customer has enabled an AI provider via
+       :mod:`app.services.ai_settings`, that configuration is used.
+    2. **Legacy env-var hook** — ``AETHERIX_SEMANTIC_LLM_URL`` (with optional
+       ``AETHERIX_SEMANTIC_LLM_TOKEN`` / ``AETHERIX_SEMANTIC_LLM_TIMEOUT``).
+       Preserved so existing single-tenant deployments keep working.
+
+    The endpoint receives ``{text, source, signals, provider, model}`` as JSON
+    and may return any subset of ``{additional_signals, risk_score_boost,
+    rationale}``. Failures (network, timeout, malformed payload) are logged
+    and swallowed so the deterministic rule-based assessment remains
+    authoritative.
     """
 
-    endpoint = os.getenv("AETHERIX_SEMANTIC_LLM_URL")
+    endpoint, token, provider_slug, model = _resolve_llm_endpoint(customer_id)
     if not endpoint:
         return [], 0, ""
 
     try:
         timeout = float(os.getenv("AETHERIX_SEMANTIC_LLM_TIMEOUT", "2.0"))
-        body = json.dumps({"text": text, "source": source, "signals": signals}).encode("utf-8")
+        body = json.dumps(
+            {
+                "text": text,
+                "source": source,
+                "signals": signals,
+                "provider": provider_slug,
+                "model": model,
+            }
+        ).encode("utf-8")
         headers = {"Content-Type": "application/json"}
-        token = os.getenv("AETHERIX_SEMANTIC_LLM_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
@@ -210,3 +233,33 @@ def _consult_external_llm(
         rationale = ""
 
     return [str(signal) for signal in additional], boost, rationale
+
+
+def _resolve_llm_endpoint(
+    customer_id: UUID | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return (endpoint, bearer_token, provider_slug, model) for the call.
+
+    Prefers per-tenant config; falls back to the env-var hook for back-compat.
+    Returns ``(None, None, None, None)`` when no upstream is configured.
+    """
+
+    # Lazy import to avoid a cycle on module load.
+    try:
+        from app.services.ai_settings import resolve_for_customer
+    except Exception:  # pragma: no cover - defensive
+        resolve_for_customer = None  # type: ignore[assignment]
+
+    if customer_id is not None and resolve_for_customer is not None:
+        try:
+            config = resolve_for_customer(customer_id)
+        except Exception as error:  # noqa: BLE001 - never break DLP on AI lookup
+            LOGGER.warning("AI settings lookup failed: %s", error)
+            config = None
+        if config is not None and config.endpoint:
+            return config.endpoint, config.api_key, config.provider_slug, config.model
+
+    endpoint = os.getenv("AETHERIX_SEMANTIC_LLM_URL")
+    if endpoint:
+        return endpoint, os.getenv("AETHERIX_SEMANTIC_LLM_TOKEN"), "env", None
+    return None, None, None, None

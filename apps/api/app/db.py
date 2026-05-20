@@ -11,6 +11,7 @@ The schema is created idempotently on application startup via
 
 from __future__ import annotations
 
+import atexit
 import os
 from contextlib import contextmanager
 from typing import Iterator
@@ -51,6 +52,9 @@ def reset_pool() -> None:
         _pool = None
 
 
+atexit.register(reset_pool)
+
+
 @contextmanager
 def connection() -> Iterator[psycopg.Connection]:
     """Yield a transactional connection. Commits on success, rolls back on
@@ -81,6 +85,7 @@ _SCHEMA_STATEMENTS = (
         id uuid primary key,
         partner_id uuid not null references partners(id),
         customer_number text not null unique,
+        company_type text not null default 'customer' check (company_type in ('partner', 'customer')),
         name text not null,
         industry text,
         country text,
@@ -92,6 +97,35 @@ _SCHEMA_STATEMENTS = (
     """,
     """
     create index if not exists customers_partner_id_idx on customers(partner_id)
+    """,
+    """
+    alter table customers add column if not exists company_type text not null default 'customer'
+    """,
+    """
+    update customers
+    set company_type = 'customer'
+    where company_type is null or company_type not in ('partner', 'customer')
+    """,
+    """
+    alter table customers alter column company_type set default 'customer'
+    """,
+    """
+    alter table customers alter column company_type set not null
+    """,
+    """
+    do $$
+    begin
+        if not exists (
+            select 1
+            from pg_constraint
+            where conname = 'customers_company_type_check'
+              and conrelid = 'customers'::regclass
+        ) then
+            alter table customers
+            add constraint customers_company_type_check
+            check (company_type in ('partner', 'customer'));
+        end if;
+    end $$;
     """,
     """
     create table if not exists customer_groups (
@@ -469,6 +503,34 @@ _SCHEMA_STATEMENTS = (
     create index if not exists account_roles_customer_idx on account_roles(customer_id)
     """,
     """
+    alter table accounts add column if not exists totp_secret text
+    """,
+    """
+    alter table accounts add column if not exists invite_token_hash text
+    """,
+    """
+    alter table accounts add column if not exists invite_expires_at timestamptz
+    """,
+    """
+    create unique index if not exists accounts_invite_token_hash_idx
+        on accounts(invite_token_hash) where invite_token_hash is not null
+    """,
+    """
+    create table if not exists login_challenges (
+        id uuid primary key,
+        account_id uuid not null references accounts(id) on delete cascade,
+        purpose text not null check (purpose in ('totp_setup', 'totp_verify')),
+        expires_at timestamptz not null,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists login_challenges_account_idx on login_challenges(account_id)
+    """,
+    """
+    create index if not exists login_challenges_expires_idx on login_challenges(expires_at)
+    """,
+    """
     create table if not exists impersonation_sessions (
         id uuid primary key,
         actor_account_id uuid not null references accounts(id),
@@ -478,6 +540,96 @@ _SCHEMA_STATEMENTS = (
         ended_at timestamptz
     )
     """,
+    # --- AI provider catalog + per-company AI settings ---------------------
+    """
+    create table if not exists ai_providers (
+        slug text primary key,
+        display_name text not null,
+        kind text not null default 'classifier',
+        requires_byo_key boolean not null default true,
+        default_endpoint text,
+        supported_models jsonb not null default '[]'::jsonb,
+        notes text,
+        created_at timestamptz not null default now()
+    )
+    """,
+    """
+    create table if not exists customer_ai_settings (
+        customer_id uuid primary key references customers(id) on delete cascade,
+        provider_slug text not null references ai_providers(slug),
+        model text not null,
+        endpoint text,
+        api_key_ciphertext bytea,
+        api_key_last4 text,
+        data_residency text,
+        redact_pii_before_send boolean not null default true,
+        enabled boolean not null default false,
+        max_calls_per_day integer not null default 1000,
+        updated_at timestamptz not null,
+        updated_by uuid references accounts(id)
+    )
+    """,
+)
+
+
+# Provider catalog seeded into ``ai_providers`` on startup. Platform owners can
+# extend this list via direct SQL or a future admin endpoint; we never delete
+# rows automatically so existing per-company settings keep their FK target.
+AI_PROVIDER_SEED: tuple[dict, ...] = (
+    {
+        "slug": "disabled",
+        "display_name": "Disabled (rules only)",
+        "kind": "classifier",
+        "requires_byo_key": False,
+        "default_endpoint": None,
+        "supported_models": ["none"],
+        "notes": "No external LLM consulted; deterministic semantic scoring only.",
+    },
+    {
+        "slug": "aetherix-hosted",
+        "display_name": "Aetherix Hosted",
+        "kind": "classifier",
+        "requires_byo_key": False,
+        "default_endpoint": None,
+        "supported_models": ["aetherix-default"],
+        "notes": "Managed by Aetherix; billed via subscription. Requires ai_tier=hosted.",
+    },
+    {
+        "slug": "openai",
+        "display_name": "OpenAI",
+        "kind": "classifier",
+        "requires_byo_key": True,
+        "default_endpoint": "https://api.openai.com/v1",
+        "supported_models": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+        "notes": "BYO key. Outbound calls go to api.openai.com.",
+    },
+    {
+        "slug": "azure-openai",
+        "display_name": "Azure OpenAI",
+        "kind": "classifier",
+        "requires_byo_key": True,
+        "default_endpoint": None,
+        "supported_models": ["gpt-4o-mini", "gpt-4o"],
+        "notes": "BYO endpoint + key. `endpoint` is the deployment URL.",
+    },
+    {
+        "slug": "anthropic",
+        "display_name": "Anthropic",
+        "kind": "classifier",
+        "requires_byo_key": True,
+        "default_endpoint": "https://api.anthropic.com",
+        "supported_models": ["claude-3-5-sonnet", "claude-3-5-haiku"],
+        "notes": "BYO key.",
+    },
+    {
+        "slug": "ollama",
+        "display_name": "Ollama (self-hosted)",
+        "kind": "classifier",
+        "requires_byo_key": False,
+        "default_endpoint": "http://localhost:11434",
+        "supported_models": ["llama3.1", "mistral", "qwen2.5"],
+        "notes": "On-prem inference. Endpoint must be reachable from the API.",
+    },
 )
 
 
@@ -569,6 +721,39 @@ def _seed_roles() -> None:
             )
 
 
+def _seed_ai_providers() -> None:
+    """Upsert the AI provider catalog. Safe to call repeatedly."""
+
+    import json as _json
+
+    with connection() as conn, conn.cursor() as cur:
+        for provider in AI_PROVIDER_SEED:
+            cur.execute(
+                """
+                insert into ai_providers (
+                    slug, display_name, kind, requires_byo_key,
+                    default_endpoint, supported_models, notes
+                ) values (%s, %s, %s, %s, %s, %s::jsonb, %s)
+                on conflict (slug) do update
+                    set display_name = excluded.display_name,
+                        kind = excluded.kind,
+                        requires_byo_key = excluded.requires_byo_key,
+                        default_endpoint = excluded.default_endpoint,
+                        supported_models = excluded.supported_models,
+                        notes = excluded.notes
+                """,
+                (
+                    provider["slug"],
+                    provider["display_name"],
+                    provider["kind"],
+                    provider["requires_byo_key"],
+                    provider["default_endpoint"],
+                    _json.dumps(provider["supported_models"]),
+                    provider["notes"],
+                ),
+            )
+
+
 def init_schema() -> None:
     """Create all tables and indexes. Safe to call repeatedly."""
 
@@ -577,3 +762,4 @@ def init_schema() -> None:
             for statement in _SCHEMA_STATEMENTS:
                 cur.execute(statement)
     _seed_roles()
+    _seed_ai_providers()

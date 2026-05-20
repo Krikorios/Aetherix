@@ -48,7 +48,7 @@ def test_llm_hook_augments_assessment(monkeypatch) -> None:
     monkeypatch.setattr(
         semantic,
         "_consult_external_llm",
-        lambda text, source, signals: (["llm_intent_exfil"], 30, "LLM classified as exfiltration"),
+        lambda text, source, signals, customer_id=None: (["llm_intent_exfil"], 30, "LLM classified as exfiltration"),
     )
 
     assessment = analyze_context(

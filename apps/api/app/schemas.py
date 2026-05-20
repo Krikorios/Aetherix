@@ -10,6 +10,7 @@ class DlpScanRequest(BaseModel):
     language: str = "en"
     endpoint_id: str | None = None
     source: str | None = None
+    customer_id: UUID | None = None
 
 
 class DlpFinding(BaseModel):
@@ -88,6 +89,7 @@ class Alert(BaseModel):
 
 DeploymentMode = Literal["cloud", "on_prem"]
 CompanySize = Literal["1-10", "11-50", "51-250", "251-1000", "1000+"]
+CompanyType = Literal["partner", "customer"]
 InstallerPlatform = Literal["windows_msi", "windows_exe", "macos_pkg", "linux_deb", "linux_rpm"]
 
 
@@ -101,11 +103,21 @@ class Partner(BaseModel):
 
 class CustomerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
+    company_type: CompanyType = "customer"
     industry: str | None = Field(default=None, max_length=80)
     country: str | None = Field(default=None, max_length=80)
     company_size: CompanySize | None = None
     policy_package_id: UUID | None = None
     created_by: str = Field(default="operator", min_length=1, max_length=120)
+
+
+class CustomerUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    industry: str | None = Field(default=None, max_length=80)
+    country: str | None = Field(default=None, max_length=80)
+    company_size: CompanySize | None = None
+    policy_package_id: UUID | None = None
+    updated_by: str = Field(default="operator", min_length=1, max_length=120)
 
 
 class Customer(CustomerCreate):
@@ -117,6 +129,40 @@ class Customer(CustomerCreate):
     assigned_policy_package_id: UUID | None = None
     assigned_policy_name: str | None = None
     created_at: datetime
+
+
+class CompanySummary(BaseModel):
+    customer: Customer
+    license: "CompanyLicense | None" = None
+
+
+class CompanySummaryPage(BaseModel):
+    items: list[CompanySummary] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class CustomerStatusUpdate(BaseModel):
+    status: Literal["active", "suspended", "archived"]
+
+
+class BulkIdsRequest(BaseModel):
+    ids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class CompanyBulkStatusRequest(BulkIdsRequest):
+    status: Literal["active", "suspended", "archived"]
+
+
+class BulkActionFailure(BaseModel):
+    id: UUID
+    error: str
+
+
+class BulkActionResult(BaseModel):
+    ok_count: int = 0
+    failures: list[BulkActionFailure] = Field(default_factory=list)
 
 
 class CustomerGroup(BaseModel):
@@ -410,7 +456,51 @@ class AccountCreate(BaseModel):
     email: str = Field(min_length=3, max_length=240)
     full_name: str = Field(min_length=1, max_length=160)
     initial_role: RoleAssignmentRequest | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=200)
+    # Delivery method for the invitation when ``password`` is not provided.
+    # ``email`` queues an email to the invitee (stubbed/logged for now).
+    # ``link`` returns a one-time setup URL in the response so the creator
+    # can send it to the invitee through their own channel.
+    delivery: Literal["email", "link"] = "email"
     created_by: str = Field(default="operator", min_length=1, max_length=120)
+
+
+class InviteAcceptRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    full_name: str | None = Field(default=None, max_length=160)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=240)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class TotpVerifyRequest(BaseModel):
+    challenge_id: UUID
+    code: str = Field(min_length=6, max_length=8)
+
+
+class TotpChallenge(BaseModel):
+    """Returned by /auth/login when 2FA is required.
+
+    ``status`` is the discriminator the frontend uses:
+    - ``totp_setup_required`` — first login: ``otpauth_url`` + ``secret`` are
+      included so the client can render the QR code for enrollment.
+    - ``totp_required`` — subsequent logins: only the challenge id is
+      returned; the client just asks for the 6-digit code.
+    """
+
+    status: Literal["totp_setup_required", "totp_required"]
+    challenge_id: UUID
+    email: str
+    otpauth_url: str | None = None
+    secret: str | None = None
+    issuer: str | None = None
+
+
+class PasswordSetRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=200)
 
 
 class Account(BaseModel):
@@ -424,6 +514,21 @@ class Account(BaseModel):
     last_login_at: datetime | None = None
     created_at: datetime
     roles: list[RoleAssignment] = Field(default_factory=list)
+
+
+class AccountCreated(BaseModel):
+    """Response returned by ``POST /accounts``.
+
+    ``invite_url`` is only populated when the creator requested
+    ``delivery="link"`` so they can hand-deliver the setup link to the
+    invitee. When ``delivery="email"`` the link is sent by the system
+    (or logged in dev) and never returned to the creator.
+    """
+
+    account: Account
+    delivery: Literal["email", "link"] = "email"
+    invite_url: str | None = None
+    invite_expires_at: datetime | None = None
 
 
 class TenantScope(BaseModel):
@@ -541,3 +646,45 @@ class LicenseUsageDay(BaseModel):
     day: datetime  # midnight UTC of the bucketed day
     active_seats: int
     peak_seats: int
+
+
+# --- AI provider catalog + per-company AI settings -------------------------
+
+AiProviderKind = Literal["classifier", "chat", "embedding"]
+
+
+class AiProvider(BaseModel):
+    slug: str
+    display_name: str
+    kind: AiProviderKind = "classifier"
+    requires_byo_key: bool = True
+    default_endpoint: str | None = None
+    supported_models: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class CustomerAiSettings(BaseModel):
+    customer_id: UUID
+    provider_slug: str
+    model: str
+    endpoint: str | None = None
+    api_key_last4: str | None = None
+    has_api_key: bool = False
+    data_residency: str | None = None
+    redact_pii_before_send: bool = True
+    enabled: bool = False
+    max_calls_per_day: int = Field(default=1000, ge=0)
+    updated_at: datetime
+    updated_by: UUID | None = None
+
+
+class CustomerAiSettingsUpdate(BaseModel):
+    provider_slug: str = Field(min_length=1, max_length=80)
+    model: str = Field(min_length=1, max_length=120)
+    endpoint: str | None = Field(default=None, max_length=500)
+    api_key: str | None = Field(default=None, min_length=1, max_length=2000)
+    clear_api_key: bool = False
+    data_residency: str | None = Field(default=None, max_length=40)
+    redact_pii_before_send: bool = True
+    enabled: bool = False
+    max_calls_per_day: int = Field(default=1000, ge=0, le=1_000_000)
