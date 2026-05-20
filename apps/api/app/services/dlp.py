@@ -60,6 +60,7 @@ def scan_text(request: DlpScanRequest) -> DlpScanResponse:
         finding_count=len(findings),
         distinct_entities=len({finding.entity_type for finding in findings}),
         customer_id=request.customer_id,
+        findings=findings,
     )
 
     action = "review" if findings else "allow"

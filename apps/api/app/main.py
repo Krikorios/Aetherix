@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentHeartbeat, Alert, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
+from app.schemas import AgentHeartbeat, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
 from app.services import audit
 from app.services import tenancy
 from app.services import licensing
@@ -457,6 +457,25 @@ def simulate_scenario(req: SimulationRequest):
                 "insert into security_alerts (id, customer_id, agent_id, category, severity, confidence, recommended_action, payload, status, created_at) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (alert_id, customer_id, req.agent_id, category, severity, 85, action, psycopg.types.json.Jsonb(payload), "new", ts)
             )
+
+            try:
+                ai_summary = ai_settings_service.summarize_alert(
+                    customer_id,
+                    {
+                        "category": category,
+                        "severity": severity,
+                        "confidence": 85,
+                        "recommended_action": action,
+                        "payload": payload,
+                    },
+                )
+            except Exception:  # noqa: BLE001 - alert ingest must not depend on AI
+                ai_summary = None
+            if ai_summary:
+                cur.execute(
+                    "update security_alerts set ai_summary = %s where id = %s",
+                    (ai_summary, alert_id),
+                )
 
             cur.execute(
                 "insert into incident_cases (id, customer_id, title, description, severity, status, recommended_response, created_at, updated_at) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -1246,3 +1265,29 @@ def delete_company_ai_settings_route(
         actor=str(account.id),
         request_id=_request_id(http_request),
     )
+
+
+@app.post(
+    "/companies/{customer_id}/ai/test",
+    response_model=AiProbeResult,
+)
+def test_company_ai_settings_route(
+    customer_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> AiProbeResult:
+    _require_company_access(customer_id, "companies", "manage", account)
+    result = ai_settings_service.test_settings(customer_id)
+    audit.record(
+        action="company.ai.test",
+        resource=f"company:{customer_id}",
+        actor=str(account.id),
+        after={
+            "ok": result.ok,
+            "provider": result.provider_slug,
+            "model": result.model,
+            "status_code": result.status_code,
+        },
+        request_id=_request_id(http_request),
+    )
+    return result

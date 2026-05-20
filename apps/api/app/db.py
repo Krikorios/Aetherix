@@ -569,6 +569,15 @@ _SCHEMA_STATEMENTS = (
         updated_by uuid references accounts(id)
     )
     """,
+    """
+    create table if not exists customer_ai_usage_daily (
+        customer_id uuid not null references customers(id) on delete cascade,
+        day date not null,
+        calls integer not null default 0,
+        last_called_at timestamptz,
+        primary key (customer_id, day)
+    )
+    """,
 )
 
 

@@ -444,6 +444,15 @@ export type CustomerAiSettingsUpdate = {
   max_calls_per_day?: number;
 };
 
+export type AiProbeResult = {
+  ok: boolean;
+  provider_slug: string | null;
+  model: string | null;
+  latency_ms: number | null;
+  status_code: number | null;
+  message: string;
+};
+
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------

@@ -56,6 +56,7 @@ def _truncate_tables() -> None:
                 account_roles,
                 accounts,
                 customer_ai_settings,
+                customer_ai_usage_daily,
                 customers,
                 partners,
                 policy_documents,

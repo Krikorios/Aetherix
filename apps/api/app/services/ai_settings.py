@@ -375,3 +375,276 @@ def resolve_for_customer(customer_id: UUID | None) -> ResolvedAiConfig | None:
         api_key=api_key,
         redact_pii_before_send=settings.redact_pii_before_send,
     )
+
+
+# ---------------------------------------------------------------------------
+# Daily call quota
+# ---------------------------------------------------------------------------
+
+
+def check_and_consume_quota(customer_id: UUID, max_calls_per_day: int) -> bool:
+    """Atomically increment today's call count for ``customer_id``.
+
+    Returns ``True`` when the call should proceed (post-increment count is
+    within the limit) and ``False`` when the customer is over budget; in the
+    latter case the row is rolled back to the previous value so that future
+    days are not pre-charged.
+    """
+
+    if max_calls_per_day <= 0:
+        return False
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into customer_ai_usage_daily (customer_id, day, calls, last_called_at)
+            values (%s, current_date, 1, %s)
+            on conflict (customer_id, day)
+            do update set calls = customer_ai_usage_daily.calls + 1,
+                          last_called_at = excluded.last_called_at
+            returning calls
+            """,
+            (str(customer_id), now),
+        )
+        row = cur.fetchone()
+        calls = int(row["calls"])
+        if calls > max_calls_per_day:
+            cur.execute(
+                "update customer_ai_usage_daily set calls = calls - 1 "
+                "where customer_id = %s and day = current_date",
+                (str(customer_id),),
+            )
+            return False
+    return True
+
+
+def get_usage_today(customer_id: UUID) -> int:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select calls from customer_ai_usage_daily "
+            "where customer_id = %s and day = current_date",
+            (str(customer_id),),
+        )
+        row = cur.fetchone()
+    return int(row["calls"]) if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Live provider probe (POST /companies/{id}/ai/test)
+# ---------------------------------------------------------------------------
+
+
+def _http_probe(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: bytes | None = None,
+    timeout: float = 5.0,
+) -> tuple[int, str]:
+    """Tiny urllib wrapper -- monkeypatched in tests."""
+
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            return response.status, response.read(2048).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as error:
+        return error.code, str(error)
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return 0, f"{type(error).__name__}: {error}"
+
+
+def test_settings(customer_id: UUID):
+    """Run a minimal live probe against the customer's configured provider.
+
+    Returns an :class:`AiProbeResult` describing whether the credentials and
+    endpoint accept a trivial request. Never raises.
+    """
+
+    from app.schemas import AiProbeResult
+
+    settings = get_settings(customer_id)
+    if settings is None:
+        return AiProbeResult(ok=False, message="AI settings are not configured for this company.")
+    if not settings.enabled:
+        return AiProbeResult(
+            ok=False,
+            provider_slug=settings.provider_slug,
+            model=settings.model,
+            message="AI is disabled for this company; enable it before testing.",
+        )
+    if settings.provider_slug == "disabled":
+        return AiProbeResult(
+            ok=False,
+            provider_slug="disabled",
+            message="Provider is set to 'disabled'.",
+        )
+    provider = get_provider(settings.provider_slug)
+    if provider is None:
+        return AiProbeResult(
+            ok=False,
+            provider_slug=settings.provider_slug,
+            message=f"Unknown provider '{settings.provider_slug}'.",
+        )
+
+    endpoint = settings.endpoint or provider.default_endpoint
+    api_key: str | None = None
+    if provider.requires_byo_key:
+        ciphertext = _load_ciphertext(customer_id)
+        if ciphertext is None:
+            return AiProbeResult(
+                ok=False,
+                provider_slug=provider.slug,
+                model=settings.model,
+                message="Provider requires an API key but none is stored.",
+            )
+        try:
+            api_key = _decrypt(ciphertext)
+        except AiSettingsError as error:
+            return AiProbeResult(
+                ok=False,
+                provider_slug=provider.slug,
+                model=settings.model,
+                message=f"Stored credential could not be decrypted: {error}",
+            )
+
+    if not endpoint:
+        # Hosted providers without an endpoint are healthy by configuration.
+        return AiProbeResult(
+            ok=True,
+            provider_slug=provider.slug,
+            model=settings.model,
+            message="Hosted provider; no endpoint to probe.",
+        )
+
+    method, url, headers, body = _build_probe_request(provider.slug, endpoint, api_key, settings.model)
+    started = datetime.now(UTC)
+    status, snippet = _http_probe(method, url, headers=headers, body=body, timeout=5.0)
+    latency_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
+
+    if 200 <= status < 400:
+        return AiProbeResult(
+            ok=True,
+            provider_slug=provider.slug,
+            model=settings.model,
+            latency_ms=latency_ms,
+            status_code=status,
+            message="Provider responded successfully.",
+        )
+    if status == 0:
+        return AiProbeResult(
+            ok=False,
+            provider_slug=provider.slug,
+            model=settings.model,
+            latency_ms=latency_ms,
+            message=f"Could not reach provider: {snippet[:200]}",
+        )
+    return AiProbeResult(
+        ok=False,
+        provider_slug=provider.slug,
+        model=settings.model,
+        latency_ms=latency_ms,
+        status_code=status,
+        message=f"Provider returned HTTP {status}: {snippet[:200]}",
+    )
+
+
+def _build_probe_request(
+    slug: str,
+    endpoint: str,
+    api_key: str | None,
+    model: str,
+) -> tuple[str, str, dict[str, str], bytes | None]:
+    """Return (method, url, headers, body) for a minimal liveness probe."""
+
+    base = endpoint.rstrip("/")
+    if slug == "openai":
+        return "GET", f"{base}/models", {"Authorization": f"Bearer {api_key or ''}"}, None
+    if slug == "anthropic":
+        return (
+            "GET",
+            f"{base}/v1/models",
+            {
+                "x-api-key": api_key or "",
+                "anthropic-version": "2023-06-01",
+            },
+            None,
+        )
+    if slug == "azure-openai":
+        # Azure OpenAI: list deployments under the resource.
+        return (
+            "GET",
+            f"{base}/openai/deployments?api-version=2024-08-01-preview",
+            {"api-key": api_key or ""},
+            None,
+        )
+    if slug == "ollama":
+        return "GET", f"{base}/api/tags", {}, None
+    # Generic OpenAI-compatible default (e.g. aetherix-hosted).
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    return "GET", f"{base}/models", headers, None
+
+
+# ---------------------------------------------------------------------------
+# Alert summary writer
+# ---------------------------------------------------------------------------
+
+
+def summarize_alert(customer_id: UUID, alert: dict) -> str | None:
+    """Return a short AI-written summary for ``alert`` or ``None``.
+
+    Falls back to ``None`` whenever AI is unavailable, disabled, over quota,
+    or the upstream call fails -- callers should treat ``None`` as "leave
+    ``ai_summary`` NULL".
+    """
+
+    config = resolve_for_customer(customer_id)
+    if config is None:
+        return None
+    settings = get_settings(customer_id)
+    if settings is None:
+        return None
+    if not check_and_consume_quota(customer_id, settings.max_calls_per_day):
+        LOGGER.info("AI summary skipped for customer %s: daily quota exhausted", customer_id)
+        return None
+
+    payload = {
+        "kind": "alert_summary",
+        "provider": config.provider_slug,
+        "model": config.model,
+        "alert": {
+            "category": alert.get("category"),
+            "severity": alert.get("severity"),
+            "confidence": alert.get("confidence"),
+            "recommended_action": alert.get("recommended_action"),
+            "payload": alert.get("payload"),
+        },
+    }
+    import json as _json
+
+    headers = {"Content-Type": "application/json"}
+    if config.api_key:
+        headers["Authorization"] = f"Bearer {config.api_key}"
+    if not config.endpoint:
+        return None
+    status, body = _http_probe(
+        "POST",
+        config.endpoint,
+        headers=headers,
+        body=_json.dumps(payload).encode("utf-8"),
+        timeout=5.0,
+    )
+    if not (200 <= status < 300):
+        LOGGER.info("AI summary upstream returned status %s for customer %s", status, customer_id)
+        return None
+    try:
+        data = _json.loads(body)
+    except ValueError:
+        return None
+    text = data.get("summary") if isinstance(data, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return text.strip()[:2000]

@@ -29,6 +29,7 @@ import {
   getAccountId,
   setAccountId,
   type AiProvider,
+  type AiProbeResult,
   type BulkActionResult,
   type CompanyLicense,
   type CompanyLicenseAssign,
@@ -1423,6 +1424,8 @@ function AiTab({
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isProbing, setIsProbing] = useState(false);
+  const [probe, setProbe] = useState<AiProbeResult | null>(null);
 
   const provider = useMemo(
     () => providers.find((p) => p.slug === form.provider_slug) ?? null,
@@ -1497,6 +1500,7 @@ function AiTab({
     if (!canManage) return;
     setIsSaving(true);
     setSuccess(null);
+    setProbe(null);
     try {
       const payload: CustomerAiSettingsUpdate = {
         ...form,
@@ -1536,6 +1540,23 @@ function AiTab({
       onError(err instanceof Error ? err.message : "Failed to clear AI settings");
     } finally {
       setIsDeleting(false);
+    }
+  }
+
+  async function runProbe() {
+    if (!canManage) return;
+    setIsProbing(true);
+    setProbe(null);
+    try {
+      const result = await apiPost<AiProbeResult>(
+        `/companies/${customerId}/ai/test`,
+        {},
+      );
+      setProbe(result);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to test AI provider");
+    } finally {
+      setIsProbing(false);
     }
   }
 
@@ -1707,6 +1728,17 @@ function AiTab({
           <button
             type="button"
             className="btnGhost"
+            onClick={runProbe}
+            disabled={disabledForm || isProbing}
+            title="Send a minimal request to the configured provider to verify the credentials and endpoint."
+          >
+            {isProbing ? "Testing…" : "Test connection"}
+          </button>
+        ) : null}
+        {settings ? (
+          <button
+            type="button"
+            className="btnGhost"
             onClick={remove}
             disabled={disabledForm || isDeleting}
           >
@@ -1717,6 +1749,23 @@ function AiTab({
           <span className="muted">Read-only — companies:manage required to change AI settings.</span>
         ) : null}
       </div>
+      {probe ? (
+        <div
+          className="muted"
+          style={{
+            marginTop: 8,
+            padding: "8px 10px",
+            borderRadius: 6,
+            background: probe.ok ? "rgba(38, 145, 87, 0.12)" : "rgba(176, 60, 60, 0.12)",
+            color: probe.ok ? "#1e7c47" : "#9b2c2c",
+          }}
+        >
+          <strong>{probe.ok ? "OK" : "Failed"}</strong>
+          {probe.latency_ms != null ? ` · ${probe.latency_ms}ms` : ""}
+          {probe.status_code != null ? ` · HTTP ${probe.status_code}` : ""}
+          {probe.message ? ` — ${probe.message}` : ""}
+        </div>
+      ) : null}
     </form>
   );
 }

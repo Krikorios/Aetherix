@@ -87,6 +87,7 @@ def analyze_context(
     finding_count: int,
     distinct_entities: int,
     customer_id: UUID | None = None,
+    findings: list | None = None,
 ) -> SemanticAssessment:
     """Produce a :class:`SemanticAssessment` for the given scan payload."""
 
@@ -143,7 +144,7 @@ def analyze_context(
     rationale = "; ".join(rationale_parts) or "no elevated semantic signals detected"
 
     llm_signals, llm_boost, llm_rationale = _consult_external_llm(
-        text, source, signals, customer_id
+        text, source, signals, customer_id, findings
     )
     if llm_signals or llm_boost or llm_rationale:
         signals.extend(signal for signal in llm_signals if signal not in signals)
@@ -174,6 +175,7 @@ def _consult_external_llm(
     source: str | None,
     signals: list[str],
     customer_id: UUID | None = None,
+    findings: list | None = None,
 ) -> tuple[list[str], int, str]:
     """Optionally enrich the assessment with an external LLM classifier.
 
@@ -181,10 +183,13 @@ def _consult_external_llm(
 
     1. **Per-tenant settings** — when ``customer_id`` is provided and the
        customer has enabled an AI provider via
-       :mod:`app.services.ai_settings`, that configuration is used.
+       :mod:`app.services.ai_settings`, that configuration is used. The
+       per-tenant ``max_calls_per_day`` quota and ``redact_pii_before_send``
+       flag are enforced here.
     2. **Legacy env-var hook** — ``AETHERIX_SEMANTIC_LLM_URL`` (with optional
        ``AETHERIX_SEMANTIC_LLM_TOKEN`` / ``AETHERIX_SEMANTIC_LLM_TIMEOUT``).
-       Preserved so existing single-tenant deployments keep working.
+       Preserved so existing single-tenant deployments keep working; defaults
+       to redacting PII before send.
 
     The endpoint receives ``{text, source, signals, provider, model}`` as JSON
     and may return any subset of ``{additional_signals, risk_score_boost,
@@ -193,15 +198,37 @@ def _consult_external_llm(
     authoritative.
     """
 
-    endpoint, token, provider_slug, model = _resolve_llm_endpoint(customer_id)
+    endpoint, token, provider_slug, model, redact = _resolve_llm_endpoint(customer_id)
     if not endpoint:
         return [], 0, ""
+
+    # Per-tenant daily quota enforcement (skip for env fallback).
+    if customer_id is not None and provider_slug != "env":
+        try:
+            from app.services.ai_settings import (
+                check_and_consume_quota,
+                get_settings,
+            )
+
+            settings = get_settings(customer_id)
+            limit = settings.max_calls_per_day if settings else 0
+            if not check_and_consume_quota(customer_id, limit):
+                LOGGER.info(
+                    "semantic LLM hook skipped for customer %s: daily quota exhausted",
+                    customer_id,
+                )
+                return [], 0, ""
+        except Exception as error:  # noqa: BLE001 - never break DLP on quota lookup
+            LOGGER.warning("AI quota check failed: %s", error)
+            return [], 0, ""
+
+    payload_text = _redact_text(text, findings) if redact else text
 
     try:
         timeout = float(os.getenv("AETHERIX_SEMANTIC_LLM_TIMEOUT", "2.0"))
         body = json.dumps(
             {
-                "text": text,
+                "text": payload_text,
                 "source": source,
                 "signals": signals,
                 "provider": provider_slug,
@@ -237,11 +264,11 @@ def _consult_external_llm(
 
 def _resolve_llm_endpoint(
     customer_id: UUID | None,
-) -> tuple[str | None, str | None, str | None, str | None]:
-    """Return (endpoint, bearer_token, provider_slug, model) for the call.
+) -> tuple[str | None, str | None, str | None, str | None, bool]:
+    """Return (endpoint, bearer_token, provider_slug, model, redact_pii) for the call.
 
     Prefers per-tenant config; falls back to the env-var hook for back-compat.
-    Returns ``(None, None, None, None)`` when no upstream is configured.
+    Returns ``(None, None, None, None, True)`` when no upstream is configured.
     """
 
     # Lazy import to avoid a cycle on module load.
@@ -257,9 +284,53 @@ def _resolve_llm_endpoint(
             LOGGER.warning("AI settings lookup failed: %s", error)
             config = None
         if config is not None and config.endpoint:
-            return config.endpoint, config.api_key, config.provider_slug, config.model
+            return (
+                config.endpoint,
+                config.api_key,
+                config.provider_slug,
+                config.model,
+                bool(config.redact_pii_before_send),
+            )
 
     endpoint = os.getenv("AETHERIX_SEMANTIC_LLM_URL")
     if endpoint:
-        return endpoint, os.getenv("AETHERIX_SEMANTIC_LLM_TOKEN"), "env", None
-    return None, None, None, None
+        return endpoint, os.getenv("AETHERIX_SEMANTIC_LLM_TOKEN"), "env", None, True
+    return None, None, None, None, True
+
+
+def _redact_text(text: str, findings: list | None) -> str:
+    """Replace DLP finding spans in ``text`` with ``[REDACTED:<entity>]``.
+
+    Accepts a list of objects with ``start``, ``end`` and ``entity_type``
+    attributes (pydantic ``DlpFinding`` instances) or dicts with the same
+    keys. Spans are applied in descending order so earlier offsets are not
+    invalidated by replacements.
+    """
+
+    if not findings:
+        return text
+
+    def _attr(item, key, default=None):
+        if isinstance(item, dict):
+            return item.get(key, default)
+        return getattr(item, key, default)
+
+    spans: list[tuple[int, int, str]] = []
+    for finding in findings:
+        start = _attr(finding, "start")
+        end = _attr(finding, "end")
+        entity = _attr(finding, "entity_type", "PII")
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        if start < 0 or end <= start or end > len(text):
+            continue
+        spans.append((start, end, str(entity)))
+
+    if not spans:
+        return text
+
+    spans.sort(key=lambda s: s[0], reverse=True)
+    redacted = text
+    for start, end, entity in spans:
+        redacted = redacted[:start] + f"[REDACTED:{entity}]" + redacted[end:]
+    return redacted

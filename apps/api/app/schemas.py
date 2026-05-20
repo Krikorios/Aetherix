@@ -688,3 +688,12 @@ class CustomerAiSettingsUpdate(BaseModel):
     redact_pii_before_send: bool = True
     enabled: bool = False
     max_calls_per_day: int = Field(default=1000, ge=0, le=1_000_000)
+
+
+class AiProbeResult(BaseModel):
+    ok: bool
+    provider_slug: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+    status_code: int | None = None
+    message: str = ""
