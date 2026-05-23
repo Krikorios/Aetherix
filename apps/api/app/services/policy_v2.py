@@ -18,6 +18,8 @@ from uuid import UUID
 from app.db import connection
 from app.schemas import (
     AgentDlpEvidenceIngest,
+    AgentPolicyAck,
+    AgentPolicyAckRequest,
     AgentPolicyResponse,
     Account,
     EvidenceEvent,
@@ -31,12 +33,16 @@ from app.schemas import (
     PolicyGetResponse,
     PolicyLineageV2,
     PolicyListItemV2,
+    PolicyListResponse,
     PolicyPromoteRequest,
+    PolicyRollbackRequest,
     PolicyScopeV2,
     PolicySimulationModuleOutcome,
     PolicySimulationRecord,
     PolicySimulationSummaryV2,
+    PolicyUpdateInput,
     PolicyVersion,
+    PolicyVersionSummary,
 )
 from app.services import licensing, tenancy
 from app.services.compliance import controls_for_event
@@ -65,10 +71,19 @@ REQUIRED_MODULE_KEYS: tuple[str, ...] = (
     "firewall",
     "network_protection",
     "web_protection",
+    "device_control",
+    "compliance_evidence",
+    "integrations",
+    "platform_observability",
+    "white_label",
+)
+
+CORE_MODULE_KEYS: set[str] = set(REQUIRED_MODULE_KEYS)
+
+ADDON_MODULE_KEYS: set[str] = {
     "classification_labeling",
     "semantic_dlp",
     "genai_guardrails",
-    "device_control",
     "siem_hids",
     "integrity_monitoring",
     "vulnerability_inventory",
@@ -80,29 +95,6 @@ REQUIRED_MODULE_KEYS: tuple[str, ...] = (
     "agentic_response",
     "ai_settings",
     "ai_reports",
-    "compliance_evidence",
-    "integrations",
-    "platform_observability",
-    "white_label",
-)
-
-CORE_MODULE_KEYS: set[str] = {
-    "general",
-    "tenant_scope",
-    "entitlements",
-    "deployment_profile",
-    "antimalware",
-    "behavior_monitoring",
-    "anti_exploit",
-    "ransomware_mitigation",
-    "firewall",
-    "network_protection",
-    "web_protection",
-    "device_control",
-    "compliance_evidence",
-    "integrations",
-    "platform_observability",
-    "white_label",
 }
 
 ADDON_TO_MODULES: dict[str, set[str]] = {
@@ -277,6 +269,9 @@ def _default_modules(modules: dict[str, dict[str, Any]]) -> dict[str, dict[str, 
     full: dict[str, dict[str, Any]] = {}
     for key in REQUIRED_MODULE_KEYS:
         full[key] = dict(modules.get(key) or {})
+    for key, value in modules.items():
+        if key not in full:
+            full[key] = dict(value)
     return full
 
 
@@ -327,7 +322,7 @@ def _assert_scope_access(actor: Account, scope: PolicyScopeV2, *, level: str = "
 
 def _licensed_modules(customer_id: UUID | None) -> set[str]:
     if customer_id is None:
-        return set(REQUIRED_MODULE_KEYS)
+        return set(CORE_MODULE_KEYS) | set(ADDON_MODULE_KEYS)
 
     licensing.ensure_default_catalog()
     lic = licensing.get_license(customer_id)
@@ -515,6 +510,173 @@ def create_policy(payload: PolicyDocumentV2Input, *, actor: Account) -> PolicyCr
     return PolicyCreateResponse(policy=policy, version=version)
 
 
+def delete_policy(policy_id: UUID, *, hard: bool = False, actor: Account) -> None:
+    row = _policy_row(policy_id)
+    scope = PolicyScopeV2(
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+        group_id=row["group_id"],
+        endpoint_id=row["endpoint_id"],
+    )
+    _assert_scope_access(actor, scope, level="edit")
+
+    if hard:
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "select count(*) as n from policy_assignments_v2 where policy_id = %s",
+                (policy_id,),
+            )
+            if int(cur.fetchone()["n"]) > 0:
+                raise PolicyV2Error("cannot hard-delete policy with active assignments; archive it first")
+
+            cur.execute("delete from policy_documents_v2 where id = %s", (policy_id,))
+        EvidenceEmitter.emit(
+            action="policy_v2.delete",
+            resource=f"policy:{policy_id}",
+            actor=str(actor.id),
+            scope=_scope_dict(scope),
+        )
+        return
+
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update policy_documents_v2 set status = 'archived', updated_at = %s, updated_by = %s where id = %s",
+            (now, str(actor.id), policy_id),
+        )
+        cur.execute(
+            "update policy_versions set status = 'archived' where policy_id = %s",
+            (policy_id,),
+        )
+
+    EvidenceEmitter.emit(
+        action="policy_v2.archive",
+        resource=f"policy:{policy_id}",
+        actor=str(actor.id),
+        scope=_scope_dict(scope),
+    )
+
+
+def update_policy(policy_id: UUID, payload: PolicyUpdateInput, *, actor: Account) -> PolicyCreateResponse:
+    row = _policy_row(policy_id)
+    current_scope = PolicyScopeV2(
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+        group_id=row["group_id"],
+        endpoint_id=row["endpoint_id"],
+    )
+    _assert_scope_access(actor, current_scope, level="edit")
+    if row["status"] != "draft":
+        raise PolicyV2Error("only draft policies can be updated")
+
+    latest = _latest_version(policy_id)
+    existing_payload = latest.payload
+
+    updated_modules = existing_payload.modules.copy()
+    if payload.modules is not None:
+        merged = dict(updated_modules)
+        merged.update(payload.modules)
+        updated_modules = _default_modules(merged)
+        updated_modules = PolicyValidationService.normalize_semantic_modules(updated_modules)
+
+    new_payload = PolicyDocumentV2Input(
+        schema_version="2.0",
+        name=payload.name if payload.name is not None else existing_payload.name,
+        scope=existing_payload.scope,
+        lineage=payload.lineage if payload.lineage is not None else existing_payload.lineage,
+        modules=updated_modules,
+        white_label_names=(
+            dict(payload.white_label_names) if payload.white_label_names is not None
+            else existing_payload.white_label_names.copy()
+        ),
+    )
+
+    _validate_payload(new_payload)
+    try:
+        PolicyValidationService.validate_semantic_modules(new_payload)
+    except ValueError as error:
+        raise PolicyV2Error(str(error)) from error
+    _ensure_entitlements(new_payload)
+
+    now = datetime.now(UTC)
+    new_version = latest.version + 1
+    version_id = uuid.uuid4()
+    payload_json = new_payload.model_dump(mode="json")
+    payload_hash = _payload_hash(payload_json)
+    signature = _signature(payload_json)
+    controls = controls_for_event("policy_v2.update")
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update policy_documents_v2 set name = %s, latest_version = %s, updated_at = %s, updated_by = %s, evidence_controls = %s::jsonb where id = %s",
+            (new_payload.name, new_version, now, str(actor.id), json.dumps(controls), policy_id),
+        )
+        cur.execute(
+            """
+            insert into policy_versions (
+                id, policy_id, version, status, payload, payload_hash,
+                signed_by, signature, promoted_from_simulation_id,
+                created_at, created_by, evidence_controls
+            ) values (
+                %s, %s, %s, 'draft', %s::jsonb, %s,
+                %s, %s, null,
+                %s, %s, %s::jsonb
+            )
+            """,
+            (
+                version_id,
+                policy_id,
+                new_version,
+                json.dumps(payload_json),
+                payload_hash,
+                signing_key_id(),
+                signature,
+                now,
+                str(actor.id),
+                json.dumps(controls),
+            ),
+        )
+
+    policy = _row_to_policy(row)
+    policy.name = new_payload.name
+    policy.latest_version = new_version
+    policy.updated_at = now
+    policy.updated_by = str(actor.id)
+    policy.modules = new_payload.modules
+    policy.lineage = new_payload.lineage
+    policy.white_label_names = new_payload.white_label_names
+
+    version = PolicyVersion(
+        id=version_id,
+        policy_id=policy_id,
+        version=new_version,
+        status="draft",
+        payload=new_payload,
+        payload_hash=payload_hash,
+        signed_by=signing_key_id(),
+        signature=signature,
+        signed_payload=payload_json,
+        promoted_from_simulation_id=None,
+        created_at=now,
+        created_by=str(actor.id),
+    )
+
+    EvidenceEmitter.emit(
+        action="policy_v2.update",
+        resource=f"policy:{policy_id}",
+        actor=str(actor.id),
+        scope=_scope_dict(current_scope),
+        payload={
+            "policy_id": str(policy_id),
+            "previous_version": latest.version,
+            "new_version": new_version,
+            "payload_hash": payload_hash,
+        },
+        evidence_controls=controls,
+    )
+    return PolicyCreateResponse(policy=policy, version=version)
+
+
 def _latest_version(policy_id: UUID) -> PolicyVersion:
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
@@ -564,7 +726,9 @@ def list_policies(
     status: str | None = None,
     customer_id: UUID | None = None,
     module: str | None = None,
-) -> list[PolicyListItemV2]:
+    limit: int = 50,
+    offset: int = 0,
+) -> PolicyListResponse:
     if not tenancy.has_permission(actor, "policies", "view"):
         raise PolicyV2Error("requires view on policies")
     scope = tenancy.compute_scope(actor)
@@ -591,22 +755,28 @@ def list_policies(
             clauses.append("pd.customer_id = any(%s)")
             params.append(scope.customer_ids)
         else:
-            return []
+            return PolicyListResponse(items=[], total=0, limit=limit, offset=offset)
 
     where = f"where {' and '.join(clauses)}" if clauses else ""
     with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"select count(*) as n from policy_documents_v2 pd {where}",
+            params,
+        )
+        total = int(cur.fetchone()["n"])
         cur.execute(
             f"""
             select pd.*
             from policy_documents_v2 pd
             {where}
             order by pd.updated_at desc
+            limit %s offset %s
             """,
-            params,
+            [*params, limit, offset],
         )
         rows = cur.fetchall()
 
-    return [
+    items = [
         PolicyListItemV2(
             id=row["id"],
             name=row["name"],
@@ -624,6 +794,7 @@ def list_policies(
         )
         for row in rows
     ]
+    return PolicyListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 def _deep_merge(base: Any, override: Any) -> Any:
@@ -649,13 +820,67 @@ def _resolve_lineage_payload(payload: PolicyDocumentV2Input, _seen: set[UUID] | 
         raise PolicyV2Error(str(error)) from error
 
 
+def list_policy_versions(policy_id: UUID, actor: Account, *, limit: int = 50, offset: int = 0) -> list[PolicyVersionSummary]:
+    row = _policy_row(policy_id)
+    scope = PolicyScopeV2(
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+        group_id=row["group_id"],
+        endpoint_id=row["endpoint_id"],
+    )
+    _assert_scope_access(actor, scope, level="view")
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, version, status, payload_hash, signed_by, created_at, created_by, promoted_from_simulation_id
+            from policy_versions
+            where policy_id = %s
+            order by version desc
+            limit %s offset %s
+            """,
+            (policy_id, limit, offset),
+        )
+        rows = cur.fetchall()
+
+    return [
+        PolicyVersionSummary(
+            id=row["id"],
+            version=row["version"],
+            status=row["status"],
+            payload_hash=row["payload_hash"],
+            signed_by=row["signed_by"],
+            created_at=row["created_at"],
+            created_by=row["created_by"],
+            promoted_from_simulation_id=row["promoted_from_simulation_id"],
+        )
+        for row in rows
+    ]
+
+
+def get_policy_version(policy_id: UUID, version: int, actor: Account) -> PolicyVersion:
+    row = _policy_row(policy_id)
+    scope = PolicyScopeV2(
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+        group_id=row["group_id"],
+        endpoint_id=row["endpoint_id"],
+    )
+    _assert_scope_access(actor, scope, level="view")
+    return _version_by_number(policy_id, version)
+
+
 def _entitlement_filtered_payload(payload: PolicyDocumentV2Input, customer_id: UUID | None) -> PolicyDocumentV2Input:
     entitled = _licensed_modules(customer_id)
+    all_addon_keys = ADDON_MODULE_KEYS - CORE_MODULE_KEYS
     filtered_modules: dict[str, dict[str, Any]] = {}
     for key, module_payload in payload.modules.items():
         if key in CORE_MODULE_KEYS or key in entitled:
             filtered_modules[key] = module_payload
         else:
+            filtered_modules[key] = {"enabled": False, "locked": True, "reason": "requires_addon"}
+    for key in all_addon_keys:
+        if key not in filtered_modules:
             filtered_modules[key] = {"enabled": False, "locked": True, "reason": "requires_addon"}
     return PolicyDocumentV2Input(
         schema_version=payload.schema_version,
@@ -902,6 +1127,105 @@ def promote_policy(policy_id: UUID, request: PolicyPromoteRequest, actor: Accoun
                 evidence_event.id,
                 json.dumps(controls),
             ),
+        )
+        cur.execute("select * from policy_versions where id = %s", (version_id,))
+        version_row = cur.fetchone()
+
+    return _row_to_version(version_row)
+
+
+def _version_by_number(policy_id: UUID, version: int) -> PolicyVersion:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select * from policy_versions where policy_id = %s and version = %s",
+            (policy_id, version),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise PolicyV2Error(f"version {version} not found for policy {policy_id}")
+    return _row_to_version(row)
+
+
+def rollback_policy(policy_id: UUID, request: PolicyRollbackRequest, actor: Account) -> PolicyVersion:
+    row = _policy_row(policy_id)
+    scope = PolicyScopeV2(
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+        group_id=row["group_id"],
+        endpoint_id=row["endpoint_id"],
+    )
+    _assert_scope_access(actor, scope, level="manage")
+
+    target = _version_by_number(policy_id, request.target_version)
+    latest = _latest_version(policy_id)
+
+    if target.version >= latest.version:
+        raise PolicyV2Error(f"target version {target.version} is not older than the latest version {latest.version}")
+
+    payload = _resolve_lineage_payload(target.payload)
+    summary, _ = PolicySimulationService.simulate(payload)
+
+    if summary.approval_required:
+        if not request.operator_approved:
+            raise PolicyV2Error("operator approval is required for rollback with destructive actions")
+        if not request.approval_reason:
+            raise PolicyV2Error("approval_reason is required for destructive rollback")
+
+    next_version = latest.version + 1
+    now = datetime.now(UTC)
+    payload_json = target.payload.model_dump(mode="json")
+    payload_hash = _payload_hash(payload_json)
+    signature = _signature(payload_json)
+    version_id = uuid.uuid4()
+    controls = controls_for_event("policy_v2.rollback")
+    evidence_event = EvidenceEmitter.emit(
+        action="policy_v2.rollback",
+        resource=f"policy:{policy_id}",
+        actor=str(actor.id),
+        scope=_scope_dict(scope),
+        payload={
+            "policy_id": str(policy_id),
+            "from_version": latest.version,
+            "to_version": next_version,
+            "target_version": target.version,
+            "approval_reason": request.approval_reason,
+        },
+        evidence_controls=controls,
+    )
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update policy_versions set status = 'archived' where policy_id = %s and status = 'active'",
+            (policy_id,),
+        )
+        cur.execute(
+            """
+            insert into policy_versions (
+                id, policy_id, version, status, payload, payload_hash,
+                signed_by, signature, promoted_from_simulation_id,
+                created_at, created_by, evidence_controls
+            ) values (
+                %s, %s, %s, 'active', %s::jsonb, %s,
+                %s, %s, null,
+                %s, %s, %s::jsonb
+            )
+            """,
+            (
+                version_id,
+                policy_id,
+                next_version,
+                json.dumps(payload_json),
+                payload_hash,
+                signing_key_id(),
+                signature,
+                now,
+                str(actor.id),
+                json.dumps(controls),
+            ),
+        )
+        cur.execute(
+            "update policy_documents_v2 set latest_version = %s, active_version = %s, updated_at = %s, updated_by = %s where id = %s",
+            (next_version, next_version, now, str(actor.id), policy_id),
         )
         cur.execute("select * from policy_versions where id = %s", (version_id,))
         version_row = cur.fetchone()
@@ -1255,3 +1579,40 @@ def ingest_agent_dlp_evidence(endpoint_id: str, token: str, payload: AgentDlpEvi
         },
     )
     return event
+
+
+def _authenticate_agent(endpoint_id: str, token: str) -> dict[str, Any]:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select partner_id, customer_id, group_id, secret, revoked from enrolled_agents where agent_id = %s",
+            (endpoint_id,),
+        )
+        enrolled = cur.fetchone()
+    if enrolled is None or enrolled["revoked"]:
+        raise PolicyV2Error("agent is not enrolled")
+    if not hmac.compare_digest(enrolled["secret"], token):
+        raise PolicyV2Error("invalid agent token")
+    return enrolled
+
+
+def agent_acknowledge_policy(endpoint_id: str, token: str, ack: AgentPolicyAckRequest) -> AgentPolicyAck:
+    _authenticate_agent(endpoint_id, token)
+    now = datetime.now(UTC)
+    ack_id = uuid.uuid4()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into policy_acks (id, endpoint_id, policy_version_hash, agent_version, acknowledged_at)
+            values (%s, %s, %s, %s, %s)
+            returning *
+            """,
+            (ack_id, endpoint_id, ack.policy_version_hash, ack.agent_version, now),
+        )
+        row = cur.fetchone()
+    return AgentPolicyAck(
+        id=row["id"],
+        endpoint_id=row["endpoint_id"],
+        policy_version_hash=row["policy_version_hash"],
+        agent_version=row["agent_version"],
+        acknowledged_at=row["acknowledged_at"],
+    )

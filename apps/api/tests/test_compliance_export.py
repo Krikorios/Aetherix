@@ -190,3 +190,80 @@ def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_template
     }
     assert "A.5.12" in controls_with_evidence
     assert "A.8.12" in controls_with_evidence
+
+
+def test_compliance_v0_5_reviews_and_attestation_workflow() -> None:
+    owner = tenancy.ensure_platform_owner("compliance-v5@aetherix.test", "Compliance Owner v0.5")
+    customer_id = _make_customer()
+    client = TestClient(app)
+    headers = {"X-Aetherix-Account": str(owner.id)}
+
+    r_list = client.get(
+        f"/compliance/reviews?customer_id={customer_id}&framework=iso27001-2022",
+        headers=headers,
+    )
+    assert r_list.status_code == 200
+    assert len(r_list.json()) == 0
+
+    review_create = client.post(
+        f"/compliance/reviews?customer_id={customer_id}",
+        headers=headers,
+        json={
+            "framework": "iso27001-2022",
+            "control_id": "A.5.12",
+            "status": "reviewed",
+            "notes": "Validated semantic policies",
+        },
+    )
+    assert review_create.status_code == 200
+    res = review_create.json()
+    assert res["status"] == "reviewed"
+    assert res["notes"] == "Validated semantic policies"
+    assert res["reviewed_by"] == owner.email
+
+    r_list2 = client.get(
+        f"/compliance/reviews?customer_id={customer_id}&framework=iso27001-2022",
+        headers=headers,
+    )
+    assert r_list2.status_code == 200
+    assert len(r_list2.json()) == 1
+
+    a_list = client.get(
+        f"/compliance/attestations?customer_id={customer_id}&framework=iso27001-2022",
+        headers=headers,
+    )
+    assert a_list.status_code == 200
+    assert len(a_list.json()) == 0
+
+    attest_create = client.post(
+        f"/compliance/attestations?customer_id={customer_id}",
+        headers=headers,
+        json={
+            "framework": "iso27001-2022",
+            "notes": "Signed off on Q2 2026",
+        },
+    )
+    assert attest_create.status_code == 200
+    res_a = attest_create.json()
+    assert res_a["status"] == "active"
+    assert res_a["notes"] == "Signed off on Q2 2026"
+    assert len(res_a["bundle_hash"]) == 64
+
+    a_list2 = client.get(
+        f"/compliance/attestations?customer_id={customer_id}&framework=iso27001-2022",
+        headers=headers,
+    )
+    assert a_list2.status_code == 200
+    assert len(a_list2.json()) == 1
+
+    vault_list = client.get(
+        f"/compliance/vault?customer_id={customer_id}&framework=iso27001-2022",
+        headers=headers,
+    )
+    assert vault_list.status_code == 200
+    assert len(vault_list.json()) == 1
+    vault_item = vault_list.json()[0]
+    assert vault_item["status"] == "sealed"
+    assert vault_item["vault_provider"] == "Azure Immutable Blob Storage (WORM Policy)"
+    assert vault_item["bundle_hash"] == res_a["bundle_hash"]
+    assert "https://" in vault_item["reference_uri"]

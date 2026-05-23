@@ -70,6 +70,9 @@ def _truncate_tables() -> None:
                 policy_versions,
                 policy_documents_v2,
                 evidence_events,
+                compliance_reviews,
+                compliance_attestations,
+                compliance_vault_references,
                 policy_documents,
                 audit_log
             restart identity cascade

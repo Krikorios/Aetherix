@@ -10,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyResponse, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListItemV2, PolicyPromoteRequest, PolicySimulationRecord, PolicyVersion, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
+from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
 from app.services import audit
 from app.services import compliance
+from app.schemas import ComplianceReviewCreate, ComplianceReview, ComplianceAttestationCreate, ComplianceAttestation, ComplianceVaultReference
 from app.services import tenancy
 from app.services import licensing
 from app.services import policy_v2 as policy_v2_service
@@ -82,6 +83,15 @@ def _build_invite_url(request: Request, token: str) -> str:
         base = str(request.base_url).rstrip("/")
     base = base.rstrip("/")
     return f"{base}/#/invite/{token}"
+
+
+def _extract_bearer_token(authorization: str) -> str:
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
+    token = authorization[len("Bearer "):]
+    if not token or len(token) < 8:
+        raise HTTPException(status_code=401, detail="invalid token")
+    return token
 
 
 @app.get("/health")
@@ -1138,19 +1148,23 @@ def create_policy_v2_route(
     return created
 
 
-@app.get("/policies", response_model=list[PolicyListItemV2])
+@app.get("/policies", response_model=PolicyListResponse)
 def list_policies_v2_route(
     status: str | None = Query(default=None, pattern="^(draft|active|archived)$"),
     customer_id: UUID | None = Query(default=None),
     module: str | None = Query(default=None, max_length=120),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     account: Account = Depends(current_account),
-) -> list[PolicyListItemV2]:
+) -> PolicyListResponse:
     try:
         return policy_v2_service.list_policies(
             account,
             status=status,
             customer_id=customer_id,
             module=module,
+            limit=limit,
+            offset=offset,
         )
     except policy_v2_service.PolicyV2Error as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -1207,6 +1221,71 @@ def get_policy_v2_route(
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@app.put("/policies/{policy_id}", response_model=PolicyCreateResponse)
+def update_policy_v2_route(
+    policy_id: UUID,
+    payload: PolicyUpdateInput,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> PolicyCreateResponse:
+    try:
+        result = policy_v2_service.update_policy(policy_id, payload, actor=account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.update",
+        resource=f"policy:{policy_id}",
+        actor=str(account.id),
+        after={"version": result.version.version, "name": result.policy.name},
+        request_id=_request_id(http_request),
+    )
+    return result
+
+
+@app.delete("/policies/{policy_id}", status_code=204)
+def delete_policy_v2_route(
+    policy_id: UUID,
+    http_request: Request,
+    hard: bool = Query(default=False),
+    account: Account = Depends(current_account),
+) -> None:
+    try:
+        policy_v2_service.delete_policy(policy_id, hard=hard, actor=account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.delete" if hard else "policy_v2.archive",
+        resource=f"policy:{policy_id}",
+        actor=str(account.id),
+        request_id=_request_id(http_request),
+    )
+
+
+@app.get("/policies/{policy_id}/versions", response_model=list[PolicyVersionSummary])
+def list_policy_versions_route(
+    policy_id: UUID,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    account: Account = Depends(current_account),
+) -> list[PolicyVersionSummary]:
+    try:
+        return policy_v2_service.list_policy_versions(policy_id, account, limit=limit, offset=offset)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/policies/{policy_id}/versions/{version}", response_model=PolicyVersion)
+def get_policy_version_route(
+    policy_id: UUID,
+    version: int,
+    account: Account = Depends(current_account),
+) -> PolicyVersion:
+    try:
+        return policy_v2_service.get_policy_version(policy_id, version, account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @app.post("/policies/{policy_id}/simulate", response_model=PolicySimulationRecord)
 def simulate_policy_v2_route(
     policy_id: UUID,
@@ -1253,11 +1332,36 @@ def promote_policy_v2_route(
     return version
 
 
+@app.post("/policies/{policy_id}/rollback", response_model=PolicyVersion)
+def rollback_policy_v2_route(
+    policy_id: UUID,
+    payload: PolicyRollbackRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> PolicyVersion:
+    try:
+        version = policy_v2_service.rollback_policy(policy_id, payload, account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.rollback",
+        resource=f"policy:{policy_id}",
+        actor=str(account.id),
+        after={
+            "version": version.version,
+            "target_version": payload.target_version,
+        },
+        request_id=_request_id(http_request),
+    )
+    return version
+
+
 @app.get("/agent/policy", response_model=AgentPolicyResponse)
 def agent_effective_policy_route(
     endpoint_id: str = Query(..., min_length=1),
-    token: str = Query(..., min_length=8),
+    authorization: str = Header(..., alias="Authorization"),
 ) -> AgentPolicyResponse:
+    token = _extract_bearer_token(authorization)
     try:
         return policy_v2_service.effective_policy_for_agent(endpoint_id=endpoint_id, token=token)
     except policy_v2_service.PolicyV2Error as error:
@@ -1268,14 +1372,28 @@ def agent_effective_policy_route(
 def agent_dlp_evidence_route(
     payload: AgentDlpEvidenceIngest,
     endpoint_id: str = Query(..., min_length=1),
-    token: str = Query(..., min_length=8),
+    authorization: str = Header(..., alias="Authorization"),
 ) -> EvidenceEvent:
+    token = _extract_bearer_token(authorization)
     try:
         return policy_v2_service.ingest_agent_dlp_evidence(
             endpoint_id=endpoint_id,
             token=token,
             payload=payload,
         )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+@app.post("/agent/policy/ack", response_model=AgentPolicyAck, status_code=201)
+def agent_policy_ack_route(
+    payload: AgentPolicyAckRequest,
+    endpoint_id: str = Query(..., min_length=1),
+    authorization: str = Header(..., alias="Authorization"),
+) -> AgentPolicyAck:
+    token = _extract_bearer_token(authorization)
+    try:
+        return policy_v2_service.agent_acknowledge_policy(endpoint_id, token, payload)
     except policy_v2_service.PolicyV2Error as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
 
@@ -1471,3 +1589,91 @@ def test_company_ai_settings_route(
         request_id=_request_id(http_request),
     )
     return result
+
+
+# --- Compliance Evidence Engine v0.5 -----------------------------------------
+
+
+@app.get("/compliance/reviews", response_model=list[ComplianceReview])
+def list_compliance_reviews_route(
+    customer_id: UUID = Query(...),
+    framework: str = Query(...),
+    account: Account = Depends(current_account),
+) -> list[ComplianceReview]:
+    if get_customer(customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    try:
+        return [ComplianceReview.model_validate(r) for r in compliance.list_reviews(customer_id, framework)]
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/compliance/reviews", response_model=ComplianceReview)
+def create_compliance_review_route(
+    payload: ComplianceReviewCreate,
+    customer_id: UUID = Query(...),
+    account: Account = Depends(current_account),
+) -> ComplianceReview:
+    if get_customer(customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    try:
+        review = compliance.create_or_update_review(
+            customer_id=customer_id,
+            framework=payload.framework,
+            control_id=payload.control_id,
+            status=payload.status,
+            reviewed_by=account.email,
+            notes=payload.notes,
+        )
+        return ComplianceReview.model_validate(review)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/compliance/attestations", response_model=list[ComplianceAttestation])
+def list_compliance_attestations_route(
+    customer_id: UUID = Query(...),
+    framework: str = Query(...),
+    account: Account = Depends(current_account),
+) -> list[ComplianceAttestation]:
+    if get_customer(customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    try:
+        return [ComplianceAttestation.model_validate(a) for a in compliance.list_attestations(customer_id, framework)]
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/compliance/attestations", response_model=ComplianceAttestation)
+def create_compliance_attestation_route(
+    payload: ComplianceAttestationCreate,
+    customer_id: UUID = Query(...),
+    account: Account = Depends(current_account),
+) -> ComplianceAttestation:
+    if get_customer(customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    try:
+        attestation = compliance.create_attestation(
+            customer_id=customer_id,
+            framework=payload.framework,
+            notes=payload.notes,
+            attested_by=account.email,
+        )
+        return ComplianceAttestation.model_validate(attestation)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/compliance/vault", response_model=list[ComplianceVaultReference])
+def list_compliance_vault_references_route(
+    customer_id: UUID = Query(...),
+    framework: str = Query(...),
+    account: Account = Depends(current_account),
+) -> list[ComplianceVaultReference]:
+    if get_customer(customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    try:
+        return [ComplianceVaultReference.model_validate(v) for v in compliance.list_vault_references(customer_id, framework)]
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+

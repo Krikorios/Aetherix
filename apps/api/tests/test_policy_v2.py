@@ -242,7 +242,8 @@ def test_agent_policy_fetch_returns_entitled_effective_policy() -> None:
     assert assign.status_code == 201, assign.text
 
     response = client.get(
-        f"/agent/policy?endpoint_id={endpoint_id}&token={endpoint_secret}"
+        f"/agent/policy?endpoint_id={endpoint_id}",
+        headers={"Authorization": f"Bearer {endpoint_secret}"},
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -274,7 +275,7 @@ def test_policy_v2_list_and_get_routes() -> None:
 
     listing = client.get("/policies", headers={"X-Aetherix-Account": owner_id})
     assert listing.status_code == 200
-    assert any(item["id"] == policy_id for item in listing.json())
+    assert any(item["id"] == policy_id for item in listing.json()["items"])
 
     detail = client.get(f"/policies/{policy_id}", headers={"X-Aetherix-Account": owner_id})
     assert detail.status_code == 200, detail.text

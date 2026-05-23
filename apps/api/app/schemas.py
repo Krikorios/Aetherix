@@ -530,6 +530,24 @@ class PolicyVersion(BaseModel):
     promoted_from_simulation_id: UUID | None = None
 
 
+class PolicyVersionSummary(BaseModel):
+    id: UUID
+    version: int
+    status: PolicyVersionStatus
+    payload_hash: str
+    signed_by: str
+    created_at: datetime
+    created_by: str
+    promoted_from_simulation_id: UUID | None = None
+
+
+class PolicyUpdateInput(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    modules: dict[str, dict[str, Any]] | None = Field(default=None)
+    lineage: PolicyLineageV2 | None = None
+    white_label_names: dict[str, str] | None = None
+
+
 class PolicyCreateResponse(BaseModel):
     policy: PolicyDocumentV2
     version: PolicyVersion
@@ -544,6 +562,13 @@ class PolicyListItemV2(BaseModel):
     scope: PolicyScopeV2
     created_at: datetime
     updated_at: datetime
+
+
+class PolicyListResponse(BaseModel):
+    items: list[PolicyListItemV2] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
 
 
 class PolicySimulationModuleOutcome(BaseModel):
@@ -617,6 +642,12 @@ class PolicyPromoteRequest(BaseModel):
     approval_reason: str | None = Field(default=None, max_length=500)
 
 
+class PolicyRollbackRequest(BaseModel):
+    target_version: int = Field(ge=1)
+    operator_approved: bool = False
+    approval_reason: str | None = Field(default=None, max_length=500)
+
+
 class PolicyAssignmentV2(BaseModel):
     id: UUID
     policy_id: UUID
@@ -673,6 +704,19 @@ class AgentDlpEvidenceIngest(BaseModel):
     event_type: Literal["paste", "upload", "copy"]
     policy_action_field: Literal["paste_sensitive", "upload_restricted", "copy_to_genai"]
     process_name: str | None = Field(default=None, max_length=255)
+
+
+class AgentPolicyAckRequest(BaseModel):
+    policy_version_hash: str = Field(min_length=8, max_length=255)
+    agent_version: str = Field(min_length=1, max_length=50)
+
+
+class AgentPolicyAck(BaseModel):
+    id: UUID
+    endpoint_id: str
+    policy_version_hash: str
+    agent_version: str
+    acknowledged_at: datetime
 
 
 # --- Enrollment -------------------------------------------------------------
@@ -1100,3 +1144,51 @@ class AiProbeResult(BaseModel):
     latency_ms: int | None = None
     status_code: int | None = None
     message: str = ""
+
+
+# --- Compliance Evidence Engine v0.5 --------------------------------------
+
+class ComplianceReviewCreate(BaseModel):
+    framework: str = Field(min_length=1, max_length=100)
+    control_id: str = Field(min_length=1, max_length=100)
+    status: Literal["pending", "reviewed", "flagged"]
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ComplianceReview(BaseModel):
+    id: UUID
+    customer_id: UUID
+    framework: str
+    control_id: str
+    status: str
+    reviewed_by: str
+    notes: str | None = None
+    reviewed_at: datetime
+
+
+class ComplianceAttestationCreate(BaseModel):
+    framework: str = Field(min_length=1, max_length=100)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ComplianceAttestation(BaseModel):
+    id: UUID
+    customer_id: UUID
+    framework: str
+    attested_by: str
+    notes: str | None = None
+    bundle_hash: str
+    status: str
+    attested_at: datetime
+
+
+class ComplianceVaultReference(BaseModel):
+    id: UUID
+    customer_id: UUID
+    framework: str
+    vault_provider: str
+    reference_uri: str
+    bundle_hash: str
+    status: str
+    exported_at: datetime
+

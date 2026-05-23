@@ -227,7 +227,10 @@ def test_flow_c_agent_fetch_returns_effective_entitled_modules(policy_v2_templat
     )
     assert assign_endpoint.status_code == 201, assign_endpoint.text
 
-    fetch = client.get(f"/agent/policy?endpoint_id={endpoint_id}&token={endpoint_secret}")
+    fetch = client.get(
+        f"/agent/policy?endpoint_id={endpoint_id}",
+        headers={"Authorization": f"Bearer {endpoint_secret}"},
+    )
     assert fetch.status_code == 200, fetch.text
     resolved = fetch.json()["resolved_policy"]["modules"]
     assert "semantic_dlp" in resolved
@@ -320,7 +323,8 @@ def test_edge_cases_invalid_json_schema_and_agent_token_rejected(policy_v2_templ
     assert "upload_restricted" in response.json()["detail"]
 
     invalid_agent = client.get(
-        f"/agent/policy?endpoint_id={tenant['endpoint_id']}&token=expired-or-invalid-token"
+        f"/agent/policy?endpoint_id={tenant['endpoint_id']}",
+        headers={"Authorization": "Bearer expired-or-invalid-token"},
     )
     assert invalid_agent.status_code == 401
 

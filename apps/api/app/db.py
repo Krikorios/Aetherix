@@ -445,6 +445,19 @@ _SCHEMA_STATEMENTS = (
     on evidence_events(action, created_at desc)
     """,
     """
+    create table if not exists policy_acks (
+        id uuid primary key,
+        endpoint_id text not null references enrolled_agents(agent_id),
+        policy_version_hash text not null,
+        agent_version text not null,
+        acknowledged_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists policy_acks_endpoint_idx
+    on policy_acks(endpoint_id, acknowledged_at desc)
+    """,
+    """
     create table if not exists audit_log (
         seq bigserial primary key,
         ts timestamptz not null,
@@ -517,6 +530,42 @@ _SCHEMA_STATEMENTS = (
         primary key (framework, control_id)
     )
     """,
+    """
+    create table if not exists compliance_reviews (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        framework text not null,
+        control_id text not null,
+        status text not null,
+        reviewed_by text not null,
+        notes text,
+        reviewed_at timestamptz not null
+    )
+    """,
+    """
+    create table if not exists compliance_attestations (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        framework text not null,
+        attested_by text not null,
+        notes text,
+        bundle_hash text not null,
+        status text not null,
+        attested_at timestamptz not null
+    )
+    """,
+    """
+    create table if not exists compliance_vault_references (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        framework text not null,
+        vault_provider text not null,
+        reference_uri text not null,
+        bundle_hash text not null,
+        status text not null,
+        exported_at timestamptz not null
+    )
+    """,
     # --- Companies + Licensing + Accounts module ---------------------------
     """
     create extension if not exists citext
@@ -559,6 +608,15 @@ _SCHEMA_STATEMENTS = (
         billing_model text not null default 'monthly',
         list_price_per_seat numeric(10,2) not null default 0,
         created_at timestamptz not null
+    )
+    """,
+    """
+    create table if not exists subscription_entitlements (
+        subscription_id uuid not null references subscriptions(id) on delete cascade,
+        module_key text not null,
+        tier text not null default 'addon',
+        limits jsonb not null default '{}'::jsonb,
+        primary key (subscription_id, module_key)
     )
     """,
     """

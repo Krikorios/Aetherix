@@ -43,7 +43,8 @@ def test_agent_dlp_evidence_accepts_valid_agent_token(monkeypatch) -> None:
     }
     response = client.post(
         "/agent/dlp-evidence",
-        params={"endpoint_id": enrolled["agent_id"], "token": enrolled["agent_secret"]},
+        params={"endpoint_id": enrolled["agent_id"]},
+        headers={"Authorization": f"Bearer {enrolled['agent_secret']}"},
         json=payload,
     )
     assert response.status_code == 200, response.text
@@ -71,7 +72,8 @@ def test_agent_dlp_evidence_rejects_invalid_token(monkeypatch) -> None:
     }
     response = client.post(
         "/agent/dlp-evidence",
-        params={"endpoint_id": enrolled["agent_id"], "token": "wrong-token"},
+        params={"endpoint_id": enrolled["agent_id"]},
+        headers={"Authorization": "Bearer wrong-token"},
         json=payload,
     )
     assert response.status_code == 401
