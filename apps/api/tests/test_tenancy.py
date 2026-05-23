@@ -241,8 +241,47 @@ def test_accounts_create_via_api():
     )
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["email"] == "new@example.com"
-    assert body["status"] == "invited"
+    assert body["account"]["email"] == "new@example.com"
+    assert body["account"]["status"] == "invited"
+    # Default delivery is email — invite_url must not be exposed.
+    assert body["delivery"] == "email"
+    assert body["invite_url"] is None
+
+
+def test_accounts_create_with_link_delivery_returns_invite_url():
+    owner_id = _platform_owner()
+    response = client.post(
+        "/accounts",
+        headers={"X-Aetherix-Account": owner_id},
+        json={
+            "email": "link-invite@example.com",
+            "full_name": "Link Invite",
+            "delivery": "link",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["delivery"] == "link"
+    assert body["invite_url"], "invite_url should be returned for link delivery"
+    assert "/#/invite/" in body["invite_url"]
+    assert body["invite_expires_at"] is not None
+
+    token = body["invite_url"].rsplit("/", 1)[-1]
+    accept = client.post(
+        "/auth/accept-invite",
+        json={"token": token, "password": "SetMyP@ssw0rd!"},
+    )
+    assert accept.status_code == 200, accept.text
+    activated = accept.json()
+    assert activated["status"] == "active"
+    assert activated["email"] == "link-invite@example.com"
+
+    # Token must be single-use.
+    second = client.post(
+        "/auth/accept-invite",
+        json={"token": token, "password": "AnotherP@ss1!"},
+    )
+    assert second.status_code == 400
 
 
 def test_assign_role_via_api():
@@ -261,3 +300,132 @@ def test_assign_role_via_api():
     assignment = response.json()
     assert assignment["role_code"] == "company_admin"
     assert assignment["customer_id"] == str(customer_id)
+
+
+def test_delete_account_removes_account_and_roles():
+    owner_id = _platform_owner()
+    target = tenancy.create_account(
+        AccountCreate(email="delete-me@example.com", full_name="Delete Me")
+    )
+    partner_id = _make_partner()
+    customer_id = _make_customer(partner_id)
+    tenancy.assign_role(
+        target.id,
+        RoleAssignmentRequest(role_code="company_admin", customer_id=customer_id),
+        granted_by=owner_id,
+    )
+
+    response = client.delete(
+        f"/accounts/{target.id}",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+    assert response.status_code == 204, response.text
+    assert tenancy.get_account(target.id) is None
+
+    with app_db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) as n from account_roles where account_id = %s",
+            (target.id,),
+        )
+        assert cur.fetchone()["n"] == 0
+
+
+def test_delete_account_blocks_self_delete():
+    owner_id = _platform_owner()
+    response = client.delete(
+        f"/accounts/{owner_id}",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+    assert response.status_code == 400
+    assert tenancy.get_account(uuid.UUID(owner_id)) is not None
+
+
+def test_delete_account_returns_404_for_unknown_id():
+    owner_id = _platform_owner()
+    response = client.delete(
+        f"/accounts/{uuid.uuid4()}",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+    assert response.status_code == 404
+
+
+def test_bulk_delete_accounts_reports_successes_and_self_delete_failure():
+    owner_id = _platform_owner()
+    first = tenancy.create_account(
+        AccountCreate(email="bulk-delete-1@example.com", full_name="Bulk One")
+    )
+    second = tenancy.create_account(
+        AccountCreate(email="bulk-delete-2@example.com", full_name="Bulk Two")
+    )
+
+    response = client.post(
+        "/accounts/bulk-delete",
+        headers={"X-Aetherix-Account": owner_id},
+        json={"ids": [str(first.id), owner_id, str(second.id)]},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok_count"] == 2
+    assert body["failures"] == [
+        {"id": owner_id, "error": "cannot delete your own account"}
+    ]
+    assert tenancy.get_account(first.id) is None
+    assert tenancy.get_account(second.id) is None
+    assert tenancy.get_account(uuid.UUID(owner_id)) is not None
+
+
+def test_delete_company_purges_children():
+    owner_id = _platform_owner()
+    partner_id = _make_partner()
+    customer_id = _make_customer(partner_id)
+
+    # Seed a few child rows across the cleanup tables.
+    with app_db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into customer_groups (id, customer_id, name, created_at)
+            values (%s, %s, %s, %s)
+            """,
+            (uuid.uuid4(), customer_id, "g1", datetime.now(UTC)),
+        )
+        cur.execute(
+            """
+            insert into enrollment_tokens (token_hash, customer_id, created_at, expires_at)
+            values (%s, %s, %s, %s)
+            """,
+            (
+                f"hash-{uuid.uuid4().hex}",
+                customer_id,
+                datetime.now(UTC),
+                datetime.now(UTC),
+            ),
+        )
+
+    response = client.delete(
+        f"/companies/{customer_id}",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+    assert response.status_code == 204, response.text
+
+    with app_db.connection() as conn, conn.cursor() as cur:
+        cur.execute("select count(*) as n from customers where id = %s", (customer_id,))
+        assert cur.fetchone()["n"] == 0
+        cur.execute(
+            "select count(*) as n from customer_groups where customer_id = %s",
+            (customer_id,),
+        )
+        assert cur.fetchone()["n"] == 0
+        cur.execute(
+            "select count(*) as n from enrollment_tokens where customer_id = %s",
+            (customer_id,),
+        )
+        assert cur.fetchone()["n"] == 0
+
+
+def test_delete_company_returns_404_for_unknown_id():
+    owner_id = _platform_owner()
+    response = client.delete(
+        f"/companies/{uuid.uuid4()}",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+    assert response.status_code == 404

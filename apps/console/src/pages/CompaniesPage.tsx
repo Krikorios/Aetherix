@@ -459,6 +459,7 @@ export function CompaniesPage() {
 
   const canManageCompanies = (me?.permissions.companies ?? "none") === "manage";
   const canViewLicensing = ["view", "edit", "manage"].includes(me?.permissions.licensing ?? "none");
+  const canManagePolicies = ["edit", "manage"].includes(me?.permissions.policies ?? "none");
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -592,6 +593,17 @@ export function CompaniesPage() {
             <button type="button" className="btnGhost" onClick={() => void load()} aria-label="Refresh">
               <RefreshCw size={16} /> Refresh
             </button>
+            {canManagePolicies ? (
+              <button
+                type="button"
+                className="btnGhost"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "policy" } }));
+                }}
+              >
+                <ShieldCheck size={16} /> Assign Policy
+              </button>
+            ) : null}
             {canManageCompanies ? (
               <button type="button" className="btnPrimary" onClick={() => setShowCreate(true)}>
                 <Plus size={16} /> Add company

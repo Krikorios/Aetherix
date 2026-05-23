@@ -1,3 +1,10 @@
+mod bridge;
+mod dlp;
+mod evidence;
+mod policy;
+
+use anyhow::Context;
+use arboard::Clipboard;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
@@ -5,6 +12,9 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::{Duration, Instant};
 use std::process::Command;
 use sysinfo::System;
 
@@ -171,7 +181,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         agent_version: DEFAULT_AGENT_VERSION.to_string(),
     };
 
-    if let Some(api_url) = api_url {
+    if let Some(ref api_url) = api_url {
         let endpoint = format!("{}/agent/heartbeat", api_url.trim_end_matches('/'));
         let response = client.post(endpoint).json(&heartbeat).send()?;
 
@@ -181,7 +191,208 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("{}", serde_json::to_string_pretty(&heartbeat)?);
+
+    // Shared policy state used by both the DLP enforcement loop (writer)
+    // and the local browser bridge (reader). Wrapped in an Arc<RwLock<...>>
+    // so refreshes from the loop become visible to the bridge instantly.
+    let shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>> =
+        Arc::new(RwLock::new(None));
+
+    let bridge_enabled = env_bool("AETHERIX_ENABLE_LOCAL_BRIDGE");
+    if bridge_enabled {
+        if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
+            // Best-effort initial population so the extension gets a real
+            // policy on its very first poll.
+            if let Ok(fetched) = policy::fetch_effective_policy(
+                &client,
+                api_url,
+                &credentials.agent_id,
+                &credentials.agent_secret,
+            ) {
+                if let Ok(mut guard) = shared_policy.write() {
+                    *guard = Some(fetched);
+                }
+            } else if let Ok(Some(cached)) = policy::load_policy_cache(&effective_policy_path()) {
+                if let Ok(mut guard) = shared_policy.write() {
+                    *guard = Some(cached);
+                }
+            }
+
+            if let Err(err) =
+                start_local_bridge(api_url, credentials, shared_policy.clone())
+            {
+                eprintln!("aetherix-agent: local bridge failed to start: {err}");
+            }
+        } else {
+            eprintln!(
+                "aetherix-agent: AETHERIX_ENABLE_LOCAL_BRIDGE=1 but no credentials or API URL; bridge disabled"
+            );
+        }
+    }
+
+    if env_bool("AETHERIX_ENABLE_DLP_ENFORCEMENT") {
+        if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
+            run_dlp_enforcement_loop(&client, api_url, credentials, shared_policy.clone())
+                .map_err(|err| format!("dlp enforcement failed: {err}"))?;
+        }
+    } else if bridge_enabled {
+        // Bridge is up but the enforcement loop isn't; block the main
+        // thread so the bridge thread stays alive. The user can stop the
+        // agent via SIGINT/Ctrl-C as usual.
+        loop {
+            thread::sleep(Duration::from_secs(60));
+        }
+    }
+
     Ok(())
+}
+
+fn start_local_bridge(
+    api_url: &str,
+    credentials: &AgentCredentials,
+    shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>>,
+) -> anyhow::Result<()> {
+    let config = bridge::BridgeConfig::from_env();
+    let state = Arc::new(bridge::BridgeState::new(
+        shared_policy,
+        credentials.agent_id.clone(),
+        credentials.agent_secret.clone(),
+        api_url.to_string(),
+        reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .context("build bridge http client")?,
+        dlp_queue_path(),
+        config.allowed_origins,
+    ));
+    let addr = bridge::spawn(state, config.port)
+        .context("spawn local bridge")?;
+    println!("aetherix-agent: local bridge listening on http://{addr}");
+    Ok(())
+}
+
+struct DlpRuntimeState {
+    clipboard: Option<Clipboard>,
+    last_clipboard: Option<String>,
+    queue_lines_read: usize,
+}
+
+fn run_dlp_enforcement_loop(
+    client: &reqwest::blocking::Client,
+    api_url: &str,
+    credentials: &AgentCredentials,
+    shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>>,
+) -> anyhow::Result<()> {
+    let poll_interval = env_u64("AETHERIX_DLP_POLL_INTERVAL_SECONDS").max(1);
+    let refresh_interval = env_u64("AETHERIX_POLICY_REFRESH_SECONDS").max(5);
+    let run_seconds = env_u64("AETHERIX_DLP_RUN_SECONDS");
+    let started = Instant::now();
+
+    let cache_path = effective_policy_path();
+    let mut active_policy = match policy::fetch_effective_policy(client, api_url, &credentials.agent_id, &credentials.agent_secret) {
+        Ok(fetched) => {
+            let _ = policy::save_policy_cache(&cache_path, &fetched);
+            fetched
+        }
+        Err(fetch_error) => policy::load_policy_cache(&cache_path)
+            .context("unable to load cached policy after fetch failure")?
+            .ok_or_else(|| anyhow::anyhow!("no policy from api and no last-known-good cache: {fetch_error}"))?,
+    };
+    if let Ok(mut guard) = shared_policy.write() {
+        *guard = Some(active_policy.clone());
+    }
+
+    let queue_path = dlp_queue_path();
+    let mut state = DlpRuntimeState {
+        clipboard: Clipboard::new().ok(),
+        last_clipboard: None,
+        queue_lines_read: 0,
+    };
+    let mut last_refresh = Instant::now();
+
+    loop {
+        if last_refresh.elapsed().as_secs() >= refresh_interval {
+            if let Ok(fetched) = policy::fetch_effective_policy(client, api_url, &credentials.agent_id, &credentials.agent_secret) {
+                let changed = fetched.policy_version_hash != active_policy.policy_version_hash;
+                if changed {
+                    active_policy = fetched;
+                    let _ = policy::save_policy_cache(&cache_path, &active_policy);
+                    if let Ok(mut guard) = shared_policy.write() {
+                        *guard = Some(active_policy.clone());
+                    }
+                }
+            }
+            last_refresh = Instant::now();
+        }
+
+        let events = collect_dlp_events(&mut state, &queue_path);
+        for event in events {
+            if let Some(decision) = dlp::evaluate_event(&active_policy, &event) {
+                if let Err(err) = evidence::emit_dlp_evidence(
+                    client,
+                    api_url,
+                    &credentials.agent_id,
+                    &credentials.agent_secret,
+                    &active_policy.policy_version_hash,
+                    &event,
+                    &decision,
+                ) {
+                    eprintln!("aetherix-agent: failed to emit DLP evidence: {err}");
+                }
+                if matches!(decision.action, policy::DlpAction::Block) {
+                    println!(
+                        "Aetherix DLP blocked {:?} to {:?} (label={:?})",
+                        event.event_type,
+                        decision.destination,
+                        decision.label_detected
+                    );
+                }
+            }
+        }
+
+        if run_seconds > 0 && started.elapsed().as_secs() >= run_seconds {
+            break;
+        }
+
+        thread::sleep(Duration::from_secs(poll_interval));
+    }
+
+    Ok(())
+}
+
+fn collect_dlp_events(state: &mut DlpRuntimeState, queue_path: &Path) -> Vec<dlp::DlpEvent> {
+    let mut events = Vec::new();
+
+    if let Some(clipboard) = state.clipboard.as_mut() {
+        if let Ok(text) = clipboard.get_text() {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() && state.last_clipboard.as_deref() != Some(trimmed) {
+                state.last_clipboard = Some(trimmed.to_string());
+                events.push(dlp::DlpEvent {
+                    event_type: dlp::DlpEventType::Paste,
+                    source: dlp::EventSource::Endpoint,
+                    content: trimmed.to_string(),
+                    destination: None,
+                    process_name: None,
+                });
+            }
+        }
+    }
+
+    if let Ok(content) = fs::read_to_string(queue_path) {
+        let lines: Vec<&str> = content.lines().collect();
+        for line in lines.iter().skip(state.queue_lines_read) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<dlp::DlpEvent>(line) {
+                events.push(event);
+            }
+        }
+        state.queue_lines_read = lines.len();
+    }
+
+    events
 }
 
 fn hostname() -> String {
@@ -363,6 +574,28 @@ fn policy_path() -> PathBuf {
         })
 }
 
+fn effective_policy_path() -> PathBuf {
+    std::env::var("AETHERIX_EFFECTIVE_POLICY_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".aetherix")
+                .join("effective-policy.json")
+        })
+}
+
+fn dlp_queue_path() -> PathBuf {
+    std::env::var("AETHERIX_DLP_EVENT_QUEUE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".aetherix")
+                .join("dlp-events.ndjson")
+        })
+}
+
 fn home_dir() -> Option<PathBuf> {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -420,6 +653,16 @@ fn env_u64(name: &str) -> u64 {
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(0)
+}
+
+fn env_bool(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

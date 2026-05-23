@@ -108,6 +108,73 @@ def test_companies_list_scope_for_platform_owner():
     assert str(c1) in ids and str(c2) in ids
 
 
+def test_company_summary_includes_license_without_per_company_route():
+    owner_id = _platform_owner()
+    licensing.ensure_default_catalog()
+    partner_id = _make_partner("summary")
+    customer_id = _make_customer(partner_id, "SummaryCo")
+    licensing.assign_license(
+        customer_id,
+        CompanyLicenseAssign(subscription_sku="core", total_seats=12),
+        actor=owner_id,
+    )
+
+    response = client.get("/companies/summary", headers={"X-Aetherix-Account": owner_id})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    rows = body["items"]
+    assert body["total"] >= 1
+    summary = next(row for row in rows if row["customer"]["id"] == str(customer_id))
+    assert summary["customer"]["name"] == "SummaryCo"
+    assert summary["license"]["subscription_sku"] == "core"
+    assert summary["license"]["products"]
+
+
+def test_company_summary_applies_search_status_and_pagination():
+    owner_id = _platform_owner()
+    partner_id = _make_partner("summary-page")
+    first = _make_customer(partner_id, "Page Alpha")
+    second = _make_customer(partner_id, "Page Beta")
+    client.post(
+        "/companies/bulk-status",
+        headers={"X-Aetherix-Account": owner_id},
+        json={"ids": [str(second)], "status": "archived"},
+    )
+
+    response = client.get(
+        "/companies/summary?q=Page&status=active&limit=1&offset=0",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 1
+    assert body["limit"] == 1
+    assert body["offset"] == 0
+    assert [row["customer"]["id"] for row in body["items"]] == [str(first)]
+
+
+def test_bulk_company_status_updates_visible_companies():
+    owner_id = _platform_owner()
+    partner_id = _make_partner("bulk-status")
+    first = _make_customer(partner_id, "Bulk One")
+    second = _make_customer(partner_id, "Bulk Two")
+
+    response = client.post(
+        "/companies/bulk-status",
+        headers={"X-Aetherix-Account": owner_id},
+        json={"ids": [str(first), str(second)], "status": "suspended"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok_count": 2, "failures": []}
+
+    statuses = {
+        row["id"]: row["status"]
+        for row in client.get("/companies", headers={"X-Aetherix-Account": owner_id}).json()
+    }
+    assert statuses[str(first)] == "suspended"
+    assert statuses[str(second)] == "suspended"
+
+
 def test_companies_list_scope_for_msp_partner():
     p1 = _make_partner("alpha")
     p2 = _make_partner("beta")
@@ -203,7 +270,7 @@ def test_assign_license_rejects_unknown_addon():
     assert response.status_code == 400
 
 
-def test_get_license_404_when_unassigned():
+def test_get_license_null_when_unassigned():
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -211,7 +278,52 @@ def test_get_license_404_when_unassigned():
         f"/companies/{customer_id}/license",
         headers={"X-Aetherix-Account": owner_id},
     )
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_get_license_contract_returns_json_null_when_unassigned():
+    """Contract: unassigned license returns JSON null (HTTP 200), not 404."""
+
+    owner_id = _platform_owner()
+    partner_id = _make_partner()
+    customer_id = _make_customer(partner_id)
+
+    response = client.get(
+        f"/companies/{customer_id}/license",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.text.strip() == "null"
+
+
+def test_get_license_contract_returns_license_object_when_assigned():
+    """Contract: assigned license returns a JSON object with key fields."""
+
+    owner_id = _platform_owner()
+    partner_id = _make_partner()
+    customer_id = _make_customer(partner_id)
+    licensing.ensure_default_catalog()
+    client.put(
+        f"/companies/{customer_id}/license",
+        headers={"X-Aetherix-Account": owner_id},
+        json=CompanyLicenseAssign(subscription_sku="core", total_seats=25).model_dump(),
+    ).raise_for_status()
+
+    response = client.get(
+        f"/companies/{customer_id}/license",
+        headers={"X-Aetherix-Account": owner_id},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, dict)
+    assert body["customer_id"] == str(customer_id)
+    assert body["subscription_sku"] == "core"
+    assert body["status"] == "active"
+    assert isinstance(body["products"], list)
 
 
 def test_company_viewer_cannot_modify_license_but_can_view():

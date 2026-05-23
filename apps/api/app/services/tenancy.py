@@ -14,7 +14,9 @@ however, is final here and shared by every endpoint.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+import hashlib
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Iterable
 from uuid import UUID
 
@@ -32,10 +34,19 @@ from app.schemas import (
     RoleCode,
     TenantScope,
 )
+from app.services.passwords import hash_password, verify_password
 
 
 class TenancyError(Exception):
     """Domain error raised for tenancy/RBAC failures (mapped to 4xx)."""
+
+
+# Default lifetime for account-setup invite tokens.
+INVITE_TOKEN_TTL = timedelta(days=7)
+
+
+def _hash_invite_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +152,8 @@ def create_account(payload: AccountCreate) -> Account:
 
     account_id = uuid.uuid4()
     now = datetime.now(UTC)
+    password_hash_value = hash_password(payload.password) if payload.password else None
+    initial_status = "active" if password_hash_value else "invited"
 
     with connection() as conn, conn.cursor() as cur:
         cur.execute("select 1 from accounts where email = %s", (email,))
@@ -149,12 +162,20 @@ def create_account(payload: AccountCreate) -> Account:
 
         cur.execute(
             """
-            insert into accounts (id, email, full_name, status, two_factor, created_by, created_at)
-            values (%s, %s, %s, 'invited', 'missing', %s, %s)
+            insert into accounts (id, email, full_name, password_hash, status, two_factor, created_by, created_at)
+            values (%s, %s, %s, %s, %s, 'missing', %s, %s)
             returning id, email, full_name, status, two_factor,
                       password_expires_at, locked_until, last_login_at, created_at
             """,
-            (account_id, email, payload.full_name, payload.created_by, now),
+            (
+                account_id,
+                email,
+                payload.full_name,
+                password_hash_value,
+                initial_status,
+                payload.created_by,
+                now,
+            ),
         )
         row = cur.fetchone()
 
@@ -170,6 +191,221 @@ def create_account(payload: AccountCreate) -> Account:
             assignments.append(assignment)
 
     return _row_to_account(row, assignments)
+
+
+def set_password(account_id: UUID, password: str) -> None:
+    """Hash and store a new password, activating the account."""
+
+    hashed = hash_password(password)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            update accounts
+               set password_hash = %s,
+                   status = case when status = 'invited' then 'active' else status end
+             where id = %s
+            """,
+            (hashed, account_id),
+        )
+        if cur.rowcount == 0:
+            raise TenancyError("account not found")
+
+
+def issue_invite_token(account_id: UUID, *, ttl: timedelta = INVITE_TOKEN_TTL) -> tuple[str, datetime]:
+    """Generate and persist a one-time setup token for an invited account.
+
+    Returns ``(plaintext_token, expires_at)``. Only the SHA-256 hash of the
+    token is stored, so this is the only chance the caller has to learn the
+    plaintext value. Calling this again for the same account rotates the
+    token and invalidates any previously issued link.
+    """
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(UTC) + ttl
+    token_hash = _hash_invite_token(token)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            update accounts
+               set invite_token_hash = %s,
+                   invite_expires_at = %s
+             where id = %s
+            """,
+            (token_hash, expires_at, account_id),
+        )
+        if cur.rowcount == 0:
+            raise TenancyError("account not found")
+    return token, expires_at
+
+
+def accept_invite(token: str, password: str, *, full_name: str | None = None) -> Account:
+    """Redeem an invite token: set the password and activate the account.
+
+    Raises ``TenancyError`` if the token is unknown, expired, or already
+    consumed.
+    """
+
+    token_hash = _hash_invite_token(token)
+    now = datetime.now(UTC)
+    password_hash_value = hash_password(password)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, status, invite_expires_at
+              from accounts
+             where invite_token_hash = %s
+            """,
+            (token_hash,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise TenancyError("invite token is invalid or has already been used")
+        if row["invite_expires_at"] is None or row["invite_expires_at"] < now:
+            raise TenancyError("invite token has expired")
+        if row["status"] in ("locked", "suspended"):
+            raise TenancyError(f"account is {row['status']}")
+        account_id = row["id"]
+        cur.execute(
+            """
+            update accounts
+               set password_hash = %s,
+                   status = 'active',
+                   invite_token_hash = null,
+                   invite_expires_at = null,
+                   full_name = case
+                       when %s::text is not null and length(%s::text) > 0
+                           then %s::text
+                       else full_name
+                   end
+             where id = %s
+            """,
+            (password_hash_value, full_name, full_name, full_name, account_id),
+        )
+
+    refreshed = get_account(account_id)
+    if refreshed is None:
+        raise TenancyError("account not found after invite acceptance")
+    return refreshed
+
+
+def authenticate(email: str, password: str) -> dict:
+    """Verify password only. Returns the account snapshot needed to drive
+    the second-factor step. Does **not** update ``last_login_at`` — that
+    happens once the full login (including 2FA) completes.
+    """
+
+    email = email.strip().lower()
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, email, full_name, password_hash, status, locked_until,
+                   two_factor, totp_secret
+            from accounts where email = %s
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise TenancyError("invalid email or password")
+        if row["status"] in ("locked", "suspended"):
+            raise TenancyError(f"account is {row['status']}")
+        if row["locked_until"] is not None and row["locked_until"] > datetime.now(UTC):
+            raise TenancyError("account is temporarily locked")
+        if not verify_password(password, row["password_hash"]):
+            raise TenancyError("invalid email or password")
+
+    return {
+        "account_id": row["id"],
+        "email": row["email"],
+        "full_name": row["full_name"],
+        "two_factor": row["two_factor"],
+        "totp_secret": row["totp_secret"],
+    }
+
+
+def store_totp_secret(account_id: UUID, secret: str) -> None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update accounts set totp_secret = %s where id = %s",
+            (secret, account_id),
+        )
+        if cur.rowcount == 0:
+            raise TenancyError("account not found")
+
+
+def mark_totp_enrolled(account_id: UUID) -> None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update accounts set two_factor = 'enabled' where id = %s",
+            (account_id,),
+        )
+
+
+def touch_last_login(account_id: UUID) -> None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update accounts set last_login_at = %s where id = %s",
+            (datetime.now(UTC), account_id),
+        )
+
+
+def create_login_challenge(account_id: UUID, purpose: str, ttl_seconds: int) -> UUID:
+    if purpose not in ("totp_setup", "totp_verify"):
+        raise TenancyError("invalid challenge purpose")
+    challenge_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    with connection() as conn, conn.cursor() as cur:
+        # Garbage-collect any expired challenges for this account so the
+        # table stays small without a separate cron job.
+        cur.execute(
+            "delete from login_challenges where account_id = %s and expires_at < %s",
+            (account_id, now),
+        )
+        cur.execute(
+            """
+            insert into login_challenges (id, account_id, purpose, expires_at, created_at)
+            values (%s, %s, %s, %s, %s)
+            """,
+            (challenge_id, account_id, purpose, expires_at, now),
+        )
+    return challenge_id
+
+
+def consume_login_challenge(challenge_id: UUID) -> dict:
+    """Fetch + delete a challenge atomically; return account context.
+
+    Raises ``TenancyError`` if the challenge is unknown or expired.
+    """
+
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            delete from login_challenges
+             where id = %s
+            returning account_id, purpose, expires_at
+            """,
+            (challenge_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise TenancyError("challenge not found or already used")
+        if row["expires_at"] < now:
+            raise TenancyError("challenge expired")
+        cur.execute(
+            "select id, totp_secret, two_factor from accounts where id = %s",
+            (row["account_id"],),
+        )
+        account_row = cur.fetchone()
+        if account_row is None:
+            raise TenancyError("account not found")
+    return {
+        "account_id": account_row["id"],
+        "totp_secret": account_row["totp_secret"],
+        "two_factor": account_row["two_factor"],
+        "purpose": row["purpose"],
+    }
 
 
 def get_account(account_id: UUID) -> Account | None:
@@ -308,6 +544,23 @@ def revoke_role(account_id: UUID, assignment_id: UUID) -> bool:
             "delete from account_roles where id = %s and account_id = %s",
             (assignment_id, account_id),
         )
+        return cur.rowcount > 0
+
+
+def delete_account(account_id: UUID) -> bool:
+    """Hard-delete an account and every record that references it.
+
+    Role assignments and login challenges cascade via FK. Impersonation
+    sessions do not cascade, so we clear them explicitly to avoid
+    leaving orphan rows or violating the FK on subsequent inserts.
+    """
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "delete from impersonation_sessions where actor_account_id = %s or target_account_id = %s",
+            (account_id, account_id),
+        )
+        cur.execute("delete from accounts where id = %s", (account_id,))
         return cur.rowcount > 0
 
 
@@ -478,8 +731,12 @@ def has_permission(
 # ---------------------------------------------------------------------------
 
 
-def ensure_platform_owner(email: str, full_name: str) -> Account:
-    """Idempotently create (or return) the bootstrap Platform Owner account."""
+def ensure_platform_owner(email: str, full_name: str, password: str | None = None) -> Account:
+    """Idempotently create (or return) the bootstrap Platform Owner account.
+
+    If ``password`` is provided, it is set on the account (whether new or
+    existing) so the bootstrap script can rotate credentials.
+    """
 
     email = email.strip().lower()
     existing = _find_by_email(email)
@@ -490,14 +747,17 @@ def ensure_platform_owner(email: str, full_name: str) -> Account:
                 RoleAssignmentRequest(role_code="platform_owner"),
                 granted_by="system",
             )
-            return get_account(existing.id)  # type: ignore[return-value]
-        return existing
+        if password:
+            set_password(existing.id, password)
+        refreshed = get_account(existing.id)
+        return refreshed if refreshed is not None else existing
 
     account = create_account(
         AccountCreate(
             email=email,
             full_name=full_name,
             initial_role=RoleAssignmentRequest(role_code="platform_owner"),
+            password=password,
             created_by="system",
         )
     )

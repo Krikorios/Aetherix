@@ -107,6 +107,131 @@ export type PolicySimulationResponse = {
   }[];
 };
 
+export type PolicyScopeV2 = {
+  partner_id: string | null;
+  customer_id: string | null;
+  group_id: string | null;
+  endpoint_id: string | null;
+};
+
+export type PolicyLineageV2 = {
+  parent_policy_id: string | null;
+  inheritance_mode: "inherit_with_overrides" | "replace";
+};
+
+export type PolicyDocumentV2Input = {
+  schema_version: "2.0";
+  name: string;
+  scope: PolicyScopeV2;
+  lineage: PolicyLineageV2;
+  modules: Record<string, Record<string, unknown>>;
+  white_label_names: Record<string, string>;
+};
+
+export type PolicyDocumentV2 = PolicyDocumentV2Input & {
+  id: string;
+  status: "draft" | "active" | "archived";
+  latest_version: number;
+  active_version: number | null;
+  created_at: string;
+  created_by: string;
+  updated_at: string;
+  updated_by: string;
+};
+
+export type PolicyVersion = {
+  id: string;
+  policy_id: string;
+  version: number;
+  status: "draft" | "active" | "archived";
+  payload: PolicyDocumentV2Input;
+  payload_hash: string;
+  signed_by: string;
+  signature: string;
+  created_at: string;
+  created_by: string;
+  promoted_from_simulation_id: string | null;
+};
+
+export type PolicyCreateResponse = {
+  policy: PolicyDocumentV2;
+  version: PolicyVersion;
+};
+
+export type PolicyListItemV2 = {
+  id: string;
+  name: string;
+  status: "draft" | "active" | "archived";
+  latest_version: number;
+  active_version: number | null;
+  scope: PolicyScopeV2;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PolicySimulationModuleOutcome = {
+  module: string;
+  enabled: boolean;
+  destructive_actions: string[];
+  would_trigger_gate: boolean;
+  notes: string[];
+};
+
+export type PolicySimulationSummaryV2 = {
+  modules_total: number;
+  modules_enabled: number;
+  modules_with_destructive_actions: number;
+  would_block: number;
+  would_isolate: number;
+  would_rollback: number;
+  approval_required: boolean;
+};
+
+export type PolicySimulationRecord = {
+  id: string;
+  policy_id: string;
+  policy_version_id: string;
+  status: "completed" | "approved" | "rejected";
+  summary: PolicySimulationSummaryV2;
+  outcomes: PolicySimulationModuleOutcome[];
+  approval_required: boolean;
+  approved: boolean;
+  approved_by: string | null;
+  approval_reason: string | null;
+  evidence_controls: string[];
+  created_at: string;
+  created_by: string;
+  approved_at: string | null;
+};
+
+export type PolicyAssignmentV2 = {
+  id: string;
+  policy_id: string;
+  policy_version_id: string;
+  partner_id: string | null;
+  customer_id: string | null;
+  group_id: string | null;
+  endpoint_id: string | null;
+  assigned_by: string;
+  assigned_at: string;
+};
+
+export type EffectivePolicyResponse = {
+  endpoint_id: string | null;
+  scope: PolicyScopeV2;
+  assignments_applied: PolicyAssignmentV2[];
+  resolved_policy: PolicyDocumentV2Input;
+  policy_ids_applied: string[];
+  evidence_controls: string[];
+};
+
+export type PolicyGetResponse = {
+  policy: PolicyDocumentV2;
+  latest_version: PolicyVersion;
+  resolved_preview: PolicyDocumentV2Input;
+  locked_modules: string[];
+};
+
 export type EnrollmentTokenIssued = {
   token: string;
   expires_at: string;
@@ -180,6 +305,13 @@ export type PolicyAssignment = {
   policy_name: string;
   assigned_by: string;
   assigned_at: string;
+};
+
+export type CustomerGroup = {
+  id: string;
+  customer_id: string;
+  name: string;
+  created_at: string;
 };
 
 export type InstallerBuild = {

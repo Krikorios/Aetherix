@@ -257,6 +257,44 @@ def get_license(customer_id: UUID) -> CompanyLicense | None:
     return _row_to_license(row, products)
 
 
+def list_licenses(customer_ids: list[UUID]) -> dict[UUID, CompanyLicense]:
+    if not customer_ids:
+        return {}
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select cl.*, s.sku as subscription_sku
+            from company_licenses cl
+            join subscriptions s on s.id = cl.subscription_id
+            where cl.customer_id = any(%s)
+            """,
+            (customer_ids,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return {}
+        license_ids = [row["id"] for row in rows]
+        cur.execute(
+            """
+            select id, license_id, product_code, product_name, product_type,
+                   protection_model, status, total_seats, used_seats, reserved_seats
+            from license_products
+            where license_id = any(%s)
+            order by product_code
+            """,
+            (license_ids,),
+        )
+        products_by_license: dict[UUID, list[LicenseProduct]] = {}
+        for product_row in cur.fetchall():
+            products_by_license.setdefault(product_row["license_id"], []).append(
+                LicenseProduct(**product_row)
+            )
+    return {
+        row["customer_id"]: _row_to_license(row, products_by_license.get(row["id"], []))
+        for row in rows
+    }
+
+
 def assign_license(
     customer_id: UUID,
     payload: CompanyLicenseAssign,

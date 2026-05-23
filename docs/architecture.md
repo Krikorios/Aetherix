@@ -200,6 +200,135 @@ This lets Aetherix answer MSP-native questions such as: "Which customers have
 credential leaks tied to externally exposed VPNs?" or "Which phishing domains
 imitate brands whose endpoints also saw GenAI DLP exfiltration attempts?"
 
+### 3.4.2 Native Coverage Strategy: AV/EDR + SIEM + DLP in One Platform
+
+Aetherix is a **single-platform, native-first** security product. The goal is
+to deliver — inside one tenant-scoped control plane and one lightweight agent —
+the coverage that today's MSPs assemble from three separate stacks:
+
+- a next-generation anti-malware / EDR (behavior + ML + anti-ransomware),
+- a SIEM / HIDS (log collection, FIM, vulnerability detection, MITRE mapping),
+- a data classification + labeling + endpoint DLP layer (Presidio-style
+  detection, sensitivity labels, label propagation, content + destination
+  policy enforcement).
+
+The AI core is not a fourth bolted-on layer; it is the connective tissue across
+the three. Semantic classifiers feed DLP, behavioural baselines feed EDR,
+correlation feeds SIEM detections, and an agentic investigator turns the
+combined event stream into one incident narrative.
+
+#### Why native, not aggregator
+
+The earlier draft of this section proposed ingesting Wazuh / Bitdefender /
+Microsoft signals via connectors. That path was rejected as the product
+strategy for three reasons:
+
+1. **One platform, one evidence chain.** ISO 27001:2022, SOC 2, NIST CSF 2.0,
+   GDPR, and HIPAA audits all reward a single auditable system of record.
+   Stitching three vendors' alerts, exports, and timestamps together produces
+   weaker evidence than one tenant-scoped, hash-chained audit log that links
+   policy → detection → response → ticket → resolution.
+2. **MSP economics.** Reselling three upstream licenses on top of Aetherix
+   crushes margin. A single native platform with one license model is what
+   MSPs actually want to sell.
+3. **AI leverage.** When the platform owns the agent, the detector, and the
+   classifier, AI can be used end-to-end (training signal, telemetry shape,
+   policy authoring). With connectors, AI only re-ranks other vendors'
+   verdicts.
+
+Connectors may still ship later as **migration aids** (read-only import from
+Wazuh / GravityZone / Defender during onboarding), but they are not the
+product. A GravityZone / Wazuh capability gap review for future deployment
+planning lives in [docs/native-security-gap-review.md](native-security-gap-review.md).
+
+```mermaid
+flowchart TB
+  subgraph Endpoint[Aetherix Endpoint Agent — single binary]
+    Core[Rust core: identity, policy, audit, telemetry pipeline]
+    AM[Anti-malware / EDR module<br/>YARA + behaviour + anti-ransomware + rollback]
+    SIEM[SIEM collector module<br/>logs, FIM, syscalls, vuln inventory]
+    DLPM[DLP module<br/>content + context + label enforcement]
+    Browser[Browser sensor<br/>GenAI paste, clipboard, upload]
+    Core --> AM
+    Core --> SIEM
+    Core --> DLPM
+    Core --> Browser
+  end
+
+  Endpoint -- signed events --> API[Aetherix Control Plane]
+
+  API --> PE[Policy Engine v2<br/>versioned, signed, simulated]
+  API --> IG[(Incident Graph<br/>Asset -> Finding -> Incident -> Action)]
+  API --> Label[Classification + Labeling Service]
+  API --> Corr[Correlation Engine<br/>MITRE ATT&CK mapping]
+  API --> AICore[AI Core<br/>semantic DLP, agentic IR, exec reports]
+  API --> Compliance[Compliance Evidence Engine<br/>ISO 27001 / SOC 2 / NIST CSF / GDPR / HIPAA]
+
+  AICore --> IG
+  Corr --> IG
+  Label --> DLPM
+  PE --> Endpoint
+
+  IG --> Console[MSP Console]
+  Compliance --> Console
+  Compliance --> Export[Auditor Export Pack<br/>controls, evidence, audit log, attestation]
+```
+
+#### Capability coverage matrix (target)
+
+The table below is the **product specification** — what each native module
+must own to claim parity with the categories Aetherix is replacing. Each row
+also names the deterministic baseline that ships first and the AI layer that
+adds value on top.
+
+| Module | Deterministic baseline (must ship) | AI layer (differentiator) | Compliance controls this evidences |
+| --- | --- | --- | --- |
+| **Next-gen anti-malware / EDR** | Signature + YARA scanning, hash reputation, PE/script inspection, behaviour rules, anti-ransomware (canary files + entropy delta + rollback via VSS / FS snapshots), process tree, network attack signatures, IOC matching, quarantine + kill + isolate | Behavioural baselining per endpoint, ML scoring for unknown PE/scripts, agentic post-detection investigation, exploit-chain summarization | ISO 27001 A.8.7, A.8.16; SOC 2 CC6.6, CC7.1; NIST CSF DE.CM, RS.AN |
+| **SIEM / HIDS** | Log collection (syslog, Windows Event Log, journald, app logs), parser library, FIM (file integrity monitoring), rootkit checks, software inventory + CVE matching with EPSS/KEV, CIS benchmark scans, syscall/eBPF event stream, correlation rule engine, MITRE ATT&CK mapping | Natural-language detection authoring, anomaly detection on user/host baselines, alert noise reduction, plain-English incident timelines | ISO 27001 A.8.15, A.8.16, A.8.32, A.5.25; SOC 2 CC7.2, CC7.3; NIST CSF DE.AE, RS.AN |
+| **DLP — classification + labeling + policy** | Presidio-compatible PII detection, regex/keyword/EDM rules, content fingerprinting, sensitivity labels (Public/Internal/Confidential/Restricted, customer-extensible), label propagation across copy/move/rename, endpoint policy enforcement (clipboard, file, upload, email, USB, print, screenshot guard), browser sensor for GenAI destinations | Semantic classifier for context-aware sensitivity, intent-aware destination policy, auto-labeling suggestions with confidence, redacted-summary generation for review queues | ISO 27001 A.5.12, A.5.13, A.8.10, A.8.11, A.8.12; SOC 2 CC6.1, CC6.7; GDPR Art. 5, Art. 32; HIPAA §164.312(a)(1) |
+| **Compliance Evidence Engine** | Control catalogue (ISO 27001:2022 Annex A, SOC 2 TSC 2017, NIST CSF 2.0, GDPR Art. 32, HIPAA Security Rule), evidence-mapping rules from native events to controls, append-only hash-chained audit log, scheduled control reviews, attestation workflow, auditor export pack (PDF + signed JSON + raw evidence references) | AI-drafted control narratives ("how this customer satisfies A.8.10"), gap analysis against target framework, what-if remediation roadmap | Self-evidencing — this module is the deliverable to the auditor |
+
+Compliance is not a separate product. Every native event the platform records
+(detection, scan, policy decision, label change, configuration change,
+account action, response action) is tagged with the controls it evidences at
+write time, so the export pack is generated from real artefacts — not
+back-filled paperwork.
+
+#### Single-agent design
+
+One signed binary per OS, with modules gated by subscription entitlements at
+the control plane (the agent always ships the code; the policy package
+declares which modules are active for a given customer).
+
+| Module | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Anti-malware / EDR | eBPF + LSM hooks, fanotify | ETW providers, mini-filter (signed driver, later phase), Defender complement mode | Endpoint Security framework (`EndpointSecurity.framework`), Network Extension |
+| SIEM collector | journald, syslog, auditd, file tailers, eBPF syscall stream | Windows Event Log subscriptions, ETW, WMI, registry watch | unified logs (`os_log`), `ESF` audit events, file tailers |
+| DLP enforcement | fanotify + LSM for file ops, clipboard via X11/Wayland helpers, browser extension for GenAI | mini-filter (later phase) or user-mode hooks for clipboard/file, Office add-in, browser extension | Endpoint Security file events, pasteboard observers, browser extension |
+| Vuln + inventory | dpkg/rpm/apk + language registries (pip/npm/cargo/maven), kernel/CPE matching | MSI/Appx/winget inventory, KB/patch state | pkgutil + Homebrew + system_profiler |
+
+Phase ordering (user-mode first, kernel modules only after a signed-release
+pipeline + dedicated systems team exist): see §8.
+
+#### Deterministic-before-probabilistic, restated for this design
+
+Every module ships its deterministic baseline first. AI capabilities (semantic
+classifier, behaviour ML, agentic IR, narrative authoring) are additive and
+always have a deterministic fallback that satisfies the underlying compliance
+control on its own. An auditor never sees "the AI said so" as the only
+control evidence.
+
+#### What we are *not* building
+
+- Not a kernel-mode AV with proprietary signatures in v1. Anti-malware ships
+  with YARA + behaviour + IOCs + community-feed signatures; proprietary
+  engine work waits until there is a signed-driver pipeline.
+- Not a full SOAR. The agentic IR layer recommends and gates response
+  actions; complex multi-system orchestration stays manual until v2.
+- Not a replacement for Microsoft 365 in-tenant DLP for Exchange/SharePoint
+  mail flow — Aetherix DLP enforces on the **endpoint** (and managed browser)
+  and labels the data, which travels with the file.
+
 ### 3.5 Presentation Plane (`apps/console/`)
 
 Pure client of the API. No business logic, no direct DB access, no
@@ -478,6 +607,10 @@ A full STRIDE pass belongs in its own document. The headline assumptions:
 | Data contracts | [apps/api/app/schemas.py](../apps/api/app/schemas.py) | Tenant, customer, policy, installer, enrollment, heartbeat, and alert contracts defined |
 | Deterministic DLP | [apps/api/app/services/dlp.py](../apps/api/app/services/dlp.py) | Implemented |
 | Semantic DLP (reasoning plane edge) | [apps/api/app/services/semantic.py](../apps/api/app/services/semantic.py) | Stub |
+| Classification + labeling service | — | Planned: sensitivity-label model + label-propagation rules + endpoint enforcement |
+| Anti-malware / EDR module | — | Planned: YARA + behaviour + anti-ransomware (canary + entropy + rollback) + IOC matching in `agent/` with control-plane analytics |
+| SIEM / HIDS collectors | — | Planned: log + FIM + syscall/eBPF + vuln-inventory collectors in `agent/`, parser + correlation + MITRE mapping in `apps/api` |
+| Compliance Evidence Engine | [apps/api/app/services/compliance.py](../apps/api/app/services/compliance.py), [apps/api/app/db.py](../apps/api/app/db.py) | v0 implemented: seeded control catalogue, `evidence_controls` tags on audit / alert / policy-document writes, and signed JSON export via `/compliance/export` |
 | DRP / EASM contracts | — | Planned: add `monitored_assets`, `drp_findings`, `easm_assets`, `easm_findings`, `intelligence_items`, `takedown_requests` |
 | State store | [apps/api/app/db.py](../apps/api/app/db.py), [apps/api/app/services/state.py](../apps/api/app/services/state.py) | Postgres-backed POC state |
 | Console | [apps/console/src/App.tsx](../apps/console/src/App.tsx), [apps/console/src/pages/CompaniesPage.tsx](../apps/console/src/pages/CompaniesPage.tsx), [apps/console/src/pages/AccountsPage.tsx](../apps/console/src/pages/AccountsPage.tsx) | Full MSP navigation, operations, alerts, DLP scanner, policy editor/simulation, Companies + Licensing, Accounts hierarchy, Quick Deploy |
@@ -507,6 +640,11 @@ Ordered by risk-reduction, not by feature appeal.
 9. **Simulation event store.** Next: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/*` scenario generators.
 10. **External risk foundation.** Next: monitored assets, DRP findings, EASM asset discovery, finding normalization, and tenant-scoped rollups.
 11. **Agentic correlation.** Next: convert endpoint, DLP, DRP, EASM, and intelligence events into one incident graph with human-approved response actions.
+12. **Native AV / EDR module v0.** Next: YARA + IOC scanner in the agent, anti-ransomware canary-file detector with entropy-delta heuristic, quarantine + isolate response actions through the existing policy + audit path.
+13. **Native SIEM / HIDS module v0.** Next: log + FIM collectors in the agent, parser library + correlation rule engine in the control plane, MITRE ATT&CK tag on every detection, software-inventory + CVE matching with EPSS/KEV.
+14. **Classification + labeling service.** Next: sensitivity-label model (Public / Internal / Confidential / Restricted, customer-extensible), label propagation rules on copy/move/rename, endpoint enforcement of label-aware destination policy.
+15. **Compliance Evidence Engine v0.** Done for the first slice: control catalogue tables, event→control tagging at write time on audit / alert / policy-document paths, and signed JSON auditor export via `/compliance/export?customer_id=...&framework=iso27001-2022`. Next: scheduled control reviews, attestation workflow, PDF export, and broader per-framework catalogue coverage.
+16. **GravityZone / Wazuh parity planning.** Next: maintain [docs/native-security-gap-review.md](native-security-gap-review.md) as the deployment checklist for what Aetherix already covers natively, what remains future work, and what should stay out of v1 claims.
 
 Each step is independently shippable and leaves the system in a working
 state. None of them requires copying a third-party product to validate.

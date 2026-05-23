@@ -1,6 +1,9 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Copy,
   KeyRound,
+  Link2,
+  Mail,
   Plus,
   RefreshCw,
   Search,
@@ -16,9 +19,12 @@ import {
   apiPost,
   getAccountId,
   type Account,
+  type BulkActionResult,
+  type AccountCreated,
   type AccountCreatePayload,
   type AccountStatus,
   type Customer,
+  type InviteDelivery,
   type MeResponse,
   type Partner,
   type Role,
@@ -56,14 +62,6 @@ const TWOFA_LABEL: Record<TwoFactorState, string> = {
   enabled: "Enabled",
   enforced: "Enforced",
 };
-
-const ROLE_HIERARCHY: { code: RoleCode; scope: string }[] = [
-  { code: "platform_owner", scope: "Creates partners, manages global settings, sees every tenant, audited impersonation." },
-  { code: "msp_partner", scope: "Creates companies, manages licensing, users, installers, and partner branding." },
-  { code: "company_admin", scope: "Manages one company's endpoints, policies, users, reports, and response actions." },
-  { code: "company_tech", scope: "Works incidents, quarantine, tasks, and health queues for assigned companies." },
-  { code: "company_viewer", scope: "Read-only access for auditors, executives, and customer managers." },
-];
 
 const COMPANY_FILTER_ALL = "__all__";
 
@@ -169,18 +167,21 @@ export function AccountsPage() {
   // ---------- actions ----------
   async function deleteSelected() {
     if (!canManage || selectedIds.length === 0) return;
-    if (!confirm(`Delete ${selectedIds.length} account(s)? This cannot be undone.`)) return;
+    const ids = selectedIds.filter((id) => id !== me?.account.id);
+    if (ids.length === 0) {
+      setError("You cannot delete your own account.");
+      return;
+    }
+    if (!confirm(`Permanently delete ${ids.length} account(s)? This removes all of their role assignments and cannot be undone.`)) return;
     try {
-      // Backend does not yet expose DELETE /accounts — fall back to revoking all roles.
-      for (const id of selectedIds) {
-        const account = accounts.find((a) => a.id === id);
-        if (!account) continue;
-        for (const role of account.roles) {
-          await apiDelete(`/accounts/${id}/roles/${role.id}`);
-        }
-      }
-      setSuccess(`Revoked all role assignments for ${selectedIds.length} account(s).`);
+      const result = await apiPost<BulkActionResult>("/accounts/bulk-delete", { ids });
       setSelectedIds([]);
+      if (result.failures.length) {
+        setError(`${result.failures.length} delete(s) failed: ${result.failures[0].error}`);
+      } else {
+        setError(null);
+      }
+      setSuccess(`Deleted ${result.ok_count} account${result.ok_count === 1 ? "" : "s"}.`);
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bulk action failed");
@@ -190,11 +191,7 @@ export function AccountsPage() {
   if (!me) {
     return (
       <>
-        <PageHeader
-          eyebrow="Identity control plane"
-          title="Accounts"
-          subtitle="Role-scoped access for the platform, MSP partners, and company users with audited impersonation."
-        />
+        <PageHeader eyebrow="Identity" title="Accounts" />
         {error ? <ErrorBanner message={error} /> : null}
         <section className="panel">
           <EmptyState>Please sign in on the Companies page to view accounts.</EmptyState>
@@ -206,22 +203,12 @@ export function AccountsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Identity control plane"
+        eyebrow={me.scope.is_platform ? "Platform owner" : me.scope.partner_ids.length ? "MSP partner" : "Company user"}
         title="Accounts"
-        subtitle={`Signed in as ${me.account.email}. ${accounts.length} ${accounts.length === 1 ? "account" : "accounts"} in scope.`}
+        subtitle={`${accounts.length} ${accounts.length === 1 ? "account" : "accounts"} in scope.`}
       />
       {error ? <ErrorBanner message={error} /> : null}
       {success ? <SuccessBanner message={success} /> : null}
-
-      <section className="hierarchyStrip" aria-label="Aetherix account hierarchy">
-        {ROLE_HIERARCHY.map((item, idx) => (
-          <article key={item.code}>
-            <span>{idx + 1}</span>
-            <strong>{ROLE_LABEL[item.code]}</strong>
-            <p>{item.scope}</p>
-          </article>
-        ))}
-      </section>
 
       <section className="panel accountToolbar">
         <div className="searchBox">
@@ -250,8 +237,8 @@ export function AccountsPage() {
         <button type="button" className="btnGhost" onClick={() => void load()}><RefreshCw size={16} /> Refresh</button>
         {canManage ? (
           <>
-            <button type="button" className="btnSecondary" disabled={selectedIds.length === 0} onClick={() => void deleteSelected()}>
-              <Trash2 size={16} /> Revoke
+            <button type="button" className="btnDanger" disabled={selectedIds.length === 0} onClick={() => void deleteSelected()}>
+              <Trash2 size={16} /> Delete ({selectedIds.length})
             </button>
             <button type="button" className="btnPrimary" onClick={() => setShowCreate(true)}>
               <UserPlus size={16} /> Add account
@@ -306,29 +293,6 @@ export function AccountsPage() {
         })}
       </section>
 
-      <section className="panel matrixPanel">
-        <div className="panelHeader">
-          <div>
-            <h2>Permission matrix</h2>
-            <span>Roles seeded by the platform. Permissions merge across all role assignments per account.</span>
-          </div>
-        </div>
-        <div className="permissionMatrix">
-          <div className="permissionMatrixHead">
-            <span>Role</span>
-            {roles[0] ? Object.keys(roles[0].permissions).map((k) => <span key={k}>{k}</span>) : null}
-          </div>
-          {roles.map((r) => (
-            <div className="permissionMatrixRow" key={r.code}>
-              <strong>{ROLE_LABEL[r.code]}</strong>
-              {Object.values(r.permissions).map((level, i) => (
-                <span key={i} className={`statusPill perm-${level}`}>{level}</span>
-              ))}
-            </div>
-          ))}
-        </div>
-      </section>
-
       <CreateAccountSheet
         open={showCreate}
         roles={roles}
@@ -336,16 +300,23 @@ export function AccountsPage() {
         partners={partners}
         canManage={canManage}
         onClose={() => setShowCreate(false)}
-        onCreated={(account) => {
-          setShowCreate(false);
-          setSuccess(`Invited ${account.email}.`);
-          setAccounts((current) => [account, ...current]);
+        onCreated={(result) => {
+          setAccounts((current) => [result.account, ...current]);
+          if (result.delivery === "email") {
+            setShowCreate(false);
+            setSuccess(`Invitation email queued for ${result.account.email}.`);
+          } else {
+            // Keep the sheet open so the creator can copy the invite link
+            // and dismiss it themselves.
+            setSuccess(null);
+          }
         }}
         onError={(message) => setError(message)}
       />
 
       <AccountEditSheet
         account={editing}
+        meId={me.account.id}
         roles={roles}
         companies={companies}
         partners={partners}
@@ -357,6 +328,10 @@ export function AccountsPage() {
         onChanged={(updated) => {
           setAccounts((current) => current.map((a) => (a.id === updated.id ? updated : a)));
           setEditing(updated);
+        }}
+        onDeleted={(deletedId) => {
+          setAccounts((current) => current.filter((a) => a.id !== deletedId));
+          setEditing(null);
         }}
         onError={(message) => setError(message)}
       />
@@ -384,7 +359,7 @@ function CreateAccountSheet({
   partners: Partner[];
   canManage: boolean;
   onClose: () => void;
-  onCreated: (account: Account) => void;
+  onCreated: (result: AccountCreated) => void;
   onError: (message: string) => void;
 }) {
   const [email, setEmail] = useState("");
@@ -392,7 +367,10 @@ function CreateAccountSheet({
   const [roleCode, setRoleCode] = useState<RoleCode>("company_admin");
   const [partnerId, setPartnerId] = useState<string>("");
   const [customerId, setCustomerId] = useState<string>("");
+  const [delivery, setDelivery] = useState<InviteDelivery>("email");
   const [isSaving, setIsSaving] = useState(false);
+  const [inviteResult, setInviteResult] = useState<AccountCreated | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -401,6 +379,9 @@ function CreateAccountSheet({
     setRoleCode("company_admin");
     setPartnerId(partners[0]?.id ?? "");
     setCustomerId(companies[0]?.id ?? "");
+    setDelivery("email");
+    setInviteResult(null);
+    setCopied(false);
   }, [open, partners, companies]);
 
   const needsPartner = roleCode === "msp_partner";
@@ -423,9 +404,14 @@ function CreateAccountSheet({
         email: email.trim(),
         full_name: fullName.trim(),
         initial_role: initial,
+        delivery,
         created_by: "console",
       };
-      const created = await apiPost<Account>("/accounts", payload);
+      const created = await apiPost<AccountCreated>("/accounts", payload);
+      if (created.delivery === "link" && created.invite_url) {
+        // Keep the sheet open so the creator can copy/share the link.
+        setInviteResult(created);
+      }
       onCreated(created);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to create account");
@@ -434,54 +420,132 @@ function CreateAccountSheet({
     }
   }
 
+  async function copyInviteUrl() {
+    if (!inviteResult?.invite_url) return;
+    try {
+      await navigator.clipboard.writeText(inviteResult.invite_url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API may be unavailable (e.g. insecure context); fall back
+      // to selecting the text so the user can copy manually.
+      const input = document.getElementById("inviteLinkValue") as HTMLInputElement | null;
+      input?.select();
+    }
+  }
+
   return (
     <SideSheet open={open} onClose={onClose} title="Add account" subtitle="Invite a user and assign their first role" width={560}>
-      <form className="formStack" onSubmit={submit}>
-        <div className="formGrid2">
-          <div className="formRow">
-            <label htmlFor="acctName">Full name</label>
-            <input id="acctName" required value={fullName} onChange={(event) => setFullName(event.target.value)} />
+      {inviteResult?.invite_url ? (
+        <div className="formStack">
+          <div className="successBanner" role="status">
+            <strong>Account created for {inviteResult.account.email}.</strong>
+            <span>Share the one-time setup link below so they can set their password.</span>
           </div>
           <div className="formRow">
-            <label htmlFor="acctEmail">Email</label>
-            <input id="acctEmail" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+            <label htmlFor="inviteLinkValue">One-time setup link</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                id="inviteLinkValue"
+                readOnly
+                value={inviteResult.invite_url}
+                onFocus={(event) => event.currentTarget.select()}
+                style={{ flex: 1 }}
+              />
+              <button type="button" className="btnSecondary" onClick={() => void copyInviteUrl()}>
+                <Copy size={16} /> {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            {inviteResult.invite_expires_at ? (
+              <small className="muted">
+                Expires {new Date(inviteResult.invite_expires_at).toLocaleString()}. The link can only be used once.
+              </small>
+            ) : null}
+          </div>
+          <div className="formActions">
+            <button type="button" className="btnPrimary" onClick={onClose}>Done</button>
           </div>
         </div>
-        <div className="formRow">
-          <label htmlFor="acctRole">Role</label>
-          <select id="acctRole" value={roleCode} onChange={(event) => setRoleCode(event.target.value as RoleCode)}>
-            {roles.map((r) => (
-              <option key={r.code} value={r.code}>{ROLE_LABEL[r.code]}</option>
-            ))}
-          </select>
-        </div>
-        {needsPartner ? (
+      ) : (
+        <form className="formStack" onSubmit={submit}>
+          <div className="formGrid2">
+            <div className="formRow">
+              <label htmlFor="acctName">Full name</label>
+              <input id="acctName" required value={fullName} onChange={(event) => setFullName(event.target.value)} />
+            </div>
+            <div className="formRow">
+              <label htmlFor="acctEmail">Email</label>
+              <input id="acctEmail" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+            </div>
+          </div>
           <div className="formRow">
-            <label htmlFor="acctPartner">Partner</label>
-            <select id="acctPartner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)}>
-              {partners.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+            <label htmlFor="acctRole">Role</label>
+            <select id="acctRole" value={roleCode} onChange={(event) => setRoleCode(event.target.value as RoleCode)}>
+              {roles.map((r) => (
+                <option key={r.code} value={r.code}>{ROLE_LABEL[r.code]}</option>
               ))}
             </select>
           </div>
-        ) : null}
-        {needsCompany ? (
-          <div className="formRow">
-            <label htmlFor="acctCompany">Company</label>
-            <select id="acctCompany" value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+          {needsPartner ? (
+            <div className="formRow">
+              <label htmlFor="acctPartner">Partner</label>
+              <select id="acctPartner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)}>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          {needsCompany ? (
+            <div className="formRow">
+              <label htmlFor="acctCompany">Company</label>
+              <select id="acctCompany" value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          <fieldset className="deliveryChoice">
+            <legend>How should they receive the invite?</legend>
+            <label className="deliveryOption">
+              <input
+                type="radio"
+                name="acctDelivery"
+                value="email"
+                checked={delivery === "email"}
+                onChange={() => setDelivery("email")}
+              />
+              <span>
+                <strong><Mail size={14} aria-hidden="true" /> Send invitation email</strong>
+                <small className="muted">The system emails them a setup link directly.</small>
+              </span>
+            </label>
+            <label className="deliveryOption">
+              <input
+                type="radio"
+                name="acctDelivery"
+                value="link"
+                checked={delivery === "link"}
+                onChange={() => setDelivery("link")}
+              />
+              <span>
+                <strong><Link2 size={14} aria-hidden="true" /> Generate a link I&rsquo;ll send manually</strong>
+                <small className="muted">You&rsquo;ll receive a one-time setup link to forward through your own channel.</small>
+              </span>
+            </label>
+          </fieldset>
+          <div className="formActions">
+            <button type="button" className="btnGhost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btnPrimary" disabled={isSaving || !email.trim() || !fullName.trim()}>
+              {isSaving ? <RefreshCw size={16} className="spinIcon" /> : delivery === "link" ? <Link2 size={16} /> : <Plus size={16} />}
+              {isSaving
+                ? (delivery === "link" ? "Generating" : "Inviting")
+                : (delivery === "link" ? "Generate link" : "Send invite")}
+            </button>
           </div>
-        ) : null}
-        <div className="formActions">
-          <button type="button" className="btnGhost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btnPrimary" disabled={isSaving || !email.trim() || !fullName.trim()}>
-            {isSaving ? <RefreshCw size={16} className="spinIcon" /> : <Plus size={16} />} {isSaving ? "Inviting" : "Invite"}
-          </button>
-        </div>
-      </form>
+        </form>
+      )}
     </SideSheet>
   );
 }
@@ -492,6 +556,7 @@ function CreateAccountSheet({
 
 function AccountEditSheet({
   account,
+  meId,
   roles,
   companies,
   partners,
@@ -501,9 +566,11 @@ function AccountEditSheet({
   partnerMap,
   onClose,
   onChanged,
+  onDeleted,
   onError,
 }: {
   account: Account | null;
+  meId: string;
   roles: Role[];
   companies: Customer[];
   partners: Partner[];
@@ -513,6 +580,7 @@ function AccountEditSheet({
   partnerMap: Map<string, Partner>;
   onClose: () => void;
   onChanged: (next: Account) => void;
+  onDeleted: (id: string) => void;
   onError: (message: string) => void;
 }) {
   const [newRole, setNewRole] = useState<RoleCode>("company_admin");
@@ -572,6 +640,24 @@ function AccountEditSheet({
       await reloadAccount();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to revoke role");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteAccount() {
+    if (!canManage || !account) return;
+    if (account.id === meId) {
+      onError("You cannot delete your own account.");
+      return;
+    }
+    if (!confirm(`Permanently delete ${account.full_name} (${account.email})? This removes all of their role assignments and cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await apiDelete(`/accounts/${account.id}`);
+      onDeleted(account.id);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed to delete account");
     } finally {
       setBusy(false);
     }
@@ -680,6 +766,20 @@ function AccountEditSheet({
           </header>
           <p>Password rotation, lockout policy, and SSO assignments land in a later step. 2FA enforcement is currently inherited from the role.</p>
         </section>
+
+        {canManage && account.id !== meId ? (
+          <section className="rolePanel dangerPanel">
+            <header>
+              <Trash2 size={14} /> <strong>Danger zone</strong>
+            </header>
+            <p className="muted">Permanently delete this account. All role assignments and impersonation history will be removed.</p>
+            <div className="formActions">
+              <button type="button" className="btnDanger" onClick={() => void deleteAccount()} disabled={busy}>
+                <Trash2 size={16} /> Delete account
+              </button>
+            </div>
+          </section>
+        ) : null}
       </div>
     </SideSheet>
   );

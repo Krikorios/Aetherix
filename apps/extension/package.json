@@ -1,0 +1,10 @@
+{
+  "name": "aetherix-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Aetherix Semantic DLP + GenAI Guardrails browser extension (MV3).",
+  "scripts": {
+    "test": "node --test test/unit.test.js"
+  }
+}

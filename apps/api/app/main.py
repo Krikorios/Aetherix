@@ -10,10 +10,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentHeartbeat, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
+from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyResponse, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListItemV2, PolicyPromoteRequest, PolicySimulationRecord, PolicyVersion, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
 from app.services import audit
+from app.services import compliance
 from app.services import tenancy
 from app.services import licensing
+from app.services import policy_v2 as policy_v2_service
 from app.services import totp as totp_service
 from app.services import ai_settings as ai_settings_service
 from app.services.ai_settings import AiSettingsError
@@ -410,6 +412,19 @@ def audit_verify() -> dict[str, object]:
     return {"ok": ok, "first_bad_seq": first_bad}
 
 
+@app.get("/compliance/export")
+def compliance_export(
+    customer_id: UUID = Query(...),
+    framework: str = Query(...),
+) -> dict[str, object]:
+    if get_customer(customer_id) is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    try:
+        return compliance.export_bundle(customer_id, framework)
+    except compliance.ComplianceExportError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 @app.post("/simulate/scenario")
 def simulate_scenario(req: SimulationRequest):
     """Simulate security events for testing and demo purposes."""
@@ -454,8 +469,8 @@ def simulate_scenario(req: SimulationRequest):
             )
             
             cur.execute(
-                "insert into security_alerts (id, customer_id, agent_id, category, severity, confidence, recommended_action, payload, status, created_at) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (alert_id, customer_id, req.agent_id, category, severity, 85, action, psycopg.types.json.Jsonb(payload), "new", ts)
+                "insert into security_alerts (id, customer_id, agent_id, category, severity, confidence, recommended_action, payload, status, created_at, evidence_controls) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (alert_id, customer_id, req.agent_id, category, severity, 85, action, psycopg.types.json.Jsonb(payload), "new", ts, psycopg.types.json.Jsonb(compliance.controls_for_event("security.alert")))
             )
 
             try:
@@ -1098,6 +1113,171 @@ def list_partners_route(
         return partners
     allowed = set(scope.partner_ids)
     return [p for p in partners if p.id in allowed]
+
+
+# --- Policy Engine v2 ------------------------------------------------------
+
+
+@app.post("/policies", response_model=PolicyCreateResponse, status_code=201)
+def create_policy_v2_route(
+    payload: PolicyDocumentV2Input,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> PolicyCreateResponse:
+    try:
+        created = policy_v2_service.create_policy(payload, actor=account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.create",
+        resource=f"policy:{created.policy.id}",
+        actor=str(account.id),
+        after={"version": created.version.version, "name": created.policy.name},
+        request_id=_request_id(http_request),
+    )
+    return created
+
+
+@app.get("/policies", response_model=list[PolicyListItemV2])
+def list_policies_v2_route(
+    status: str | None = Query(default=None, pattern="^(draft|active|archived)$"),
+    customer_id: UUID | None = Query(default=None),
+    module: str | None = Query(default=None, max_length=120),
+    account: Account = Depends(current_account),
+) -> list[PolicyListItemV2]:
+    try:
+        return policy_v2_service.list_policies(
+            account,
+            status=status,
+            customer_id=customer_id,
+            module=module,
+        )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/policies/assign", response_model=PolicyAssignmentV2, status_code=201)
+def assign_policy_v2_route(
+    payload: PolicyAssignRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> PolicyAssignmentV2:
+    try:
+        assignment = policy_v2_service.assign_policy(payload, account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.assign",
+        resource=f"policy:{assignment.policy_id}",
+        actor=str(account.id),
+        after=assignment.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    return assignment
+
+
+@app.get("/policies/effective", response_model=EffectivePolicyResponse)
+def effective_policy_v2_route(
+    endpoint_id: str | None = Query(default=None),
+    partner_id: UUID | None = Query(default=None),
+    customer_id: UUID | None = Query(default=None),
+    group_id: UUID | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> EffectivePolicyResponse:
+    try:
+        return policy_v2_service.effective_policy(
+            account,
+            endpoint_id=endpoint_id,
+            partner_id=partner_id,
+            customer_id=customer_id,
+            group_id=group_id,
+        )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/policies/{policy_id}", response_model=PolicyGetResponse)
+def get_policy_v2_route(
+    policy_id: UUID,
+    account: Account = Depends(current_account),
+) -> PolicyGetResponse:
+    try:
+        return policy_v2_service.get_policy(policy_id, account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/policies/{policy_id}/simulate", response_model=PolicySimulationRecord)
+def simulate_policy_v2_route(
+    policy_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> PolicySimulationRecord:
+    try:
+        simulation = policy_v2_service.simulate_policy(policy_id, account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.simulate",
+        resource=f"policy:{policy_id}",
+        actor=str(account.id),
+        after=simulation.summary.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    return simulation
+
+
+@app.post("/policies/{policy_id}/promote", response_model=PolicyVersion)
+def promote_policy_v2_route(
+    policy_id: UUID,
+    payload: PolicyPromoteRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> PolicyVersion:
+    try:
+        version = policy_v2_service.promote_policy(policy_id, payload, account)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="policy_v2.promote",
+        resource=f"policy:{policy_id}",
+        actor=str(account.id),
+        after={
+            "version": version.version,
+            "promoted_from_simulation_id": str(version.promoted_from_simulation_id)
+            if version.promoted_from_simulation_id
+            else None,
+        },
+        request_id=_request_id(http_request),
+    )
+    return version
+
+
+@app.get("/agent/policy", response_model=AgentPolicyResponse)
+def agent_effective_policy_route(
+    endpoint_id: str = Query(..., min_length=1),
+    token: str = Query(..., min_length=8),
+) -> AgentPolicyResponse:
+    try:
+        return policy_v2_service.effective_policy_for_agent(endpoint_id=endpoint_id, token=token)
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+@app.post("/agent/dlp-evidence", response_model=EvidenceEvent)
+def agent_dlp_evidence_route(
+    payload: AgentDlpEvidenceIngest,
+    endpoint_id: str = Query(..., min_length=1),
+    token: str = Query(..., min_length=8),
+) -> EvidenceEvent:
+    try:
+        return policy_v2_service.ingest_agent_dlp_evidence(
+            endpoint_id=endpoint_id,
+            token=token,
+            payload=payload,
+        )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
 
 
 # --- Subscriptions catalog -------------------------------------------------

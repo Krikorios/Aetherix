@@ -4,6 +4,8 @@ Status: target architecture for Policy Engine v2, May 2026.
 
 This document defines the subscription-aware, AI-enhanced policy engine Aetherix should build on top of the current signed policy document and policy package POC. The goal is a calmer, clearer, more intelligent policy experience for MSPs managing many SMB customers.
 
+The concrete Default Policy v1.01 planning baseline lives in [default-policy-v1.01.md](default-policy-v1.01.md). It maps the GravityZone-style endpoint policy modules into Aetherix-native policy sections and adds Aetherix-specific controls such as GenAI DLP, Compliance Evidence Engine tagging, signed simulation, DRP/EASM, and AI-assisted investigation.
+
 The current implementation already has:
 
 - Versioned signed policy documents.
@@ -680,6 +682,8 @@ Editor requirements:
 
 ## 8. Recommended Default Templates
 
+The first template to implement should be [Default Policy v1.01](default-policy-v1.01.md). It is the MSP-wide baseline that mirrors the expected core endpoint stack while preserving Aetherix's deterministic-first and evidence-by-construction rules.
+
 ### 8.1 SMB Baseline Protection
 
 - Target: general small business.
@@ -745,14 +749,15 @@ Installer profile linkage:
 
 1. Add subscription and entitlement tables.
 2. Define `PolicyDocumentV2` schemas with module sections and validators.
-3. Add entitlement validation for create, update, assign, promote, and effective policy fetch.
-4. Add inheritance resolver and effective policy preview endpoint.
-5. Extend policy packages to store v2 payloads while preserving current v1 DLP policy document support.
-6. Update policy editor to section-based navigation with locked module states.
-7. Add default templates for the five SMB profiles above.
-8. Add simulation support for module-level impact, not just DLP samples.
-9. Add agent policy acknowledgement endpoint and rollout status in the console.
-10. Add AI assistant routes only after the LLM gateway, budget controls, and prompt audit exist.
+3. Encode [Default Policy v1.01](default-policy-v1.01.md) as the first policy template fixture.
+4. Add entitlement validation for create, update, assign, promote, and effective policy fetch.
+5. Add inheritance resolver and effective policy preview endpoint.
+6. Extend policy packages to store v2 payloads while preserving current v1 DLP policy document support.
+7. Update policy editor to section-based navigation with locked module states.
+8. Add default templates for the five SMB profiles above.
+9. Add simulation support for module-level impact, not just DLP samples.
+10. Add agent policy acknowledgement endpoint and rollout status in the console.
+11. Add AI assistant routes only after the LLM gateway, budget controls, and prompt audit exist.
 
 ## 11. Acceptance Criteria
 

@@ -20,6 +20,7 @@ import os
 from datetime import UTC, datetime
 
 from app.db import connection
+from app.services.compliance import controls_for_event
 from app.schemas import (
     DlpScanRequest,
     Policy,
@@ -117,10 +118,15 @@ def promote_policy_document(draft: PolicyDocumentDraft, *, actor: str = "operato
         cur.execute("update policy_documents set is_active = false where is_active")
         cur.execute(
             """
-            insert into policy_documents(version, payload, is_active, created_at)
-            values (%s, %s::jsonb, true, %s)
+            insert into policy_documents(version, payload, is_active, created_at, evidence_controls)
+            values (%s, %s::jsonb, true, %s, %s::jsonb)
             """,
-            (next_version, json.dumps(document.model_dump(mode="json"), default=str), now),
+            (
+                next_version,
+                json.dumps(document.model_dump(mode="json"), default=str),
+                now,
+                json.dumps(controls_for_event("policy.promote")),
+            ),
         )
 
     return document

@@ -309,6 +309,142 @@ _SCHEMA_STATEMENTS = (
         on policy_documents(is_active) where is_active
     """,
     """
+    create table if not exists policy_documents_v2 (
+        id uuid primary key,
+        name text not null,
+        schema_version text not null default '2.0',
+        status text not null default 'draft',
+        partner_id uuid references partners(id),
+        customer_id uuid references customers(id),
+        group_id uuid references customer_groups(id),
+        endpoint_id text,
+        latest_version integer not null default 1,
+        active_version integer,
+        created_at timestamptz not null,
+        created_by text not null,
+        updated_at timestamptz not null,
+        updated_by text not null,
+        evidence_controls jsonb not null default '[]'::jsonb
+    )
+    """,
+    """
+    create index if not exists policy_documents_v2_partner_idx on policy_documents_v2(partner_id)
+    """,
+    """
+    create index if not exists policy_documents_v2_customer_idx on policy_documents_v2(customer_id)
+    """,
+    """
+    create table if not exists policy_versions (
+        id uuid primary key,
+        policy_id uuid not null references policy_documents_v2(id) on delete cascade,
+        version integer not null,
+        status text not null default 'draft',
+        payload jsonb not null,
+        payload_hash text not null,
+        signed_by text not null,
+        signature text not null,
+        promoted_from_simulation_id uuid,
+        created_at timestamptz not null,
+        created_by text not null,
+        evidence_controls jsonb not null default '[]'::jsonb,
+        unique(policy_id, version)
+    )
+    """,
+    """
+    create index if not exists policy_versions_policy_idx on policy_versions(policy_id)
+    """,
+    """
+    create unique index if not exists policy_versions_one_active_per_policy
+        on policy_versions(policy_id, status)
+        where status = 'active'
+    """,
+    """
+    create table if not exists policy_assignments_v2 (
+        id uuid primary key,
+        policy_id uuid not null references policy_documents_v2(id) on delete cascade,
+        policy_version_id uuid not null references policy_versions(id) on delete cascade,
+        partner_id uuid references partners(id),
+        customer_id uuid references customers(id),
+        group_id uuid references customer_groups(id),
+        endpoint_id text,
+        assigned_by text not null,
+        assigned_at timestamptz not null,
+        evidence_controls jsonb not null default '[]'::jsonb
+    )
+    """,
+    """
+    create unique index if not exists policy_assignments_v2_scope_unique
+    on policy_assignments_v2(
+        coalesce(partner_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        coalesce(customer_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        coalesce(group_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        coalesce(endpoint_id, '')
+    )
+    """,
+    """
+    create index if not exists policy_assignments_v2_policy_idx on policy_assignments_v2(policy_id)
+    """,
+    """
+    create table if not exists policy_simulations (
+        id uuid primary key,
+        policy_id uuid not null references policy_documents_v2(id) on delete cascade,
+        policy_version_id uuid not null references policy_versions(id) on delete cascade,
+        status text not null,
+        summary jsonb not null,
+        outcomes jsonb not null,
+        approval_required boolean not null default false,
+        approved boolean not null default false,
+        approved_by text,
+        approval_reason text,
+        approved_at timestamptz,
+        evidence_event_id uuid,
+        created_at timestamptz not null,
+        created_by text not null,
+        evidence_controls jsonb not null default '[]'::jsonb
+    )
+    """,
+    """
+    alter table policy_simulations add column if not exists evidence_event_id uuid
+    """,
+    """
+    create index if not exists policy_simulations_policy_idx on policy_simulations(policy_id, created_at desc)
+    """,
+    """
+    create table if not exists policy_promotions (
+        id uuid primary key,
+        policy_id uuid not null references policy_documents_v2(id) on delete cascade,
+        policy_version_id uuid not null references policy_versions(id) on delete cascade,
+        simulation_id uuid not null references policy_simulations(id) on delete cascade,
+        status text not null,
+        operator_approved boolean not null default false,
+        approval_reason text,
+        approver text not null,
+        approved_at timestamptz not null,
+        evidence_event_id uuid,
+        evidence_controls jsonb not null default '[]'::jsonb
+    )
+    """,
+    """
+    create index if not exists policy_promotions_policy_idx
+    on policy_promotions(policy_id, approved_at desc)
+    """,
+    """
+    create table if not exists evidence_events (
+        id uuid primary key,
+        action text not null,
+        resource text not null,
+        actor text not null,
+        scope jsonb not null default '{}'::jsonb,
+        payload jsonb not null default '{}'::jsonb,
+        evidence_controls jsonb not null default '[]'::jsonb,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists evidence_events_action_idx
+    on evidence_events(action, created_at desc)
+    """,
+    """
     create table if not exists audit_log (
         seq bigserial primary key,
         ts timestamptz not null,
@@ -321,6 +457,9 @@ _SCHEMA_STATEMENTS = (
         prev_chain_hash text not null,
         chain_hash text not null
     )
+    """,
+    """
+    alter table audit_log add column if not exists evidence_controls jsonb not null default '[]'::jsonb
     """,
     """
     create table if not exists telemetry_events (
@@ -358,6 +497,24 @@ _SCHEMA_STATEMENTS = (
         recommended_response text,
         created_at timestamptz not null,
         updated_at timestamptz not null
+    )
+    """,
+    """
+    alter table alerts add column if not exists evidence_controls jsonb not null default '[]'::jsonb
+    """,
+    """
+    alter table policy_documents add column if not exists evidence_controls jsonb not null default '[]'::jsonb
+    """,
+    """
+    alter table security_alerts add column if not exists evidence_controls jsonb not null default '[]'::jsonb
+    """,
+    """
+    create table if not exists compliance_controls (
+        framework text not null,
+        control_id text not null,
+        title text not null,
+        description text not null default '',
+        primary key (framework, control_id)
     )
     """,
     # --- Companies + Licensing + Accounts module ---------------------------
@@ -642,6 +799,70 @@ AI_PROVIDER_SEED: tuple[dict, ...] = (
 )
 
 
+COMPLIANCE_CONTROL_SEED: tuple[dict, ...] = (
+    {
+        "framework": "iso27001-2022",
+        "control_id": "A.5.12",
+        "title": "Classification of information",
+        "description": "Information is classified according to security needs and business value.",
+    },
+    {
+        "framework": "iso27001-2022",
+        "control_id": "A.8.10",
+        "title": "Information deletion",
+        "description": "Information stored in systems is deleted when no longer required.",
+    },
+    {
+        "framework": "iso27001-2022",
+        "control_id": "A.8.12",
+        "title": "Data leakage prevention",
+        "description": "Data leakage prevention measures are applied to systems and networks.",
+    },
+    {
+        "framework": "iso27001-2022",
+        "control_id": "A.8.16",
+        "title": "Monitoring activities",
+        "description": "Networks, systems, and applications are monitored for anomalous behaviour.",
+    },
+    {
+        "framework": "soc2-2017",
+        "control_id": "CC6.1",
+        "title": "Logical access controls",
+        "description": "Logical access security software and infrastructure restrict access to information assets.",
+    },
+    {
+        "framework": "soc2-2017",
+        "control_id": "CC7.2",
+        "title": "Security event monitoring",
+        "description": "Security events are monitored to detect anomalies and threats.",
+    },
+    {
+        "framework": "nist-csf-2.0",
+        "control_id": "DE.CM",
+        "title": "Continuous monitoring",
+        "description": "Assets are monitored to find anomalies, indicators of compromise, and adverse events.",
+    },
+    {
+        "framework": "nist-csf-2.0",
+        "control_id": "RS.AN",
+        "title": "Incident analysis",
+        "description": "Investigations are conducted to support effective response.",
+    },
+    {
+        "framework": "gdpr",
+        "control_id": "Art. 32",
+        "title": "Security of processing",
+        "description": "Appropriate technical and organizational measures protect personal data processing.",
+    },
+    {
+        "framework": "hipaa-security-rule",
+        "control_id": "164.312(a)(1)",
+        "title": "Access control",
+        "description": "Technical policies and procedures allow access only to authorized persons or software programs.",
+    },
+)
+
+
 # Permission levels used across roles. Higher index => more privilege.
 PERMISSION_LEVELS = ("none", "view", "edit", "manage")
 
@@ -763,6 +984,28 @@ def _seed_ai_providers() -> None:
             )
 
 
+def _seed_compliance_controls() -> None:
+    """Upsert the v0 compliance control catalogue."""
+
+    with connection() as conn, conn.cursor() as cur:
+        for control in COMPLIANCE_CONTROL_SEED:
+            cur.execute(
+                """
+                insert into compliance_controls (framework, control_id, title, description)
+                values (%s, %s, %s, %s)
+                on conflict (framework, control_id) do update
+                    set title = excluded.title,
+                        description = excluded.description
+                """,
+                (
+                    control["framework"],
+                    control["control_id"],
+                    control["title"],
+                    control["description"],
+                ),
+            )
+
+
 def init_schema() -> None:
     """Create all tables and indexes. Safe to call repeatedly."""
 
@@ -772,3 +1015,4 @@ def init_schema() -> None:
                 cur.execute(statement)
     _seed_roles()
     _seed_ai_providers()
+    _seed_compliance_controls()

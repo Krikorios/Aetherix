@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.db import connection
 from app.schemas import AgentHeartbeat, Alert, DlpScanRequest, DlpScanResponse, Endpoint, Policy
+from app.services.compliance import controls_for_event
 
 
 OFFLINE_AFTER = timedelta(minutes=15)
@@ -129,11 +130,18 @@ def create_dlp_alert(request: DlpScanRequest, response: DlpScanResponse, policy:
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into alerts(id, payload, status, created_at)
-            values (%s, %s::jsonb, %s, %s)
+            insert into alerts(id, payload, status, created_at, customer_id, evidence_controls)
+            values (%s, %s::jsonb, %s, %s, %s, %s::jsonb)
             on conflict(id) do nothing
             """,
-            (alert.id, json.dumps(alert.model_dump(mode="json"), default=str), alert.status, alert.created_at),
+            (
+                alert.id,
+                json.dumps(alert.model_dump(mode="json"), default=str),
+                alert.status,
+                alert.created_at,
+                request.customer_id,
+                json.dumps(controls_for_event("dlp.scan")),
+            ),
         )
 
     return alert

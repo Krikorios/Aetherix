@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Aetherix Guardrails</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 14px 16px;
+        width: 280px;
+        font-size: 13px;
+        color: #0f172a;
+        background: #ffffff;
+      }
+      h1 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
+      .row { display: flex; justify-content: space-between; padding: 4px 0; }
+      .row + .row { border-top: 1px solid rgba(15, 23, 42, 0.08); }
+      .label { color: #64748b; }
+      .value { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .pill--ok { background: #dcfce7; color: #14532d; }
+      .pill--warn { background: #fef3c7; color: #78350f; }
+      .pill--err { background: #fee2e2; color: #7f1d1d; }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(15, 23, 42, 0.12);
+        background: #f8fafc;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover { background: #eef2f7; }
+      .muted { color: #64748b; font-size: 11px; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Aetherix Guardrails</h1>
+    <div class="row">
+      <span class="label">Agent</span>
+      <span id="bridge" class="pill pill--warn">checking…</span>
+    </div>
+    <div class="row">
+      <span class="label">Transport</span>
+      <span id="transport" class="value">—</span>
+    </div>
+    <div class="row">
+      <span class="label">Policy</span>
+      <span id="policy" class="value">—</span>
+    </div>
+    <div class="row">
+      <span class="label">Source</span>
+      <span id="source" class="value">—</span>
+    </div>
+    <button id="resync" type="button">Re-sync policy now</button>
+    <div class="muted" id="footer">Aetherix Semantic DLP + GenAI Guardrails</div>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

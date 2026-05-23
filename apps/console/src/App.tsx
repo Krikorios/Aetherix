@@ -1,33 +1,54 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
+  Archive,
+  Ban,
+  BarChart,
   BarChart3,
+  Bell,
+  Brain,
+  Bug,
   Building2,
-  ChartSpline,
   FileText,
+  FileCheck,
   FlaskConical,
+  Globe,
   Globe2,
-  Inbox,
-  Landmark,
-  LockKeyhole,
+  LayoutDashboard,
+  LogOut,
   Mail,
-  Network,
-  Puzzle,
-  ScanText,
+  Package,
+  Plug,
+  Search,
   Settings,
+  Shield,
   ShieldCheck,
   Smartphone,
-  UserCog,
+  Target,
+  Usb,
+  Users,
+  Eye,
+  ListChecks,
 } from "lucide-react";
 import { DashboardPage } from "./pages/Dashboard";
 import { AlertsPage } from "./pages/AlertsPage";
 import { DlpScanPage } from "./pages/DlpScanPage";
 import { PolicyPage } from "./pages/PolicyPage";
+import { AntimalwareBehaviorPage } from "./pages/AntimalwareBehavior";
+import { CustomDetectionRulesPage } from "./pages/CustomDetectionRules";
 import { EnrollmentPage } from "./pages/EnrollmentPage";
 import { AccountsPage } from "./pages/AccountsPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
-import { apiGet, getAccountId, type Branding, type MeResponse } from "./api";
+import { LoginPage } from "./pages/LoginPage";
+import { SetupAccountPage } from "./pages/SetupAccountPage";
+import {
+  apiGet,
+  getAccountId,
+  logout as apiLogout,
+  type Branding,
+  type MeResponse,
+  type PermissionLevel,
+} from "./api";
 
 const DEFAULT_BRANDING: Branding = {
   product_name: "Aetherix",
@@ -43,108 +64,199 @@ const DEFAULT_BRANDING: Branding = {
 
 type Page =
   | "dashboard"
-  | "executive"
-  | "health"
-  | "asm"
+  | "executiveSummary"
+  | "healthAttackSurface"
   | "alerts"
+  | "search"
   | "blocklist"
   | "customRules"
-  | "agenticInvestigation"
-  | "scan"
-  | "network"
-  | "risk"
-  | "policy"
+  | "agenticAi"
+  | "threatsXplorer"
+  | "policies"
+  | "antimalware"
+  | "webProtection"
+  | "deviceControl"
+  | "riskManagement"
+  | "digitalRisk"
+  | "easm"
   | "reports"
   | "quarantine"
   | "companies"
   | "accounts"
+  | "installers"
+  | "policyAssignments"
   | "sandbox"
-  | "email"
-  | "mobile"
-  | "insights"
+  | "emailSecurity"
+  | "mobileSecurity"
+  | "dataInsights"
   | "integrations"
-  | "configuration"
-  | "enrollment";
+  | "configuration";
 
-const NAV: { group: string; items: { id: Page; label: string; icon: ReactNode }[] }[] = [
+type NavItem = {
+  id: Page;
+  label: string;
+  icon: ReactNode;
+  // Permission required to see this item. ``null`` means always available
+  // for any signed-in account.
+  requires?: { resource: string; level: PermissionLevel } | null;
+};
+
+const NAV: { group: string; items: NavItem[] }[] = [
   {
-    group: "Monitoring",
+    group: "OVERVIEW",
     items: [
-      { id: "dashboard", label: "Dashboard", icon: <Activity size={18} /> },
-      { id: "executive", label: "Executive Summary", icon: <BarChart3 size={18} /> },
-      { id: "health", label: "Health", icon: <ShieldCheck size={18} /> },
-      { id: "asm", label: "ASM", icon: <Globe2 size={18} /> },
+      { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={18} /> },
+      { id: "executiveSummary", label: "Executive Summary", icon: <BarChart3 size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "healthAttackSurface", label: "Health & Attack Surface", icon: <Shield size={18} />, requires: { resource: "incidents", level: "view" } },
     ],
   },
   {
-    group: "Incidents",
+    group: "INCIDENTS & RESPONSE",
     items: [
-      { id: "alerts", label: "Search", icon: <AlertTriangle size={18} /> },
-      { id: "blocklist", label: "Blocklist", icon: <LockKeyhole size={18} /> },
-      { id: "customRules", label: "Custom Rules", icon: <FileText size={18} /> },
-      { id: "agenticInvestigation", label: "Agentic AI Investigation", icon: <ScanText size={18} /> },
+      { id: "alerts", label: "Alerts", icon: <Bell size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "search", label: "Search", icon: <Search size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "blocklist", label: "Blocklist", icon: <Ban size={18} />, requires: { resource: "policies", level: "view" } },
+      { id: "customRules", label: "Custom Rules", icon: <ListChecks size={18} />, requires: { resource: "policies", level: "edit" } },
+      { id: "agenticAi", label: "Agentic AI Investigation", icon: <Brain size={18} />, requires: { resource: "incidents", level: "edit" } },
+      { id: "threatsXplorer", label: "Threats Xplorer", icon: <Target size={18} />, requires: { resource: "policies", level: "view" } },
     ],
   },
   {
-    group: "Protection",
+    group: "PROTECTION",
     items: [
-      { id: "scan", label: "Threats Xplorer", icon: <ScanText size={18} /> },
-      { id: "network", label: "Network", icon: <Network size={18} /> },
-      { id: "risk", label: "Risk Management", icon: <ChartSpline size={18} /> },
-      { id: "policy", label: "Policies", icon: <FileText size={18} /> },
-      { id: "reports", label: "Reports", icon: <BarChart3 size={18} /> },
-      { id: "quarantine", label: "Quarantine", icon: <Inbox size={18} /> },
+      { id: "policies", label: "Policies", icon: <ShieldCheck size={18} />, requires: { resource: "policies", level: "view" } },
+      { id: "antimalware", label: "Antimalware & Behavior", icon: <Bug size={18} />, requires: { resource: "policies", level: "view" } },
+      { id: "webProtection", label: "Web & Email Protection", icon: <Globe size={18} />, requires: { resource: "policies", level: "view" } },
+      { id: "deviceControl", label: "Device Control", icon: <Usb size={18} />, requires: { resource: "policies", level: "view" } },
+      { id: "quarantine", label: "Quarantine", icon: <Archive size={18} />, requires: { resource: "incidents", level: "edit" } },
     ],
   },
   {
-    group: "MSP Control",
+    group: "RISK & EXTERNAL",
     items: [
-      { id: "companies", label: "Companies", icon: <Building2 size={18} /> },
-      { id: "accounts", label: "Accounts", icon: <UserCog size={18} /> },
-      { id: "enrollment", label: "Installers", icon: <Landmark size={18} /> },
+      { id: "riskManagement", label: "Risk Management", icon: <AlertTriangle size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "digitalRisk", label: "Digital Risk (DRP)", icon: <Eye size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "easm", label: "External Attack Surface (EASM)", icon: <Globe2 size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "reports", label: "Reports", icon: <FileText size={18} />, requires: { resource: "incidents", level: "view" } },
     ],
   },
   {
-    group: "Add-ons",
+    group: "MSP CONTROL",
     items: [
-      { id: "sandbox", label: "Sandbox Analyzer", icon: <FlaskConical size={18} /> },
-      { id: "email", label: "Email Security", icon: <Mail size={18} /> },
-      { id: "mobile", label: "Mobile Security", icon: <Smartphone size={18} /> },
-      { id: "insights", label: "Data Insights", icon: <BarChart3 size={18} /> },
-      { id: "integrations", label: "Integrations", icon: <Puzzle size={18} /> },
-      { id: "configuration", label: "Configuration", icon: <Settings size={18} /> },
+      { id: "companies", label: "Companies", icon: <Building2 size={18} />, requires: { resource: "companies", level: "view" } },
+      { id: "accounts", label: "Accounts", icon: <Users size={18} />, requires: { resource: "accounts", level: "view" } },
+      { id: "installers", label: "Installers", icon: <Package size={18} />, requires: { resource: "companies", level: "edit" } },
+      { id: "policyAssignments", label: "Policy Assignments", icon: <FileCheck size={18} />, requires: { resource: "policies", level: "edit" } },
+    ],
+  },
+  {
+    group: "ADD-ONS & INTEGRATIONS",
+    items: [
+      { id: "sandbox", label: "Sandbox Analyzer", icon: <FlaskConical size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "emailSecurity", label: "Email Security", icon: <Mail size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "mobileSecurity", label: "Mobile Security", icon: <Smartphone size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "dataInsights", label: "Data Insights", icon: <BarChart size={18} />, requires: { resource: "licensing", level: "view" } },
+      { id: "integrations", label: "Integrations", icon: <Plug size={18} />, requires: { resource: "companies", level: "edit" } },
+      { id: "configuration", label: "Configuration", icon: <Settings size={18} />, requires: { resource: "companies", level: "manage" } },
     ],
   },
 ];
 
+const LEVEL_RANK: Record<PermissionLevel, number> = {
+  none: 0,
+  view: 1,
+  edit: 2,
+  manage: 3,
+};
+
+function hasPermission(
+  me: MeResponse | null,
+  req: { resource: string; level: PermissionLevel } | null | undefined,
+): boolean {
+  if (!req) return true;
+  if (!me) return false;
+  const have = me.permissions[req.resource] ?? "none";
+  return LEVEL_RANK[have] >= LEVEL_RANK[req.level];
+}
+
+function pickInitialPage(me: MeResponse | null): Page {
+  for (const group of NAV) {
+    for (const item of group.items) {
+      if (hasPermission(me, item.requires)) return item.id;
+    }
+  }
+  return "dashboard";
+}
+
+function parseInviteToken(hash: string): string | null {
+  // Invite links use ``#/invite/<token>`` so the token survives copy/paste
+  // and works even when the console is served as a static SPA.
+  const match = /^#\/invite\/([A-Za-z0-9_-]+)$/.exec(hash || "");
+  return match ? match[1] : null;
+}
+
+const INITIAL_INVITE_TOKEN =
+  typeof window !== "undefined" ? parseInviteToken(window.location.hash) : null;
+
 export function App() {
-  const [page, setPage] = useState<Page>("companies");
+  const [me, setMe] = useState<MeResponse | null>(null);
+  const [page, setPage] = useState<Page>("dashboard");
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
+  const [authStatus, setAuthStatus] = useState<"loading" | "signedIn" | "signedOut">("loading");
+  const [inviteToken, setInviteToken] = useState<string | null>(INITIAL_INVITE_TOKEN);
 
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      if (!getAccountId()) {
-        if (!cancelled) setBranding(DEFAULT_BRANDING);
-        return;
-      }
-      try {
-        const me = await apiGet<MeResponse>("/me");
-        if (!cancelled) setBranding(me.branding ?? DEFAULT_BRANDING);
-      } catch {
-        if (!cancelled) setBranding(DEFAULT_BRANDING);
-      }
+    const onHashChange = () => setInviteToken(parseInviteToken(window.location.hash));
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    function onNavigate(event: Event) {
+      const custom = event as CustomEvent<{ page?: Page }>;
+      const target = custom.detail?.page;
+      if (!target) return;
+      if (!navItemFor(target)) return;
+      setPage(target);
     }
-    void load();
-    const onAccountChange = () => void load();
+    window.addEventListener("aetherix:navigate", onNavigate as EventListener);
+    return () => window.removeEventListener("aetherix:navigate", onNavigate as EventListener);
+  }, []);
+
+  const loadMe = useCallback(async () => {
+    if (!getAccountId()) {
+      setMe(null);
+      setBranding(DEFAULT_BRANDING);
+      setAuthStatus("signedOut");
+      return;
+    }
+    try {
+      const next = await apiGet<MeResponse>("/me");
+      setMe(next);
+      setBranding(next.branding ?? DEFAULT_BRANDING);
+      setAuthStatus("signedIn");
+      setPage((current) => (hasPermission(next, navItemFor(current)?.requires) ? current : pickInitialPage(next)));
+    } catch {
+      // Stored account id is stale/invalid — drop it and force re-login.
+      apiLogout();
+      setMe(null);
+      setBranding(DEFAULT_BRANDING);
+      setAuthStatus("signedOut");
+    }
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => void loadMe());
+    const onAccountChange = () => {
+      void loadMe();
+    };
     window.addEventListener("aetherix:account-changed", onAccountChange);
     window.addEventListener("storage", onAccountChange);
     return () => {
-      cancelled = true;
       window.removeEventListener("aetherix:account-changed", onAccountChange);
       window.removeEventListener("storage", onAccountChange);
     };
-  }, []);
+  }, [loadMe]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -152,6 +264,50 @@ export function App() {
     root.style.setProperty("--brand-primary", branding.primary_color);
     document.title = `${branding.product_name} — ${branding.tagline}`;
   }, [branding.accent_color, branding.primary_color, branding.product_name, branding.tagline]);
+
+  if (inviteToken) {
+    return <SetupAccountPage token={inviteToken} />;
+  }
+
+  if (authStatus === "loading") {
+    return (
+      <main className="loginShell">
+        <p className="muted">Loading…</p>
+      </main>
+    );
+  }
+
+  if (authStatus === "signedOut" || !me) {
+    return (
+      <LoginPage
+        onAuthenticated={(next) => {
+          setMe(next);
+          setBranding(next.branding ?? DEFAULT_BRANDING);
+          setAuthStatus("signedIn");
+          setPage(pickInitialPage(next));
+        }}
+      />
+    );
+  }
+
+  const handleSignOut = () => {
+    apiLogout();
+    setMe(null);
+    setBranding(DEFAULT_BRANDING);
+    setAuthStatus("signedOut");
+    setPage("dashboard");
+  };
+
+  const visibleNav = NAV
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => hasPermission(me, item.requires)),
+    }))
+    .filter((section) => section.items.length > 0);
+
+  const currentNavItem = navItemFor(page);
+  const pageAllowed = hasPermission(me, currentNavItem?.requires);
+  const primaryRole = me.account.roles[0]?.role_code ?? null;
 
   return (
     <main className="shell">
@@ -167,7 +323,7 @@ export function App() {
             <span>{branding.tagline}</span>
           </div>
         </div>
-        {NAV.map((section) => (
+        {visibleNav.map((section) => (
           <nav className="navGroup" key={section.group} aria-label={section.group}>
             <span>{section.group}</span>
             {section.items.map(({ id, label, icon }) => (
@@ -185,21 +341,73 @@ export function App() {
             ))}
           </nav>
         ))}
+        <div className="railAuthPanel">
+          <span>Signed in as</span>
+          <strong>{me.account.full_name || me.account.email}</strong>
+          <code>{me.account.email}</code>
+          {primaryRole ? <em>{ROLE_LABEL[primaryRole] ?? primaryRole}</em> : null}
+          <div className="railAuthActions">
+            <button type="button" onClick={handleSignOut}>
+              <LogOut size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+              Sign out
+            </button>
+          </div>
+        </div>
       </aside>
 
       <section className="workspace">
-        {page === "dashboard" && <DashboardPage />}
-        {page === "alerts" && <AlertsPage />}
-        {page === "scan" && <DlpScanPage />}
-        {page === "policy" && <PolicyPage />}
-        {page === "enrollment" && <EnrollmentPage />}
-        {page === "companies" && <CompaniesPage />}
-        {page === "accounts" && <AccountsPage />}
-        {!["dashboard", "alerts", "scan", "policy", "enrollment", "companies", "accounts"].includes(page) ? (
-          <PlaceholderPage page={page} />
-        ) : null}
+        {!pageAllowed ? (
+          <ForbiddenPage />
+        ) : (
+          <>
+            {page === "dashboard" && <DashboardPage />}
+            {page === "alerts" && <AlertsPage />}
+            {page === "search" && <AlertsPage />}
+            {page === "threatsXplorer" && <DlpScanPage />}
+            {page === "policies" && <PolicyPage />}
+            {page === "antimalware" && <AntimalwareBehaviorPage me={me} />}
+            {page === "customRules" && <CustomDetectionRulesPage me={me} />}
+            {page === "installers" && <EnrollmentPage />}
+            {page === "companies" && <CompaniesPage />}
+            {page === "accounts" && <AccountsPage />}
+            {!["dashboard", "alerts", "search", "threatsXplorer", "policies", "antimalware", "customRules", "installers", "companies", "accounts"].includes(page) ? (
+              <PlaceholderPage page={page} />
+            ) : null}
+          </>
+        )}
       </section>
     </main>
+  );
+}
+
+function navItemFor(page: Page): NavItem | null {
+  for (const group of NAV) {
+    for (const item of group.items) {
+      if (item.id === page) return item;
+    }
+  }
+  return null;
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  platform_owner: "Platform Owner",
+  msp_partner: "MSP Partner",
+  company_admin: "Company Administrator",
+  company_tech: "Company Technician",
+  company_viewer: "Company Viewer",
+};
+
+function ForbiddenPage() {
+  return (
+    <section className="panel">
+      <div className="panelHeader">
+        <div>
+          <h2>Not available for your role</h2>
+          <span>You don't have permission to view this section. Contact your administrator if you need access.</span>
+        </div>
+        <ShieldCheck size={18} />
+      </div>
+    </section>
   );
 }
 
@@ -219,8 +427,8 @@ type PlaceholderMeta = {
   depends: string[];
 };
 
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "policy" | "enrollment" | "companies" | "accounts">, PlaceholderMeta> = {
-  executive: {
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts">, PlaceholderMeta> = {
+  executiveSummary: {
     title: "Executive Summary",
     eyebrow: "Partner reporting",
     status: "planned",
@@ -228,7 +436,7 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "AI-generated portfolio summary for MSP partners: customer risk, license utilisation, top incidents, and weekly delta. Builds on /companies, /alerts, and the upcoming ai_reports table.",
     depends: ["ai_reports table", "/companies tenant scope", "LLM gateway contract"],
   },
-  health: {
+  healthAttackSurface: {
     title: "Endpoint Health",
     eyebrow: "Company operations",
     status: "planned",
@@ -236,8 +444,8 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "Per-company endpoint health view with policy drift, agent version skew, and action queues. Aggregates the existing /endpoints heartbeat data once company-scoped queries land.",
     depends: ["tenant-scoped /endpoints", "policy drift signal", "action queue API"],
   },
-  asm: {
-    title: "Attack Surface Management",
+  easm: {
+    title: "External Attack Surface Management",
     eyebrow: "External exposure",
     status: "planned",
     summary:
@@ -260,7 +468,7 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "Customer-authored detection rules layered on top of platform rules. Same partner/company isolation as policy documents, with simulation before promotion.",
     depends: ["rules table", "rule simulator", "policy promotion flow"],
   },
-  agenticInvestigation: {
+  agenticAi: {
     title: "Agentic AI Investigation",
     eyebrow: "Autonomous response",
     status: "designing",
@@ -268,21 +476,45 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "Investigation agents correlate endpoint telemetry, DLP events, asset criticality, and threat intel into auditable timelines with confidence-scored response recommendations and approval gates.",
     depends: ["incident_cases correlation", "LLM gateway", "response_actions table"],
   },
-  network: {
-    title: "Network & Patch",
+  antimalware: {
+    title: "Antimalware & Behavior",
+    eyebrow: "Endpoint protection",
+    status: "planned",
+    summary:
+      "Next-stage antimalware and behavior workflows with high-confidence triage, suspicious process context, and response action staging before destructive enforcement.",
+    depends: ["detector integration", "behavior pipeline", "response action queue"],
+  },
+  webProtection: {
+    title: "Web & Email Protection",
+    eyebrow: "Content and communication",
+    status: "planned",
+    summary:
+      "Unified controls for web destinations and email protection with policy-driven guardrails and tenant-scoped enforcement aligned to add-on licensing.",
+    depends: ["web classifier", "mail connector", "policy integration"],
+  },
+  deviceControl: {
+    title: "Device Control",
+    eyebrow: "Data movement controls",
+    status: "planned",
+    summary:
+      "USB and peripheral policy controls for sensitive environments with approval-gated block actions and audit-backed evidence emission.",
+    depends: ["device telemetry", "control policy schema", "audit evidence hooks"],
+  },
+  riskManagement: {
+    title: "Risk Management",
     eyebrow: "Asset hardening",
     status: "planned",
     summary:
       "Patch inventory, installation packages, tasks, and tags scoped to a company. Reuses the customer hierarchy already enforced on /companies and installer builds.",
     depends: ["patch inventory ingestion", "task runner", "tag schema"],
   },
-  risk: {
-    title: "Risk Management",
+  digitalRisk: {
+    title: "Digital Risk (DRP)",
     eyebrow: "Continuous threat exposure",
     status: "planned",
     summary:
-      "CVE ingestion enriched with EPSS, CISA KEV, exploit availability, compensating controls, and business criticality. Rolls up by company with PHASR and compliance evidence mapping.",
-    depends: ["vulnerability ingestion", "business-context model", "compliance map"],
+      "External digital risk detection for brand abuse, impersonation, leaks, and dark web mentions with AI validation and takedown-ready context.",
+    depends: ["DRP asset model", "OSINT collectors", "finding-to-incident mapping"],
   },
   reports: {
     title: "Reports",
@@ -308,7 +540,15 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "Detonation and behavioural analysis of suspicious artefacts. Surfaces only when the subscription_entitlements row grants sandbox access for the customer.",
     depends: ["subscription_entitlements", "sandbox worker", "verdict pipeline"],
   },
-  email: {
+  policyAssignments: {
+    title: "Policy Assignments",
+    eyebrow: "MSP governance",
+    status: "planned",
+    summary:
+      "Centralized view of partner/company/group/endpoint assignment scope with inheritance preview and operational diff history.",
+    depends: ["assignment history view", "scope filters", "effective diff renderer"],
+  },
+  emailSecurity: {
     title: "Email Security",
     eyebrow: "Add-on entitlement",
     status: "add-on",
@@ -316,7 +556,7 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "Inline and journaling protection for mailboxes. Gated on subscription_entitlements and integrated with quarantine, blocklist, and incident correlation.",
     depends: ["mail connector", "subscription_entitlements", "quarantine integration"],
   },
-  mobile: {
+  mobileSecurity: {
     title: "Mobile Security",
     eyebrow: "Add-on entitlement",
     status: "add-on",
@@ -324,7 +564,7 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "scan" | "poli
       "iOS and Android protection with MDM bridge. Gated on subscription_entitlements; reuses the policy engine and enrollment token flow already shipping for desktop agents.",
     depends: ["MDM bridge", "subscription_entitlements", "mobile agent profile"],
   },
-  insights: {
+  dataInsights: {
     title: "Data Insights",
     eyebrow: "Usage and billing",
     status: "planned",

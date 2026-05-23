@@ -329,6 +329,352 @@ class PolicySimulationResponse(BaseModel):
     results: list[PolicySimulationOutcome]
 
 
+# --- Policy Document v2 ----------------------------------------------------
+
+
+PolicyInheritanceMode = Literal["inherit_with_overrides", "replace"]
+PolicyDocumentStatus = Literal["draft", "active", "archived"]
+PolicyVersionStatus = Literal["draft", "active", "archived"]
+PolicyPromotionStatus = Literal["approved", "rejected"]
+
+
+class PolicyScopeV2(BaseModel):
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+    group_id: UUID | None = None
+    endpoint_id: str | None = None
+
+
+class PolicyLineageV2(BaseModel):
+    parent_policy_id: UUID | None = None
+    inheritance_mode: PolicyInheritanceMode = "inherit_with_overrides"
+
+
+DRPAssetCategory = Literal[
+    "brand",
+    "executive",
+    "domain",
+    "subdomain",
+    "social_account",
+    "repository",
+    "keyword",
+]
+
+
+DRPFindingType = Literal[
+    "impersonation",
+    "typosquatting",
+    "homoglyph",
+    "phishing",
+    "credential_harvesting",
+    "brand_abuse",
+    "trademark_infringement",
+    "data_leak",
+    "compromised_credential",
+    "darkweb_mention",
+    "marketplace_listing",
+]
+
+
+EASMAssetType = Literal[
+    "domain",
+    "subdomain",
+    "ip",
+    "service",
+    "certificate",
+    "cloud_asset",
+    "web_application",
+    "repository",
+]
+
+
+ExternalRiskStatus = Literal["active", "paused", "archived"]
+
+
+FindingSeverity = Literal["low", "medium", "high", "critical"]
+
+
+FindingStatus = Literal["new", "triaged", "monitoring", "resolved", "false_positive"]
+
+
+class DigitalRiskProtectionModule(BaseModel):
+    """Policy v2 module payload for DRP.
+
+    Matches Default Policy v1.01 direction: disabled unless licensed,
+    and findings are review-first by default.
+    """
+
+    enabled: bool = False
+    default_action: Literal["allow", "review", "block"] = "review"
+    monitored_assets: list[DRPAssetCategory] = Field(
+        default_factory=lambda: [
+            "brand",
+            "executive",
+            "domain",
+            "social_account",
+            "repository",
+            "keyword",
+        ]
+    )
+    detections_enabled: list[DRPFindingType] = Field(
+        default_factory=lambda: [
+            "impersonation",
+            "typosquatting",
+            "homoglyph",
+            "phishing",
+            "credential_harvesting",
+            "brand_abuse",
+            "trademark_infringement",
+            "data_leak",
+            "compromised_credential",
+            "darkweb_mention",
+            "marketplace_listing",
+        ]
+    )
+    collection_sources: list[Literal["social", "darkweb", "paste_sites", "repositories", "marketplaces"]] = Field(
+        default_factory=lambda: ["social", "darkweb", "paste_sites", "repositories", "marketplaces"]
+    )
+    ai_nlp_enabled: bool = True
+    ai_cv_enabled: bool = True
+    ai_llm_validation_enabled: bool = True
+    confidence_threshold: int = Field(default=70, ge=0, le=100)
+    auto_takedown_enabled: bool = False
+    evidence_controls: list[str] = Field(default_factory=lambda: ["iso27001-2022:A.5.12", "soc2-2017:CC6.1"])
+
+
+class ExternalAttackSurfaceManagementModule(BaseModel):
+    """Policy v2 module payload for EASM discovery and exposure management."""
+
+    enabled: bool = False
+    default_action: Literal["allow", "review", "block"] = "review"
+    discovery_sources: list[
+        Literal[
+            "passive_dns",
+            "certificate_transparency",
+            "reverse_dns",
+            "whois",
+            "cloud_inventory",
+            "safe_port_scan",
+            "shadow_it",
+        ]
+    ] = Field(
+        default_factory=lambda: [
+            "passive_dns",
+            "certificate_transparency",
+            "reverse_dns",
+            "whois",
+            "cloud_inventory",
+            "safe_port_scan",
+            "shadow_it",
+        ]
+    )
+    continuous_monitoring_enabled: bool = True
+    change_detection_enabled: bool = True
+    vulnerability_enrichment: list[Literal["cvss", "epss", "cisa_kev"]] = Field(
+        default_factory=lambda: ["cvss", "epss", "cisa_kev"]
+    )
+    ai_recommendations_enabled: bool = True
+    correlate_with_drp: bool = True
+    max_safe_ports_per_asset: int = Field(default=100, ge=1, le=1000)
+    evidence_controls: list[str] = Field(default_factory=lambda: ["iso27001-2022:A.8.16", "nist-csf-2.0:DE.CM"])
+
+
+class PolicyDocumentV2Input(BaseModel):
+    schema_version: Literal["2.0"] = "2.0"
+    name: str = Field(min_length=1, max_length=200)
+    scope: PolicyScopeV2 = Field(default_factory=PolicyScopeV2)
+    lineage: PolicyLineageV2 = Field(default_factory=PolicyLineageV2)
+    modules: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    white_label_names: dict[str, str] = Field(default_factory=dict)
+
+    def digital_risk_protection(self) -> DigitalRiskProtectionModule:
+        return DigitalRiskProtectionModule.model_validate(
+            self.modules.get("digital_risk_protection", {})
+        )
+
+    def external_attack_surface_management(self) -> ExternalAttackSurfaceManagementModule:
+        return ExternalAttackSurfaceManagementModule.model_validate(
+            self.modules.get("external_attack_surface_management", {})
+        )
+
+
+class PolicyDocumentV2(BaseModel):
+    id: UUID
+    schema_version: Literal["2.0"] = "2.0"
+    name: str
+    scope: PolicyScopeV2
+    lineage: PolicyLineageV2
+    modules: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    white_label_names: dict[str, str] = Field(default_factory=dict)
+    status: PolicyDocumentStatus = "draft"
+    latest_version: int = 1
+    active_version: int | None = None
+    created_at: datetime
+    created_by: str
+    updated_at: datetime
+    updated_by: str
+
+
+class PolicyVersion(BaseModel):
+    id: UUID
+    policy_id: UUID
+    version: int = Field(ge=1)
+    status: PolicyVersionStatus = "draft"
+    payload: PolicyDocumentV2Input
+    payload_hash: str
+    signed_by: str
+    signature: str
+    signed_payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    created_by: str
+    promoted_from_simulation_id: UUID | None = None
+
+
+class PolicyCreateResponse(BaseModel):
+    policy: PolicyDocumentV2
+    version: PolicyVersion
+
+
+class PolicyListItemV2(BaseModel):
+    id: UUID
+    name: str
+    status: PolicyDocumentStatus
+    latest_version: int
+    active_version: int | None = None
+    scope: PolicyScopeV2
+    created_at: datetime
+    updated_at: datetime
+
+
+class PolicySimulationModuleOutcome(BaseModel):
+    module: str
+    enabled: bool
+    outcome: Literal["enabled", "reviewed", "blocked", "disabled"] = "enabled"
+    risk_delta: int = 0
+    destructive_actions: list[str] = Field(default_factory=list)
+    would_trigger_gate: bool
+    evidence_tags: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class PolicySimulationSummaryV2(BaseModel):
+    modules_total: int
+    modules_enabled: int
+    modules_with_destructive_actions: int
+    would_block: int
+    would_isolate: int
+    would_rollback: int
+    risk_delta_total: int = 0
+    approval_required: bool
+
+
+class PolicySimulationRecord(BaseModel):
+    id: UUID
+    policy_id: UUID
+    policy_version_id: UUID
+    status: Literal["completed", "approved", "rejected"]
+    summary: PolicySimulationSummaryV2
+    outcomes: list[PolicySimulationModuleOutcome] = Field(default_factory=list)
+    approval_required: bool = False
+    approved: bool = False
+    approved_by: str | None = None
+    approval_reason: str | None = None
+    evidence_event_id: UUID | None = None
+    evidence_controls: list[str] = Field(default_factory=list)
+    created_at: datetime
+    created_by: str
+    approved_at: datetime | None = None
+
+
+class PolicyPromotion(BaseModel):
+    id: UUID
+    policy_id: UUID
+    policy_version_id: UUID
+    simulation_id: UUID
+    status: PolicyPromotionStatus
+    operator_approved: bool
+    approval_reason: str | None = None
+    approver: str
+    approved_at: datetime
+    evidence_event_id: UUID | None = None
+    evidence_controls: list[str] = Field(default_factory=list)
+
+
+class EvidenceEvent(BaseModel):
+    id: UUID
+    action: str
+    resource: str
+    actor: str
+    scope: dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    evidence_controls: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class PolicyPromoteRequest(BaseModel):
+    simulation_id: UUID
+    operator_approved: bool = False
+    approval_reason: str | None = Field(default=None, max_length=500)
+
+
+class PolicyAssignmentV2(BaseModel):
+    id: UUID
+    policy_id: UUID
+    policy_version_id: UUID
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+    group_id: UUID | None = None
+    endpoint_id: str | None = None
+    assigned_by: str
+    assigned_at: datetime
+
+
+class PolicyAssignRequest(BaseModel):
+    policy_id: UUID
+    policy_version: int | None = Field(default=None, ge=1)
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+    group_id: UUID | None = None
+    endpoint_id: str | None = None
+
+
+class PolicyGetResponse(BaseModel):
+    policy: PolicyDocumentV2
+    latest_version: PolicyVersion
+    resolved_preview: PolicyDocumentV2Input
+    locked_modules: list[str] = Field(default_factory=list)
+
+
+class EffectivePolicyResponse(BaseModel):
+    endpoint_id: str | None = None
+    scope: PolicyScopeV2
+    assignments_applied: list[PolicyAssignmentV2] = Field(default_factory=list)
+    resolved_policy: PolicyDocumentV2Input
+    policy_ids_applied: list[UUID] = Field(default_factory=list)
+    policy_version_hash: str | None = None
+    evidence_controls: list[str] = Field(default_factory=list)
+
+
+class AgentPolicyResponse(BaseModel):
+    endpoint_id: str
+    policy_version_hash: str
+    resolved_policy: PolicyDocumentV2Input
+    evidence_controls: list[str] = Field(default_factory=list)
+
+
+class AgentDlpEvidenceIngest(BaseModel):
+    action_type: str = Field(min_length=1, max_length=120)
+    decision: Literal["allow", "review", "block", "redact"]
+    destination: str | None = Field(default=None, max_length=255)
+    label_detected: str | None = Field(default=None, max_length=120)
+    content_hash: str = Field(min_length=8, max_length=255)
+    policy_version: str = Field(min_length=1, max_length=255)
+    endpoint_id: str = Field(min_length=1, max_length=120)
+    event_type: Literal["paste", "upload", "copy"]
+    policy_action_field: Literal["paste_sensitive", "upload_restricted", "copy_to_genai"]
+    process_name: str | None = Field(default=None, max_length=255)
+
+
 # --- Enrollment -------------------------------------------------------------
 
 
@@ -415,6 +761,63 @@ class IncidentCase(BaseModel):
 class SimulationRequest(BaseModel):
     scenario: str
     agent_id: str
+
+
+# --- External Risk (DRP + EASM) -------------------------------------------
+
+
+class DRPAsset(BaseModel):
+    id: UUID
+    customer_id: UUID
+    asset_type: DRPAssetCategory
+    display_name: str
+    value: str
+    normalized_value: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    status: ExternalRiskStatus = "active"
+    created_at: datetime
+    updated_at: datetime
+    created_by: str
+
+
+class DRPFinding(BaseModel):
+    id: UUID
+    customer_id: UUID
+    asset_id: UUID
+    finding_type: DRPFindingType
+    title: str
+    summary: str
+    source: str
+    severity: FindingSeverity = "medium"
+    status: FindingStatus = "new"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    confidence_score: int = Field(default=0, ge=0, le=100)
+    llm_validation: str | None = None
+    screenshot_url: str | None = None
+    evidence_links: list[str] = Field(default_factory=list)
+    related_easm_asset_id: UUID | None = None
+    detected_at: datetime
+    created_at: datetime
+
+
+class EASMAsset(BaseModel):
+    id: UUID
+    customer_id: UUID
+    asset_type: EASMAssetType
+    display_name: str
+    external_id: str | None = None
+    ip_address: str | None = None
+    fqdn: str | None = None
+    provider: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    risk_score: int = Field(default=0, ge=0, le=100)
+    shadow_it: bool = False
+    status: ExternalRiskStatus = "active"
+    first_seen_at: datetime
+    last_seen_at: datetime
+    created_at: datetime
+    updated_at: datetime
 
 
 # --- Companies + Licensing + Accounts module --------------------------------

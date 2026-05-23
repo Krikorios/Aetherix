@@ -9,7 +9,7 @@ import os
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from app.db import connection
@@ -17,6 +17,7 @@ from app.schemas import (
     Customer,
     CustomerCreate,
     CustomerGroup,
+    CustomerUpdate,
     CustomerQuickCreateRequest,
     CustomerQuickCreateResult,
     InstallerBuild,
@@ -129,6 +130,84 @@ def list_customers() -> list[Customer]:
     return [_customer_from_row(row) for row in rows]
 
 
+def list_customers_page(
+    *,
+    partner_ids: list[UUID] | None = None,
+    customer_ids: list[UUID] | None = None,
+    search: str | None = None,
+    status: Literal["active", "suspended", "archived"] | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Customer], int]:
+    ensure_demo_seed()
+    clauses: list[str] = []
+    params: list[object] = []
+
+    if partner_ids is not None or customer_ids is not None:
+        scope_clauses: list[str] = []
+        if partner_ids:
+            scope_clauses.append("c.partner_id = any(%s)")
+            params.append(partner_ids)
+        if customer_ids:
+            scope_clauses.append("c.id = any(%s)")
+            params.append(customer_ids)
+        if scope_clauses:
+            clauses.append(f"({' or '.join(scope_clauses)})")
+        else:
+            clauses.append("false")
+    if status:
+        clauses.append("c.status = %s")
+        params.append(status)
+    if search:
+        q = f"%{search.strip().lower()}%"
+        clauses.append(
+            """
+            (
+                lower(c.name) like %s
+                or lower(c.company_type) like %s
+                or lower(c.customer_number) like %s
+                or lower(coalesce(cl.license_key, '')) like %s
+            )
+            """
+        )
+        params.extend([q, q, q, q])
+
+    where = f"where {' and '.join(clauses)}" if clauses else ""
+    limit = max(1, min(limit, 250))
+    offset = max(0, offset)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select count(distinct c.id) as n
+            from customers c
+            left join company_licenses cl on cl.customer_id = c.id
+            {where}
+            """,
+            params,
+        )
+        total = cur.fetchone()["n"]
+        cur.execute(
+            f"""
+            select
+                c.*,
+                g.id as default_group_id,
+                pa.policy_package_id as assigned_policy_package_id,
+                pp.name as assigned_policy_name
+            from customers c
+            left join company_licenses cl on cl.customer_id = c.id
+            left join customer_groups g on g.customer_id = c.id and g.name = %s
+            left join policy_assignments pa on pa.customer_id = c.id and pa.group_id is null
+            left join policy_packages pp on pp.id = pa.policy_package_id
+            {where}
+            order by c.created_at desc
+            limit %s offset %s
+            """,
+            [DEFAULT_GROUP_NAME, *params, limit, offset],
+        )
+        rows = cur.fetchall()
+    return [_customer_from_row(row) for row in rows], total
+
+
 def create_customer(request: CustomerCreate, *, partner_id: UUID = DEFAULT_PARTNER_ID) -> tuple[Customer, PolicyAssignment]:
     ensure_demo_seed()
     now = datetime.now(UTC)
@@ -148,14 +227,15 @@ def create_customer(request: CustomerCreate, *, partner_id: UUID = DEFAULT_PARTN
         cur.execute(
             """
             insert into customers(
-                id, partner_id, customer_number, name, industry, country,
+                id, partner_id, customer_number, company_type, name, industry, country,
                 company_size, status, created_by, created_at
-            ) values (%s, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s)
             """,
             (
                 customer_id,
                 partner_id,
                 customer_number,
+                request.company_type,
                 request.name,
                 request.industry,
                 request.country,
@@ -184,6 +264,7 @@ def create_customer(request: CustomerCreate, *, partner_id: UUID = DEFAULT_PARTN
         id=customer_id,
         partner_id=partner_id,
         customer_number=customer_number,
+        company_type=request.company_type,
         name=request.name,
         industry=request.industry,
         country=request.country,
@@ -227,6 +308,116 @@ def get_customer(customer_id: UUID) -> Customer | None:
         )
         row = cur.fetchone()
     return _customer_from_row(row) if row else None
+
+
+CustomerStatus = Literal["active", "suspended", "archived"]
+
+
+def update_customer_status(customer_id: UUID, status: CustomerStatus) -> Customer | None:
+    """Soft-update lifecycle status. Returns the refreshed Customer or None."""
+
+    if status not in ("active", "suspended", "archived"):
+        raise CustomerError(f"invalid status {status!r}")
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update customers set status = %s where id = %s",
+            (status, customer_id),
+        )
+        if cur.rowcount == 0:
+            return None
+    return get_customer(customer_id)
+
+
+def update_customer(customer_id: UUID, request: CustomerUpdate) -> Customer | None:
+    policy_package_id = request.policy_package_id or DEFAULT_POLICY_PACKAGE_ID
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select 1 from customers where id = %s", (customer_id,))
+        if cur.fetchone() is None:
+            return None
+        cur.execute("select 1 from policy_packages where id = %s", (policy_package_id,))
+        if cur.fetchone() is None:
+            raise CustomerError("Policy package not found")
+        cur.execute(
+            """
+            update customers
+            set name = %s, industry = %s, country = %s, company_size = %s
+            where id = %s
+            """,
+            (request.name, request.industry, request.country, request.company_size, customer_id),
+        )
+        cur.execute(
+            """
+            update policy_assignments
+            set policy_package_id = %s, assigned_by = %s, assigned_at = %s
+            where customer_id = %s and group_id is null
+            """,
+            (policy_package_id, request.updated_by, now, customer_id),
+        )
+        if cur.rowcount == 0:
+            cur.execute(
+                """
+                insert into policy_assignments(
+                    id, customer_id, group_id, policy_package_id, assigned_by, assigned_at
+                ) values (%s, %s, null, %s, %s, %s)
+                """,
+                (uuid.uuid4(), customer_id, policy_package_id, request.updated_by, now),
+            )
+    return get_customer(customer_id)
+
+
+# Tables that reference customers(id) without ON DELETE CASCADE.
+# Order matters where child tables themselves reference each other.
+_CUSTOMER_CHILD_TABLES: tuple[str, ...] = (
+    "acknowledged_alerts",
+    "alerts",
+    "heartbeats",
+    "telemetry_events",
+    "security_alerts",
+    "incident_cases",
+    "enrolled_agents",
+    "enrollment_tokens",
+    "installer_builds",
+    "quick_deploy_links",
+    "policy_assignments",
+    "customer_groups",
+    "account_roles",
+)
+
+
+def delete_customer(customer_id: UUID) -> bool:
+    """Hard-delete a customer (company) and all of its dependent rows.
+
+    company_licenses (and their products/usage) cascade via FK. Every
+    other table that references customers(id) is cleaned up explicitly
+    inside one transaction so the delete either fully succeeds or rolls
+    back. Returns True if a customer row was removed.
+    """
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("select 1 from customers where id = %s", (customer_id,))
+        if cur.fetchone() is None:
+            return False
+        for table in _CUSTOMER_CHILD_TABLES:
+            # acknowledged_alerts has no direct customer_id column; it
+            # joins via alerts. Skip with a guard so this stays
+            # resilient to schema drift.
+            cur.execute(
+                """
+                select 1 from information_schema.columns
+                where table_name = %s and column_name = 'customer_id'
+                """,
+                (table,),
+            )
+            if cur.fetchone() is None:
+                continue
+            cur.execute(
+                f"delete from {table} where customer_id = %s",  # noqa: S608 - table name is hardcoded
+                (customer_id,),
+            )
+        cur.execute("delete from customers where id = %s", (customer_id,))
+        return cur.rowcount > 0
+
 
 
 def customer_groups(customer_id: UUID) -> list[CustomerGroup]:
@@ -613,6 +804,7 @@ def _customer_from_row(row: dict[str, Any]) -> Customer:
         id=row["id"],
         partner_id=row["partner_id"],
         customer_number=row["customer_number"],
+        company_type=row.get("company_type", "customer"),
         name=row["name"],
         industry=row["industry"],
         country=row["country"],

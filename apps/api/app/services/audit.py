@@ -17,6 +17,7 @@ from typing import Any, Iterable
 from pydantic import BaseModel
 
 from app.db import connection
+from app.services.compliance import controls_for_event
 
 
 GENESIS_HASH = "0" * 64
@@ -32,6 +33,7 @@ class AuditRecord(BaseModel):
     after_hash: str | None = None
     request_id: str | None = None
     chain_hash: str
+    evidence_controls: list[str] = []
 
 
 def record(
@@ -42,11 +44,13 @@ def record(
     before: Any = None,
     after: Any = None,
     request_id: str | None = None,
+    evidence_controls: list[str] | None = None,
 ) -> AuditRecord:
     """Append one audit record. ``before``/``after`` are hashed, not stored."""
 
     before_hash = _hash_payload(before) if before is not None else None
     after_hash = _hash_payload(after) if after is not None else None
+    controls = evidence_controls if evidence_controls is not None else controls_for_event(action)
     ts = datetime.now(UTC)
 
     with connection() as conn, conn.cursor() as cur:
@@ -64,6 +68,7 @@ def record(
             "before_hash": before_hash,
             "after_hash": after_hash,
             "request_id": request_id,
+            "evidence_controls": controls,
         }
         chain_hash = _chain_hash(prev_hash, body)
         cur.execute(
@@ -71,8 +76,8 @@ def record(
             insert into audit_log(
                 ts, actor, action, resource,
                 before_hash, after_hash, request_id,
-                prev_chain_hash, chain_hash
-            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                prev_chain_hash, chain_hash, evidence_controls
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             returning seq
             """,
             (
@@ -85,6 +90,7 @@ def record(
                 request_id,
                 prev_hash,
                 chain_hash,
+                json.dumps(controls),
             ),
         )
         seq = int(cur.fetchone()["seq"])
@@ -99,6 +105,7 @@ def record(
         after_hash=after_hash,
         request_id=request_id,
         chain_hash=chain_hash,
+        evidence_controls=controls,
     )
 
 
@@ -159,8 +166,13 @@ def verify_chain() -> tuple[bool, int | None]:
             "before_hash": row["before_hash"],
             "after_hash": row["after_hash"],
             "request_id": row["request_id"],
+            "evidence_controls": list(row["evidence_controls"]),
         }
         expected = _chain_hash(prev_hash, body)
+        if expected != row["chain_hash"]:
+            legacy_body = dict(body)
+            legacy_body.pop("evidence_controls")
+            expected = _chain_hash(prev_hash, legacy_body)
         if expected != row["chain_hash"]:
             return False, int(row["seq"])
         prev_hash = row["chain_hash"]
@@ -193,6 +205,7 @@ def _row_to_record(row: dict[str, Any]) -> AuditRecord:
         after_hash=row["after_hash"],
         request_id=row["request_id"],
         chain_hash=row["chain_hash"],
+        evidence_controls=list(row["evidence_controls"]),
     )
 
 

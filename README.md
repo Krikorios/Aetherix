@@ -1,6 +1,8 @@
-# Aetherix Endpoint Security POC
+# Aetherix Endpoint Security Platform
 
-This repository contains the Aetherix proof-of-concept: a lightweight Rust endpoint agent, a FastAPI/Postgres control plane, a React/Vite MSP console, policy simulation, tenant-aware customer onboarding, Companies + Licensing, Accounts hierarchy design, and customized installer/Quick Deploy generation.
+This repository contains the Aetherix platform: a lightweight Rust endpoint agent, a FastAPI/Postgres control plane, a React/Vite MSP console, policy simulation, tenant-aware customer onboarding, Companies + Licensing, Accounts hierarchy design, and customized installer/Quick Deploy generation.
+
+See [docs/milestone-summary-2026-05-23.md](docs/milestone-summary-2026-05-23.md) for the latest milestone summary, including Policy Engine v2, Semantic DLP plus GenAI Guardrails, Rust agent enforcement, the MV3 browser extension, and the Antimalware & Behavior console module.
 
 ## Workspace
 
@@ -32,6 +34,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Apply database migrations (recommended before starting the API):
+
+```bash
+cd apps/api
+source .venv/bin/activate
+alembic -c alembic.ini upgrade head
+```
+
 Run the API:
 
 ```bash
@@ -48,6 +58,9 @@ The API expects `AETHERIX_DATABASE_URL` (defaults to
 `postgresql://aetherix:aetherix@127.0.0.1:55432/aetherix`, which matches the
 `docker-compose.yml` service — host port `55432` is used so this Postgres
 instance can coexist with another local Postgres on `5432`). The schema is created on startup.
+
+When introducing schema changes, prefer Alembic revisions over adding ad-hoc
+runtime SQL in startup code.
 
 The tenant/customer service seeds only the local demo MSP and the default `SMB Baseline Protection` policy package when `/customers` or `/policy-packages` is called. It does not seed customers, endpoints, alerts, or telemetry.
 
@@ -102,6 +115,7 @@ when set, and reuses it for nonce-bound HMAC heartbeats. Customized installers w
 - Create Quick Deploy links that mint short-lived tenant-bound enrollment tokens at download time.
 - Fetch assigned policy packages from the agent with `GET /agent/{agent_id}/policy`.
 - Send signed nonce-bound heartbeats and view endpoint state in the console.
+- Export a signed Compliance Evidence Engine v0 bundle with `GET /compliance/export?customer_id=<id>&framework=iso27001-2022`, backed by seeded control catalogue rows and `evidence_controls` tags on audit, alert, and policy-document records.
 
 The Accounts and Licensing screens are currently console-level foundations. The backend still needs persisted accounts, authenticated tenant scoping, subscription entitlement tables, and audit-backed impersonation before these controls are production enforcement points.
 
@@ -120,5 +134,6 @@ See [docs/development.md](docs/development.md) for the development checklist, AP
 1. Accept text samples and detect PII with Presidio-compatible scan results.
 2. Show endpoint health, alerts, and policy state in the console.
 3. Keep the agent contract small enough to replace mock telemetry with OS-specific collectors later.
+4. Establish the **native coverage spine**: one signed agent + one control plane covering anti-malware / EDR, SIEM / HIDS, and DLP classification + labeling + policy — wired into a built-in Compliance Evidence Engine that maps every event to ISO 27001 / SOC 2 / NIST CSF / GDPR / HIPAA controls at write time. See [docs/architecture.md §3.4.2](docs/architecture.md).
 
 See [docs/poc-plan.md](docs/poc-plan.md) for the full platform proposal, roadmap, MSP strategy, risk register, and proof-of-concept slice.

@@ -18,6 +18,8 @@ The first production path should be deliberately narrow: prove the endpoint agen
 - Agentic incident response that reconstructs timelines, summarizes incidents in plain English, and delivers Slack or Teams actions with human approval gates.
 - Privacy-first deployment options with minimal telemetry, strong auditability, open-core options, and full on-prem support.
 - Ultra-lightweight Rust agent foundation targeting less than 1% average CPU overhead and less than 50 MB resident memory on reference hardware.
+- **One platform, three categories, native**: next-gen anti-malware / EDR + SIEM / HIDS + DLP classification & labeling delivered by a single signed agent and a single tenant-scoped control plane — not three integrated vendors.
+- **Audit-evidence engine built in**: every detection, scan, policy decision, label change, and response action is tagged at write-time with the ISO 27001:2022 / SOC 2 / NIST CSF 2.0 / GDPR / HIPAA controls it evidences, and the platform produces a single auditor export pack from real artefacts rather than back-filled paperwork. See [docs/architecture.md §3.4.2](architecture.md).
 
 ## 1. Market Opportunity and Competitive Gaps
 
@@ -30,6 +32,46 @@ Incumbent endpoint security platforms still rely heavily on 2010s-era content ru
 | Incident response | Automated actions exist, but noisy alerts still require high SOC effort. | Agentic investigation, timeline reconstruction, and contextual approval actions. |
 | Trust and sovereignty | Some vendors face geopolitical or deployment trust constraints. | Neutral, privacy-first, open-core option with self-hosted and air-gapped paths. |
 | Legacy hardware | Resource usage is acceptable but noticeable on older endpoints. | Rust-first agent architecture with strict performance budgets. |
+| Tooling fragmentation | MSPs assemble AV + SIEM + DLP from three separate vendors, with three audit trails and three license bills. | One native platform with one signed agent, one tenant-scoped control plane, one hash-chained audit log, and one license. |
+| Audit evidence | Generating ISO 27001 / SOC 2 / NIST CSF / GDPR / HIPAA evidence is a manual, screenshot-driven exercise across multiple consoles. | Every event is tagged at write-time with the control it evidences; auditor export pack is generated from real artefacts, not paperwork. |
+
+### 1.1 Native Coverage Strategy
+
+Aetherix's product is a **single native platform** that delivers, in one
+signed agent + one control plane, the coverage MSPs and SMBs currently buy
+from three separate stacks:
+
+| Category | Native module (this repo) | Deterministic baseline shipped first | AI layer on top |
+| --- | --- | --- | --- |
+| Next-gen anti-malware / EDR | `agent/` modules + control-plane analytics | YARA + signatures + behaviour rules + anti-ransomware (canary + entropy + rollback) + IOC matching + process tree + isolate/kill/quarantine | Behavioural baselining, ML scoring of unknown PE/scripts, agentic post-detection investigation |
+| SIEM / HIDS | `agent/` log + FIM + vuln collectors, `apps/api` correlation engine | Log collection (syslog / Event Log / journald / app logs), parsers, FIM, rootkit checks, software inventory + CVE/EPSS/KEV, CIS benchmarks, syscall/eBPF stream, correlation rules, MITRE ATT&CK mapping | Natural-language detection authoring, anomaly detection, alert noise reduction, plain-English incident timelines |
+| DLP — classification + labeling + policy | `apps/api/app/services/dlp.py` + `semantic.py` + agent enforcement modules | Presidio-style PII detection, regex / keyword / EDM, content fingerprinting, sensitivity labels (Public / Internal / Confidential / Restricted, customer-extensible), label propagation, endpoint enforcement (clipboard / file / upload / email / USB / print / screenshot), browser sensor for GenAI destinations | Semantic context classifier, intent-aware destination policy, auto-labeling suggestions, redacted review summaries |
+| Compliance evidence | Compliance Evidence Engine (`apps/api/app/services/compliance.py`) | Control catalogue (ISO 27001:2022 Annex A, SOC 2 TSC 2017, NIST CSF 2.0, GDPR Art. 32, HIPAA Security Rule), event→control tagging at write time, append-only hash-chained audit log, signed JSON auditor export pack; attestation workflow and PDF export follow | AI-drafted control narratives, gap analysis, what-if remediation roadmap |
+
+This is the product, not an integration story. The platform's value to an MSP
+or SMB is:
+
+1. **One platform.** Replace three subscriptions with one, on one console and
+   one audit trail.
+2. **AI as the connective tissue.** Semantic classification feeds DLP,
+   behavioural baselines feed EDR, correlation feeds SIEM, and an agentic
+   investigator turns the combined stream into one incident narrative — none
+   of which is possible across separate vendor stacks.
+3. **Audit-evidence by construction.** Submitting evidence to an ISO 27001 or
+   SOC 2 auditor becomes a single export, not a multi-vendor scavenger hunt.
+
+Detailed module-by-module spec, OS coverage matrix, single-agent design, and
+phased rollout live in [docs/architecture.md §3.4.2](architecture.md). A
+GravityZone / Wazuh-style capability gap review for future deployment planning
+lives in [docs/native-security-gap-review.md](native-security-gap-review.md).
+
+#### Migration aids (not the product)
+
+Read-only import connectors from Wazuh / Bitdefender / Microsoft Defender may
+ship later as onboarding tools so customers can carry historical alerts and
+asset inventory into Aetherix during cutover. They are explicitly scoped as
+migration aids — Aetherix's runtime detection, labeling, and enforcement are
+100% native.
 
 ## 2. Product Vision
 
