@@ -9,6 +9,9 @@ import {
   Brain,
   Bug,
   Building2,
+  ChevronLeft,
+  ChevronDown,
+  ChevronRight,
   FileText,
   FileCheck,
   FlaskConical,
@@ -41,6 +44,7 @@ import { AccountsPage } from "./pages/AccountsPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SetupAccountPage } from "./pages/SetupAccountPage";
+import { CompliancePage } from "./pages/CompliancePage";
 import {
   apiGet,
   getAccountId,
@@ -83,6 +87,7 @@ type Page =
   | "quarantine"
   | "companies"
   | "accounts"
+  | "compliance"
   | "installers"
   | "policyAssignments"
   | "sandbox"
@@ -138,6 +143,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "digitalRisk", label: "Digital Risk (DRP)", icon: <Eye size={18} />, requires: { resource: "incidents", level: "view" } },
       { id: "easm", label: "External Attack Surface (EASM)", icon: <Globe2 size={18} />, requires: { resource: "incidents", level: "view" } },
       { id: "reports", label: "Reports", icon: <FileText size={18} />, requires: { resource: "incidents", level: "view" } },
+      { id: "compliance", label: "Compliance Center", icon: <FileCheck size={18} />, requires: { resource: "companies", level: "view" } },
     ],
   },
   {
@@ -204,6 +210,10 @@ export function App() {
   const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
   const [authStatus, setAuthStatus] = useState<"loading" | "signedIn" | "signedOut">("loading");
   const [inviteToken, setInviteToken] = useState<string | null>(INITIAL_INVITE_TOKEN);
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [expandedNavGroups, setExpandedNavGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(NAV.map((section) => [section.group, true])),
+  );
 
   useEffect(() => {
     const onHashChange = () => setInviteToken(parseInviteToken(window.location.hash));
@@ -310,7 +320,7 @@ export function App() {
   const primaryRole = me.account.roles[0]?.role_code ?? null;
 
   return (
-    <main className="shell">
+    <main className={railCollapsed ? "shell railCollapsed" : "shell"}>
       <aside className="rail" aria-label="Primary navigation">
         <div className="brandMark">
           {branding.logo_url ? (
@@ -322,23 +332,47 @@ export function App() {
             <strong>{branding.product_name}</strong>
             <span>{branding.tagline}</span>
           </div>
+          <button
+            className="railCollapseButton"
+            type="button"
+            aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+            title={railCollapsed ? "Expand navigation" : "Collapse navigation"}
+            onClick={() => setRailCollapsed((current) => !current)}
+          >
+            {railCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
         </div>
         {visibleNav.map((section) => (
           <nav className="navGroup" key={section.group} aria-label={section.group}>
-            <span>{section.group}</span>
-            {section.items.map(({ id, label, icon }) => (
-              <button
-                key={id}
-                className={page === id ? "active" : ""}
-                title={label}
-                aria-label={label}
-                aria-current={page === id ? "page" : undefined}
-                onClick={() => setPage(id)}
-              >
-                {icon}
-                <span>{label}</span>
-              </button>
-            ))}
+            <button
+              className="navGroupToggle"
+              type="button"
+              aria-expanded={expandedNavGroups[section.group] ?? true}
+              onClick={() => setExpandedNavGroups((current) => ({
+                ...current,
+                [section.group]: !(current[section.group] ?? true),
+              }))}
+            >
+              <span>{section.group}</span>
+              {(expandedNavGroups[section.group] ?? true) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+            {railCollapsed || (expandedNavGroups[section.group] ?? true) ? (
+              <div className="navGroupItems">
+                {section.items.map(({ id, label, icon }) => (
+                  <button
+                    key={id}
+                    className={page === id ? "active" : ""}
+                    title={label}
+                    aria-label={label}
+                    aria-current={page === id ? "page" : undefined}
+                    onClick={() => setPage(id)}
+                  >
+                    {icon}
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </nav>
         ))}
         <div className="railAuthPanel">
@@ -355,7 +389,7 @@ export function App() {
         </div>
       </aside>
 
-      <section className="workspace">
+      <section className={`workspace ${page === "policies" || page === "installers" ? "policyWorkspace" : ""}`}>
         {!pageAllowed ? (
           <ForbiddenPage />
         ) : (
@@ -370,7 +404,8 @@ export function App() {
             {page === "installers" && <EnrollmentPage />}
             {page === "companies" && <CompaniesPage />}
             {page === "accounts" && <AccountsPage />}
-            {!["dashboard", "alerts", "search", "threatsXplorer", "policies", "antimalware", "customRules", "installers", "companies", "accounts"].includes(page) ? (
+            {page === "compliance" && <CompliancePage />}
+            {!["dashboard", "alerts", "search", "threatsXplorer", "policies", "antimalware", "customRules", "installers", "companies", "accounts", "compliance"].includes(page) ? (
               <PlaceholderPage page={page} />
             ) : null}
           </>
@@ -427,7 +462,7 @@ type PlaceholderMeta = {
   depends: string[];
 };
 
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts">, PlaceholderMeta> = {
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance">, PlaceholderMeta> = {
   executiveSummary: {
     title: "Executive Summary",
     eyebrow: "Partner reporting",
