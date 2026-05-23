@@ -360,7 +360,7 @@ export default function ProtectionModuleTemplate() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
             {Object.entries(policy.controls).map(([key, enabled]) => (
-              <label key={key} style={{ display: "flex", alignItems: "center", justify: "space-between", cursor: "pointer", fontSize: "12px" }}>
+              <label key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", fontSize: "12px" }}>
                 <span>{key.replaceAll("_", " ").toUpperCase()}</span>
                 <input type="checkbox" checked={enabled} readOnly style={{ accentColor: "var(--accent)", cursor: "not-allowed" }} />
               </label>

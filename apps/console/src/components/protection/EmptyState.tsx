@@ -22,7 +22,9 @@ export function EmptyState({ title = "No Data Available", message, icon: Icon = 
         borderRadius: "12px",
       }}
     >
-      <Icon style={{ color: "var(--muted)", marginBottom: "16px" }} size={40} />
+      <div style={{ color: "var(--muted)", marginBottom: "16px" }}>
+        <Icon size={40} />
+      </div>
       <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", fontWeight: 600, color: "var(--ink)" }}>{title}</h3>
       <p style={{ margin: 0, fontSize: "14px", color: "var(--muted)", maxWidth: "320px" }}>{message}</p>
     </div>

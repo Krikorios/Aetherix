@@ -39,7 +39,7 @@ export function DetailPanel({ detection, customContextRenderer }: DetailPanelPro
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
         {/* Threat summary */}
-        <div style={{ padding: "12px", bg: "#fbfcf7", borderRadius: "8px", border: "1px solid var(--line)", background: "rgba(11, 107, 87, 0.01)" }}>
+        <div style={{ padding: "12px", borderRadius: "8px", border: "1px solid var(--line)", background: "rgba(11, 107, 87, 0.01)" }}>
           <h3 style={{ margin: "0 0 6px 0", fontSize: "13px", color: "var(--accent)", fontWeight: 600 }}>AI Threat Summary</h3>
           <p style={{ margin: 0, fontSize: "12px", color: "var(--ink)", lineHeight: 1.5 }}>
             {detection.description}
@@ -57,19 +57,19 @@ export function DetailPanel({ detection, customContextRenderer }: DetailPanelPro
                 Execution Properties
               </h4>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <div style={{ display: "flex", justify: "space-between", alignItems: "center", fontSize: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
                   <span style={{ color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: "6px" }}>
                     <Cpu size={14} /> Process
                   </span>
                   <strong style={{ color: "var(--ink)" }}>{detection.recommended_action === "kill_process" ? detection.title : "N/A"}</strong>
                 </div>
-                <div style={{ display: "flex", justify: "space-between", alignItems: "center", fontSize: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
                   <span style={{ color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: "6px" }}>
                     <User size={14} /> Account Scope
                   </span>
                   <strong style={{ color: "var(--ink)" }}>{context?.user || "NT AUTHORITY\\SYSTEM"}</strong>
                 </div>
-                <div style={{ display: "flex", justify: "space-between", alignItems: "center", fontSize: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
                   <span style={{ color: "var(--muted)", display: "inline-flex", alignItems: "center", gap: "6px" }}>
                     <Terminal size={14} /> Launcher Command
                   </span>

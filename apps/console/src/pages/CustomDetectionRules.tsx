@@ -569,7 +569,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
                   <select
                     value={newRuleForm.severity}
                     onChange={(e) => setNewRuleForm(prev => ({ ...prev, severity: e.target.value as any }))}
-                    style={{ width: "100%", height: "36px", px: "10px", borderRadius: "6px", border: "1px solid var(--line)", background: "#fffef9" }}
+                    style={{ width: "100%", height: "36px", paddingLeft: "10px", paddingRight: "10px", borderRadius: "6px", border: "1px solid var(--line)", background: "#fffef9" }}
                   >
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
