@@ -44,8 +44,8 @@ flowchart TB
    Agent[Rust Endpoint Agent] --> API
 
    API --> Tenant[Tenant + Customer Service]
-   API -. planned .-> Identity[Accounts + RBAC Service]
-   API -. planned .-> Licensing[Subscription + Entitlement Service]
+  API --> Identity[Accounts + RBAC Service]
+  API --> Licensing[Subscription + Entitlement Service]
    API --> Enrollment[Enrollment + Installer Service]
    API --> Policy[Policy Document + Package Service]
    API --> DLP[Deterministic + Semantic DLP]
@@ -57,8 +57,8 @@ flowchart TB
    API --> Alerting[Alert + Audit Workflow]
 
    Tenant --> PG[(Postgres)]
-   Identity -. planned .-> PG
-   Licensing -. planned .-> PG
+  Identity --> PG
+  Licensing --> PG
    Enrollment --> PG
    Policy --> PG
    DLP --> PG
@@ -70,7 +70,7 @@ flowchart TB
    Alerting --> PG
 
    Enrollment -. future .-> ArtifactStore[(Installer Artifact Store)]
-   DLP -. future .-> Reasoning[LLM / Semantic Gateway]
+  DLP --> Reasoning[LLM / Semantic Gateway]
    DRP -. future .-> Reasoning
    EASM -. future .-> Reasoning
    Response -. future .-> Reasoning
@@ -113,18 +113,20 @@ Hard constraints:
 
 Owns the system of record. Implemented route groups:
 
-- Agent lifecycle: `/enrollment/tokens`, `/agent/enroll`, `/agent/heartbeat`, `/agent/{agent_id}/policy`.
+- Agent lifecycle: `/enrollment/tokens`, `/agent/enroll`, `/agent/heartbeat`, `/agent/{agent_id}/policy`, `/agent/policy`, `/agent/policy/ack`, `/agent/dlp-evidence`.
 - Customer onboarding: `/customers`, `/customers/quick-create`, `/customers/{customer_id}/installers`, `/customers/{customer_id}/quick-deploy`, `/quick-deploy/{link_id}`.
 - Policy workflow: `/policy-packages`, `/policies/active`, `/policies/document`, `/policies/document/simulate`, `/policies/documents`.
-- Operations: `/endpoints`, `/alerts`, `/alerts/{id}/acknowledge`, `/audit`, `/audit/verify`, `/dlp/scan`.
+- Policy Engine v2: `/policies`, `/policies/{id}`, `/policies/{id}/versions`, `/policies/{id}/simulate`, `/policies/{id}/promote`, `/policies/{id}/rollback`, `/policies/assign`, `/policies/effective`.
+- Tenancy and identity: `/me`, `/auth/login`, `/auth/totp/verify`, `/auth/accept-invite`, `/roles`, `/accounts`, `/accounts/bulk-delete`, `/accounts/{id}`, `/accounts/{id}/roles`, `/accounts/{id}/password`, `/companies`, `/companies/summary`, `/companies/bulk-status`, `/companies/bulk-delete`, `/partners`.
+- Licensing and AI settings: `/subscriptions`, `/companies/{id}/license`, `/companies/{id}/ai`, `/companies/{id}/ai/test`, `/ai/providers`.
+- Operations and evidence: `/endpoints`, `/alerts`, `/alerts/{id}/acknowledge`, `/audit`, `/audit/verify`, `/compliance/export`, `/simulate/scenario`, `/customers/{id}/telemetry`, `/customers/{id}/security-alerts`, `/customers/{id}/incidents`, `/dlp/scan`.
 
 Trust rules:
 
-- Heartbeats without a valid signature are rejected (already partially
-  enforced in `state.upsert_heartbeat`).
-- Mutating routes require an authenticated operator with an RBAC role.
-- The `/dlp/scan` route is treated as PII-in-transit: request bodies are
-  not logged; only hashes and decisions are persisted.
+- Heartbeats without a valid nonce-bound HMAC signature are rejected.
+- Operator-scoped routes derive access from the dev account header and persisted account/role assignments. This is enough for local POC tenancy tests, but not a production session model.
+- Agent policy and DLP evidence routes validate enrolled-agent credentials.
+- The `/dlp/scan` route is treated as PII-in-transit: request bodies are not logged; only hashes, findings, decisions, alerts, and evidence metadata are persisted.
 
 ### 3.2.1 Account hierarchy and tenant isolation
 
@@ -145,7 +147,7 @@ Isolation rules:
 - Platform Owner impersonation is a support workflow, not a silent context switch; every impersonation start, action, and end must write audit records.
 - Every new operational table must carry the required tenant context for its scope: `partner_id`, `customer_id`, and, when relevant, `group_id` and `endpoint_id`.
 
-Current state: the customer and endpoint data model already carries tenant context for onboarding, installers, agents, heartbeats, and alerts. The Accounts page models the hierarchy and permissions in the console, but persisted account tables, authenticated RBAC middleware, recursive company filters, and impersonation audit routes are still planned backend work.
+Current state: customers, accounts, roles, role assignments, invitations, password setup, login/TOTP challenge flow, company scoping, account hard delete, and company hard delete are persisted in Postgres and covered by API tests. The console still uses a dev sign-in surface that sends `X-Aetherix-Account`; production authentication, recursive partner hierarchy semantics, and full impersonation workflows remain planned hardening.
 
 ### 3.3 Data Plane
 
@@ -157,19 +159,19 @@ Current state: the customer and endpoint data model already carries tenant conte
 | Vector store | embeddings for semantic DLP recall | Optional; only populated when semantic features are enabled |
 | Graph projection | companies, assets, findings, identities, infrastructure, incidents | Cross-module correlation without replacing Postgres as source of truth |
 
-The POC uses Postgres as the single source of truth. `apps/api/app/db.py` bootstraps schema idempotently on startup; there is no SQLite or in-memory fallback. Tests use a separate Postgres database configured by `AETHERIX_TEST_DATABASE_URL`.
+The POC uses Postgres as the single source of truth. `apps/api/app/db.py` bootstraps schema idempotently on startup and Alembic migrations live under `apps/api/alembic/`; there is no SQLite or in-memory fallback. Tests use a separate Postgres database configured by `AETHERIX_TEST_DATABASE_URL`.
 
 ### 3.4 Reasoning Plane
 
-LLMs and semantic classifiers live behind a gateway, never called directly
-from request handlers. The gateway provides:
+LLMs and semantic classifiers live behind tenant AI settings and semantic service adapters, never inside the endpoint agent. The implemented gateway edge provides:
 
-- Provider abstraction (OpenAI / Anthropic / Azure / self-hosted).
-- Per-tenant budget caps with hard cutoff and graceful degradation.
-- Prompt + response audit (hash by default, full content opt-in).
-- Structured output contracts: every LLM call returns a typed object
-  validated before use. A validation failure is a deterministic fallback,
-  not an exception bubbled to the user.
+- Provider catalogue: disabled, Aetherix-hosted, OpenAI, Azure OpenAI, Anthropic, and Ollama.
+- Per-customer encrypted API key storage with `api_key_last4` only exposed back to the console.
+- License-tier gating for `ai_tier:none|hosted|byo`.
+- Per-customer usage counters and quota checks before outbound AI calls.
+- Optional redaction before external LLM submission.
+
+Still planned: a dedicated prompt-audit table, vector store, and broader structured-output evaluation harness.
 
 The reasoning plane is **advisory**. It can raise a risk score, suggest a
 playbook, draft an incident summary. It cannot, on its own, change a
@@ -339,14 +341,15 @@ and endpoint state legible — and to make destructive actions explicit
 Implemented console foundation:
 
 - Full MSP navigation structure: Monitoring, Incidents, Protection, MSP Control, Add-ons, and Configuration.
-- Companies + Licensing page: customer creation through `/customers/quick-create`, policy assignment, installer generation, Core + add-ons packaging view, AI Efficiency Score, and white-label entry point.
-- Accounts page: list view with filters, bulk selection/delete, add/edit modal, role-based company assignment, module permissions, 2FA enforcement state, password policy, and permission matrix.
-- Role-based landing-page direction: Platform Owner should land on partner revenue/risk oversight, MSP Partner on customer portfolio and licensing, Company Administrator on endpoint health and action queues.
+- Companies + Licensing page: paged `/companies/summary`, customer creation through `/customers/quick-create`, hard delete and soft lifecycle bulk actions, license editing, AI provider settings/testing, policy assignment, installer generation, Core + add-ons packaging view, AI Efficiency Score, and white-label entry point.
+- Accounts page: API-backed account list, filters, bulk hard delete, add/edit modal, invitation link/email delivery modes, role-based company assignment, module permissions, 2FA enforcement state, password policy, and permission matrix.
+- Policy Engine v2 page: API-backed create/list/detail, effective policy preview, simulation, destructive promotion approval, assignment, and entitlement-aware locked sections.
+- Antimalware & Behavior page: front-end triage workspace backed by effective-policy lookup and local sample detections; response staging is UI-level until endpoint AV/EDR collectors and response APIs exist.
 
 Planned console hardening:
 
-- Replace demo account data with persisted account APIs.
-- Drive visible navigation and actions from authenticated permissions.
+- Replace dev header sign-in with production sessions.
+- Drive every visible action from server-confirmed permissions and feature entitlements.
 - Add recursive company filter semantics backed by tenant-aware API queries.
 - Add white-label theme tokens per MSP Partner.
 - Add visual regression checks for the wide MSP navigation and modal workflows.
@@ -615,7 +618,7 @@ A full STRIDE pass belongs in its own document. The headline assumptions:
 | State store | [apps/api/app/db.py](../apps/api/app/db.py), [apps/api/app/services/state.py](../apps/api/app/services/state.py) | Postgres-backed POC state |
 | Console | [apps/console/src/App.tsx](../apps/console/src/App.tsx), [apps/console/src/pages/CompaniesPage.tsx](../apps/console/src/pages/CompaniesPage.tsx), [apps/console/src/pages/AccountsPage.tsx](../apps/console/src/pages/AccountsPage.tsx) | Full MSP navigation, operations, alerts, DLP scanner, policy editor/simulation, Companies + Licensing, Accounts hierarchy, Quick Deploy |
 | Audit log | [apps/api/app/services/audit.py](../apps/api/app/services/audit.py) | Implemented for mutating routes |
-| LLM gateway | — | Not yet implemented; required before any LLM-driven feature |
+| AI settings / semantic gateway edge | [apps/api/app/services/ai_settings.py](../apps/api/app/services/ai_settings.py), [apps/api/app/services/semantic.py](../apps/api/app/services/semantic.py) | Provider catalogue, encrypted BYO keys, tier gates, quota counters, redaction, semantic DLP integration implemented; prompt audit/vector store remain future hardening |
 | Enrollment / mTLS | [apps/api/app/services/enrollment.py](../apps/api/app/services/enrollment.py), [apps/api/app/services/customers.py](../apps/api/app/services/customers.py) | Token enrollment, tenant-bound installer profiles, per-agent HMAC implemented; Ed25519/mTLS remains future hardening |
 
 ---
@@ -633,11 +636,13 @@ Ordered by risk-reduction, not by feature appeal.
    per-agent HMAC secret, nonce + replay protection, and Rust client support.
 5. **Simulation endpoint.** Done: `/policies/document/simulate` evaluates
    draft policy changes without mutating active state.
-6. **LLM gateway.** Provider abstraction, structured outputs, budget
-   caps, prompt audit. Only then is it safe to wire semantic features.
-7. **Tenant model.** Implemented for customer enrollment, installers, enrolled agents, heartbeats, and alerts. Next: enforce authenticated tenant scoping on every query.
-8. **MSP console foundation.** Done in the console: Companies + Licensing, Accounts hierarchy, full navigation, role matrix, and implementation roadmap panels. Next: persist accounts, subscriptions, entitlements, white-label settings, and impersonation audit events.
-9. **Simulation event store.** Next: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/*` scenario generators.
+6. **AI settings / semantic gateway edge.** Implemented: provider catalogue,
+   encrypted customer keys, license-tier gates, quota counters, redaction, and
+   semantic DLP integration. Next: prompt audit, vector store, richer structured
+   output validation, and broader provider health telemetry.
+7. **Tenant model.** Implemented for customer enrollment, installers, enrolled agents, heartbeats, alerts, accounts, roles, licensing, and policy assignments. Next: replace dev header auth with production sessions and enforce recursive tenant scoping on every query.
+8. **MSP console foundation.** Done in the console/API: Companies + Licensing, Accounts hierarchy, subscriptions/licenses, AI settings, full navigation, role matrix, and implementation roadmap panels. Next: white-label persistence, impersonation start/end/action UX, and server-confirmed action visibility.
+9. **Simulation event store.** Implemented first slice: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/scenario`. Next: more scenarios, console timeline workspace, and DRP/EASM-linked incidents.
 10. **External risk foundation.** Next: monitored assets, DRP findings, EASM asset discovery, finding normalization, and tenant-scoped rollups.
 11. **Agentic correlation.** Next: convert endpoint, DLP, DRP, EASM, and intelligence events into one incident graph with human-approved response actions.
 12. **Native AV / EDR module v0.** Next: YARA + IOC scanner in the agent, anti-ransomware canary-file detector with entropy-delta heuristic, quarantine + isolate response actions through the existing policy + audit path.

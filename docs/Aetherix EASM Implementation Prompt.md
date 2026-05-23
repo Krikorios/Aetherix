@@ -1,3 +1,5 @@
+> Historical implementation prompt, not current product documentation. DRP/EASM remains a roadmap area unless a route, service, test, and console page in the repository prove otherwise.
+
 You are a senior cybersecurity engineer implementing **Digital Risk Protection (DRP) + External Attack Surface Management (EASM)** for Aetherix — turning the platform into a true unified security solution that goes far beyond traditional endpoint protection.
 
 This directly addresses the detailed RFP questionnaire you were provided earlier and gives Aetherix a major competitive advantage over Bitdefender and Kaspersky.

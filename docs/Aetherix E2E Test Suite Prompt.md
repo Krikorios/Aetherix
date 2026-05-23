@@ -1,6 +1,8 @@
+> Historical test-suite prompt, not current product documentation. Use [regression-hardening-report-2026-05-23.md](regression-hardening-report-2026-05-23.md), [development.md](development.md), and the test files under `apps/api/tests`, `apps/console/e2e`, and `apps/extension/test` as the current validation record.
+
 You are a senior QA + test automation engineer building a **full end-to-end test suite** for Aetherix Policy Engine v2 + Semantic DLP + GenAI Guardrails.
 
-The core functionality is now implemented and passing unit/integration tests. We now need a comprehensive, production-grade test suite that covers the entire flow from policy creation to agent enforcement.
+The core functionality is now implemented and passing unit/integration tests. We now need a comprehensive test suite that covers the entire flow from policy creation to agent enforcement.
 
 ### Scope
 

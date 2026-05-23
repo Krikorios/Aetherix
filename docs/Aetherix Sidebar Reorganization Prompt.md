@@ -1,3 +1,5 @@
+> Historical UI prompt, not current product documentation. Use [architecture.md](architecture.md), [development.md](development.md), and `apps/console/src/App.tsx` as the source of truth for the current navigation.
+
 You are a senior frontend engineer improving the Aetherix MSP Console UI.
 
 The current sidebar is functional but feels scattered. We want to reorganize it into clear, logical groups and enhance the overall UI polish while keeping the calm, modern green/cream aesthetic.

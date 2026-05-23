@@ -1,8 +1,9 @@
 # Companies + Licensing
 
-The Companies page is the MSP tenant foundation: licensing posture, seat usage,
-and per-company configuration in one place. It is also the dev sign-in surface
-for the console.
+The Companies page is the MSP tenant foundation: customer lifecycle, licensing
+posture, seat usage, AI provider settings, and per-company deployment controls
+in one place. It is also where the local console exposes the dev sign-in
+surface.
 
 ## Sign-in (dev)
 
@@ -52,7 +53,12 @@ account_roles. `company_licenses` and its children cascade automatically.
 Clicking a row opens the company side-sheet with five tabs:
 
 - **Details** — name, type, industry, status, partner scope.
-- **Auth** — SSO/identity (placeholder; see roadmap).
+- **Auth** — current account and invite state; SSO/identity-provider wiring is planned.
 - **Licensing** — manage seats, renewal, products.
 - **Products** — per-product activation.
+- **AI** — choose disabled/hosted/BYO provider modes, store encrypted API keys, test provider reachability, and respect subscription AI tier gates.
 - **Deploy** — issue new installers and quick-deploy links for the customer.
+
+## Current boundary
+
+Company rows, lifecycle actions, hard delete, licenses, and AI settings are API-backed. White-label branding and several product activation controls remain console foundations until dedicated persistence is added.

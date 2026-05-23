@@ -1,9 +1,11 @@
+> Historical implementation prompt, not current product documentation. Use [policy-engine.md](policy-engine.md), [development.md](development.md), and the API/tests as the source of truth for implemented Policy Engine v2 behavior.
+
 You are a senior full-stack engineer building **Aetherix** — a modern, AI-native, MSP-first next-gen endpoint security platform.
 
 We are now implementing the **Policy Engine v2 + Default Policy v1.01** as the central control plane of the platform. This directly builds on the `Default Policy v1.01.md` document and the Companies + Licensing + Accounts module.
 
 ### Goal
-Create a production-ready **PolicyDocumentV2** system that:
+Create a robust **PolicyDocumentV2** system that:
 - Supports the full module structure from Default Policy v1.01
 - Enables MSP Partners to assign policies to their Companies
 - Enforces simulation gates before destructive actions (`block`, `isolate`, `rollback`)
@@ -112,4 +114,4 @@ Start by showing me:
 - Core API route structure (FastAPI)
 - High-level component breakdown for the Policy Editor page
 
-Use the exact module structure and defaults from **Default Policy v1.01.md**. Make this the production-grade foundation for the entire Aetherix control plane.
+Use the exact module structure and defaults from **Default Policy v1.01.md**. Make this the durable foundation for the Aetherix control plane.

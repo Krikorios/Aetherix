@@ -1,6 +1,6 @@
 # Aetherix Next-Gen Endpoint Security Platform
 
-Complete development proposal from zero to production-ready enterprise solution.
+Development proposal and roadmap from the current POC toward an enterprise-ready platform.
 
 Prepared for the development team on May 16, 2026. Version 1.0. Confidential.
 
@@ -8,14 +8,14 @@ Prepared for the development team on May 16, 2026. Version 1.0. Confidential.
 
 Aetherix is an AI-native endpoint security platform designed for the generative AI era. It combines a lightweight endpoint agent, semantic DLP, AI-generated vulnerability reporting, and agentic incident response into a privacy-first platform that can be deployed in cloud, self-hosted, or air-gapped environments.
 
-The first production path should be deliberately narrow: prove the endpoint agent contract, Presidio-compatible DLP scans, policy distribution, alert workflow, and basic console in an 8-week MVP before expanding into semantic classifiers, vulnerability reporting, partner workflows, and autonomous response.
+The first production path should remain deliberately narrow: harden the endpoint agent contract, Presidio-compatible DLP scans, policy distribution, alert workflow, account/licensing foundations, and MSP console before expanding into vulnerability reporting, partner workflows, and autonomous response.
 
 ### Core Differentiators
 
 - Semantic and contextual DLP that understands intent, data sensitivity, and destination context instead of relying only on regex and keyword rules.
-- Native protection for browser-based generative AI usage, including content pasted into ChatGPT, Claude, Gemini, Copilot, and similar tools.
-- AI-generated vulnerability reports with business risk scoring, prioritized remediation playbooks, and predictive what-if analysis.
-- Agentic incident response that reconstructs timelines, summarizes incidents in plain English, and delivers Slack or Teams actions with human approval gates.
+- Native protection foundation for browser-based generative AI usage, including destination-aware policy for ChatGPT, Claude, Gemini, Copilot, and similar tools.
+- Planned AI-generated vulnerability reports with business risk scoring, prioritized remediation playbooks, and predictive what-if analysis.
+- Planned agentic incident response that reconstructs timelines, summarizes incidents in plain English, and delivers Slack or Teams actions with human approval gates.
 - Privacy-first deployment options with minimal telemetry, strong auditability, open-core options, and full on-prem support.
 - Ultra-lightweight Rust agent foundation targeting less than 1% average CPU overhead and less than 50 MB resident memory on reference hardware.
 - **One platform, three categories, native**: next-gen anti-malware / EDR + SIEM / HIDS + DLP classification & labeling delivered by a single signed agent and a single tenant-scoped control plane — not three integrated vendors.
@@ -27,9 +27,9 @@ Incumbent endpoint security platforms still rely heavily on 2010s-era content ru
 
 | Gap area | Incumbent limitation | Aetherix advantage |
 | --- | --- | --- |
-| DLP for GenAI | Regex and basic rules are often blind to browser AI paste events. | Semantic DLP with real-time browser guardrails and destination-aware policy. |
-| Vulnerability reporting | Raw CVE lists and generic risk scores require manual analyst interpretation. | Executive-ready reports, business context, playbooks, and what-if scenarios. |
-| Incident response | Automated actions exist, but noisy alerts still require high SOC effort. | Agentic investigation, timeline reconstruction, and contextual approval actions. |
+| DLP for GenAI | Regex and basic rules are often blind to browser AI paste events. | Implemented semantic DLP/GenAI policy foundation with local bridge and extension tests; real-site validation remains open. |
+| Vulnerability reporting | Raw CVE lists and generic risk scores require manual analyst interpretation. | Roadmap: executive-ready reports, business context, playbooks, and what-if scenarios. |
+| Incident response | Automated actions exist, but noisy alerts still require high SOC effort. | Roadmap: agentic investigation, timeline reconstruction, and contextual approval actions. |
 | Trust and sovereignty | Some vendors face geopolitical or deployment trust constraints. | Neutral, privacy-first, open-core option with self-hosted and air-gapped paths. |
 | Legacy hardware | Resource usage is acceptable but noticeable on older endpoints. | Rust-first agent architecture with strict performance budgets. |
 | Tooling fragmentation | MSPs assemble AV + SIEM + DLP from three separate vendors, with three audit trails and three license bills. | One native platform with one signed agent, one tenant-scoped control plane, one hash-chained audit log, and one license. |
@@ -43,9 +43,9 @@ from three separate stacks:
 
 | Category | Native module (this repo) | Deterministic baseline shipped first | AI layer on top |
 | --- | --- | --- | --- |
-| Next-gen anti-malware / EDR | `agent/` modules + control-plane analytics | YARA + signatures + behaviour rules + anti-ransomware (canary + entropy + rollback) + IOC matching + process tree + isolate/kill/quarantine | Behavioural baselining, ML scoring of unknown PE/scripts, agentic post-detection investigation |
-| SIEM / HIDS | `agent/` log + FIM + vuln collectors, `apps/api` correlation engine | Log collection (syslog / Event Log / journald / app logs), parsers, FIM, rootkit checks, software inventory + CVE/EPSS/KEV, CIS benchmarks, syscall/eBPF stream, correlation rules, MITRE ATT&CK mapping | Natural-language detection authoring, anomaly detection, alert noise reduction, plain-English incident timelines |
-| DLP — classification + labeling + policy | `apps/api/app/services/dlp.py` + `semantic.py` + agent enforcement modules | Presidio-style PII detection, regex / keyword / EDM, content fingerprinting, sensitivity labels (Public / Internal / Confidential / Restricted, customer-extensible), label propagation, endpoint enforcement (clipboard / file / upload / email / USB / print / screenshot), browser sensor for GenAI destinations | Semantic context classifier, intent-aware destination policy, auto-labeling suggestions, redacted review summaries |
+| Next-gen anti-malware / EDR | `agent/` modules + control-plane analytics | Target: YARA + signatures + behaviour rules + anti-ransomware (canary + entropy + rollback) + IOC matching + process tree + isolate/kill/quarantine | Behavioural baselining, ML scoring of unknown PE/scripts, agentic post-detection investigation |
+| SIEM / HIDS | `agent/` log + FIM + vuln collectors, `apps/api` correlation engine | Target: log collection (syslog / Event Log / journald / app logs), parsers, FIM, rootkit checks, software inventory + CVE/EPSS/KEV, CIS benchmarks, syscall/eBPF stream, correlation rules, MITRE ATT&CK mapping | Natural-language detection authoring, anomaly detection, alert noise reduction, plain-English incident timelines |
+| DLP — classification + labeling + policy | `apps/api/app/services/dlp.py` + `semantic.py` + agent enforcement modules | Current: Presidio-style PII detection, regex/keyword rules, semantic DLP/GenAI policy modules, agent event evaluation, local browser bridge, evidence events. Target: EDM, content fingerprinting, durable labels, broader endpoint controls. | Semantic context classifier, intent-aware destination policy, auto-labeling suggestions, redacted review summaries |
 | Compliance evidence | Compliance Evidence Engine (`apps/api/app/services/compliance.py`) | Control catalogue (ISO 27001:2022 Annex A, SOC 2 TSC 2017, NIST CSF 2.0, GDPR Art. 32, HIPAA Security Rule), event→control tagging at write time, append-only hash-chained audit log, signed JSON auditor export pack; attestation workflow and PDF export follow | AI-drafted control narratives, gap analysis, what-if remediation roadmap |
 
 This is the product, not an integration story. The platform's value to an MSP
@@ -275,14 +275,14 @@ and let MSPs approve once across many similar companies when policy allows it.
 
 ## 5. Repository Starting Point
 
-This repository now contains a Phase 0 skeleton plus the first MSP console foundation slice.
+This repository now contains a Phase 0 POC plus several implemented MSP, policy, DLP, evidence, and local agent/extension slices.
 
-- `apps/api`: FastAPI service with DLP scanning, endpoint heartbeat ingestion, signed policy documents, policy simulation, audit logging, tenant/customer onboarding, enrollment, installer metadata, and Quick Deploy links.
-- `apps/console`: React/Vite MSP console wired to live API endpoints for operations, alerts, active policy, manual DLP scans, policy simulation, Companies + Licensing customer creation, policy-to-installer deployment, and Quick Deploy. It also contains the Accounts hierarchy foundation, permission matrix, and full navigation model.
-- `agent`: Rust endpoint agent skeleton that reads installer profiles, enrolls with tenant-bound bootstrap tokens, fetches assigned policy packages, and emits nonce-bound HMAC heartbeats.
+- `apps/api`: FastAPI service with DLP scanning, semantic analysis, Policy Engine v2, legacy v1 policy documents, policy simulation, compliance export, audit logging, account/role/invite flows, companies, licensing, AI settings, simulation events, enrollment, installer metadata, Quick Deploy links, agent policy fetch, agent policy ack, and DLP evidence ingest.
+- `apps/console`: React/Vite MSP console wired to live API endpoints for operations, alerts, active policy, manual DLP scans, Policy Engine v2, Companies + Licensing, account management, AI settings, installer generation, Quick Deploy, and the Antimalware & Behavior triage foundation. Several sidebar destinations remain placeholders.
+- `agent`: Rust endpoint agent that reads installer profiles, enrolls with tenant-bound bootstrap tokens, fetches assigned legacy packages and v2 effective policies, emits nonce-bound HMAC heartbeats, evaluates DLP events, forwards DLP evidence, and exposes the local browser bridge when enabled.
 - `docs`: Product and implementation planning artifacts.
 
-The current codebase is enough to support a focused proof-of-concept sprint, but it is not yet production security software. The next work should add persisted accounts, subscription entitlements, realistic security event simulation, tenant-scoped query enforcement, packaging artifacts, authentication/RBAC, impersonation audit, and threat modeling before adding production enforcement surface area.
+The current codebase is enough to support internal demos and focused proof-of-concept validation, but it is not yet production security software. The next work should harden production authentication/session handling, recursive tenant isolation, entitlement limits, signed package assembly, real-site extension validation, live AV/EDR collectors, response actions, impersonation audit, and threat modeling before customer enforcement surface area expands.
 
 ## 6. Development Roadmap
 
@@ -395,7 +395,7 @@ Bitdefender has a mature MSP ecosystem with multi-tenant hierarchy, usage-based 
 
 ### Partner Roadmap Adjustments
 
-- Phase 1: Complete partner multi-tenant hierarchy, persisted Accounts, Companies + Licensing, and self-service onboarding portal as a parallel track.
+- Phase 1: Harden partner multi-tenant hierarchy, persisted Accounts, Companies + Licensing, and self-service onboarding portal as a parallel track.
 - Phase 2: Add full white-label theming, Partner Portal v1, subscription entitlement enforcement, open RMM API, and outbound webhooks.
 - Phase 3: Add partner analytics, AI Efficiency Score trends, per-customer profitability, upsell recommendations, MDR handoff tools, SLA tracking, and sovereign deployment package.
 
@@ -476,22 +476,22 @@ Hard rules:
 
 The next development loop should build on the implemented MSP console foundation rather than expanding randomly.
 
-1. Persist the MSP hierarchy: partners, accounts, account-company assignments, roles, role permissions, subscriptions, subscription entitlements, partner branding, and impersonation sessions.
-2. Add tenant-scoped authentication/RBAC middleware so all reads and writes are explicitly partner/customer bounded.
-3. Replace console-only Accounts and Licensing demo state with API-backed list/create/update flows and audit records.
-4. Add security event simulation tables and APIs: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/*` routes.
-5. Add external risk foundations: `monitored_assets`, `asset_change_events`, `drp_findings`, `easm_assets`, `easm_findings`, `intelligence_items`, and `takedown_requests`.
-6. Implement scenario generators for GenAI DLP paste, phishing click, USB copy, process anomaly, ransomware behavior, credential leak, typosquatting, exposed port, expired certificate, and critical vulnerability.
-7. Wire the console to a customer-scoped simulation workspace showing endpoint, DLP, DRP, EASM, and intelligence events in one incident timeline with recommended response.
-8. Replace installer metadata-only builds with real package assembly stubs: MSI/EXE, PKG, DEB, and RPM output directories plus signing-status tracking.
+1. Replace dev header authentication with production session/token handling and server-confirmed permission checks.
+2. Enforce recursive tenant-scoped query filters for Platform Owner, MSP Partner, and Company roles across every route.
+3. Finish entitlement limits and feature visibility for Core versus add-on modules.
+4. Replace installer metadata-only builds with real package assembly stubs: MSI/EXE, PKG, DEB, and RPM output directories plus signing-status tracking.
+5. Complete real-site browser extension validation on ChatGPT, Claude, Gemini, and Copilot with paste/upload/copy fixtures.
+6. Add external risk foundations: `monitored_assets`, `asset_change_events`, `drp_findings`, `easm_assets`, `easm_findings`, `intelligence_items`, and `takedown_requests`.
+7. Expand scenario generators beyond current deterministic simulation for GenAI DLP paste, phishing click, USB copy, process anomaly, ransomware behavior, credential leak, typosquatting, exposed port, expired certificate, and critical vulnerability.
+8. Wire the console to a customer-scoped simulation workspace showing endpoint, DLP, DRP, EASM, and intelligence events in one incident timeline with recommended response.
 9. Add AI risk report generation as structured deterministic templates first, then LLM gateway integration after provider abstraction, budget caps, and prompt audit exist.
-10. Build Policy Engine v2 from [docs/policy-engine.md](policy-engine.md): subscription entitlements, modular policy documents, inheritance, validation, templates, dynamic console sections, and asset-based DRP/EASM limits.
+10. Extend Policy Engine v2 with more templates, richer inheritance UX, policy ack observability, and broader module support beyond Semantic DLP/GenAI Guardrails.
 
 Acceptance criteria for the next module:
 
 - A developer can create a customer, generate a Quick Deploy link, enroll an endpoint, trigger at least three simulated incidents, and view resulting alerts from the console.
-- Platform Owner, MSP Partner, and Company user scopes can be represented in persisted account records and enforced by API tests.
-- Licensing entitlements can distinguish Core features from add-ons before a policy or console section is enabled.
+- Platform Owner, MSP Partner, and Company user scopes are enforced by API tests on every customer-scoped route touched by the new work.
+- Licensing entitlements distinguish Core features from add-ons before a policy or console section is enabled.
 - Simulation routes create durable events and alerts under the correct customer.
 - Alert records include category, confidence, recommended action, policy package id, related external-risk finding ids, and a concise AI-ready summary field.
 - Tests cover each scenario route and prove cross-customer data is not returned by customer-scoped APIs.

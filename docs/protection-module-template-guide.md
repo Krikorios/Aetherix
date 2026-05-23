@@ -1,12 +1,12 @@
 # Protection Module Page Template Guide
 
-This document establishes the architecture, component pattern, and standard workflows for designing and delivering high-quality, consistent security compliance and threat mitigation modules under the **Risk** and **Protection** workspaces of the Aetherix Console.
+This document establishes the architecture, component pattern, and standard workflows for designing consistent security compliance and threat mitigation modules under the **Risk** and **Protection** workspaces of the Aetherix Console.
 
-Using this template, developers can reliably spin up complete protection screens with multi-panel correlation, simulation dry-runs, and staging flows in **under 2 hours**.
+Use this template for console workflow foundations. A page built from it is not a delivered detector until it is wired to real backend routes, tenant-scoped data, policy resolution, and evidence/audit writes.
 
 ---
 
-## 📂 Folder & File Structure
+## Folder and File Structure
 
 The reusable elements are structured in the following directories:
 
@@ -29,7 +29,7 @@ apps/console/src/
 
 ---
 
-## 🧬 Core Types & Interfaces
+## Core Types and Interfaces
 
 The standard data elements are defined in `apps/console/src/components/protection/types.ts`. All protection pages should map their backend API responses to these schemas:
 
@@ -70,7 +70,7 @@ export interface StagedAction {
 
 ---
 
-## 🌳 Interactive 3-Panel Layout Tree
+## Interactive 3-Panel Layout Tree
 
 ```mermaid
 graph TD
@@ -96,9 +96,9 @@ graph TD
 
 ---
 
-## 🚀 Building a New Module in < 2 Hours: Steps
+## Building a New Module
 
-Follow this simplified recipe to build any new protection module (e.g., `DeviceControl.tsx` or `WebProtectionPage.tsx`):
+Follow this recipe to build any new protection module (for example, `DeviceControl.tsx` or `WebProtectionPage.tsx`):
 
 ### Step 1: Copy the Template
 Duplicate the scaffolding file `apps/console/src/pages/ProtectionModuleTemplate.tsx` into your target page file, say `apps/console/src/pages/WebProtectionPage.tsx`.
@@ -137,7 +137,7 @@ If your module has specialized context (like firewall flows, domain block statis
 
 ---
 
-## ✅ Best Practices & Guidelines
+## Best Practices and Guidelines
 
 - **Simulate Before Staging**: Force simulations for any action listed with `destructive: true`. Disable the "Stage" button until a successful simulation has been generated.
 - **Calm, Green/Cream UI Palette**: Keep container designs consistent with shadows, borders using `var(--line)`, and backgrounds using `var(--panel)` or `rgba(11, 107, 87, 0.02)`.

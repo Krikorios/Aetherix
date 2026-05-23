@@ -1,8 +1,9 @@
 # Accounts
 
-The Accounts page is the identity control plane for the platform: role-scoped
-access for the platform operator, MSP partners, and company users, with audited
-impersonation.
+The Accounts page is the local identity and authorization foundation for the
+platform: persisted accounts, role-scoped permissions, company assignments,
+invites, password setup, and delete workflows. It is API-backed, but the console
+still uses the local dev account header instead of production sessions.
 
 ## Role hierarchy
 
@@ -41,8 +42,25 @@ the database). Delivery is selected at create time:
 - **Link** — the URL is returned for manual delivery. Recipients land on
   `#/invite/<token>` and set their password to activate.
 
+## API-backed flows
+
+- `GET /accounts`, `GET /accounts/{id}`, and `POST /accounts` drive the list,
+  detail, and creation flows.
+- `POST /accounts/{id}/roles` and `DELETE /accounts/{id}/roles/{assignment_id}`
+  manage role assignments.
+- `POST /accounts/bulk-delete` deletes multiple selected accounts and reports
+  per-row failures.
+- `POST /auth/login`, `POST /auth/totp/verify`, and `POST /auth/accept-invite`
+  cover the current password/TOTP/invite setup path.
+
 ## Hard delete
 
 `DELETE /accounts/{id}` permanently removes an account, its role assignments,
 its login challenges, and any impersonation history. The signed-in operator
 cannot delete their own account.
+
+## Current boundary
+
+Authorization data is persisted and tested, but production authentication,
+session management, recursive MSP hierarchy filtering, and full impersonation
+start/end/action UX remain hardening work.

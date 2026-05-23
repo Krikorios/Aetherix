@@ -81,6 +81,8 @@ For targeted backend work, prefer the smallest relevant suite first, then the fu
 ```bash
 cd apps/api && .venv/bin/pytest tests/test_customer_deployment.py -q
 cd apps/api && .venv/bin/pytest tests/test_enrollment.py -q
+cd apps/api && .venv/bin/pytest tests/test_policy_v2.py tests/test_policy_simulation.py -q
+cd apps/api && .venv/bin/pytest tests/test_companies_licensing.py tests/test_ai_settings.py -q
 ```
 
 ## Implemented API Surface
@@ -106,6 +108,9 @@ POST /enrollment/tokens
 POST /agent/enroll
 POST /agent/heartbeat
 GET  /agent/{agent_id}/policy
+GET  /agent/policy?endpoint_id=...&token=...
+POST /agent/policy/ack?endpoint_id=...&token=...
+POST /agent/dlp-evidence?endpoint_id=...&token=...
 GET  /endpoints
 ```
 
@@ -122,6 +127,63 @@ GET  /alerts
 PATCH /alerts/{alert_id}/acknowledge
 GET  /audit
 GET  /audit/verify
+GET  /compliance/export
+POST /simulate/scenario
+GET  /customers/{customer_id}/telemetry
+GET  /customers/{customer_id}/security-alerts
+GET  /customers/{customer_id}/incidents
+```
+
+Policy Engine v2:
+
+```http
+POST /policies
+GET  /policies
+GET  /policies/{policy_id}
+PUT  /policies/{policy_id}
+DELETE /policies/{policy_id}
+GET  /policies/{policy_id}/versions
+GET  /policies/{policy_id}/versions/{version}
+POST /policies/{policy_id}/simulate
+POST /policies/{policy_id}/promote
+POST /policies/{policy_id}/rollback
+POST /policies/assign
+GET  /policies/effective
+```
+
+Accounts, companies, licensing, and AI settings:
+
+```http
+GET  /me
+POST /auth/login
+POST /auth/totp/verify
+POST /auth/accept-invite
+GET  /roles
+GET  /accounts
+POST /accounts
+POST /accounts/bulk-delete
+GET  /accounts/{account_id}
+DELETE /accounts/{account_id}
+POST /accounts/{account_id}/roles
+DELETE /accounts/{account_id}/roles/{assignment_id}
+POST /accounts/{account_id}/password
+GET  /companies
+GET  /companies/summary
+POST /companies/bulk-status
+POST /companies/bulk-delete
+GET  /companies/{customer_id}
+PATCH /companies/{customer_id}/status
+DELETE /companies/{customer_id}
+GET  /partners
+GET  /subscriptions
+POST /subscriptions
+GET  /companies/{customer_id}/license
+PUT  /companies/{customer_id}/license
+GET  /ai/providers
+GET  /companies/{customer_id}/ai
+PUT  /companies/{customer_id}/ai
+DELETE /companies/{customer_id}/ai
+POST /companies/{customer_id}/ai/test
 ```
 
 ## Quick Deploy Smoke Test
@@ -189,6 +251,12 @@ Core tables are created in `apps/api/app/db.py`:
 - `acknowledged_alerts`
 - `policy_documents`
 - `audit_log`
+- `accounts`, `account_roles`, `roles`, `role_permissions`, `login_challenges`, `impersonation_sessions`
+- `subscriptions`, `company_licenses`, `license_products`, `license_usage_daily`
+- `policy_documents_v2`, `policy_versions`, `policy_assignments_v2`, `policy_simulations`, `policy_promotions`, `evidence_events`
+- `telemetry_events`, `security_alerts`, `incident_cases`
+- `compliance_controls`
+- `ai_providers`, `customer_ai_settings`, `customer_ai_usage_daily`
 
 Do not add in-memory state for new features. Add Postgres tables and tests that truncate or isolate them in `apps/api/tests/conftest.py`.
 
@@ -198,45 +266,43 @@ The React console now starts from the MSP management surface instead of a narrow
 
 Implemented pages and flows:
 
-- Companies + Licensing: creates companies through `/customers/quick-create`, displays Core endpoint licensing, add-on packaging, AI Efficiency Score, white-label entry point, policy assignment, and installer generation state.
-- Accounts: models the Aetherix hierarchy with Platform Owner, MSP Partner, Company Administrator, Company Technician, and Company Viewer roles; includes list filters, bulk selection/delete, add/edit modal, module permissions, 2FA state, password policy, and a permission matrix.
+- Companies + Licensing: creates companies through `/customers/quick-create`, displays paged `/companies/summary`, edits licenses, configures/test AI providers, runs hard delete and soft lifecycle bulk actions, displays Core endpoint licensing, add-on packaging, AI Efficiency Score, white-label entry point, policy assignment, and installer generation state.
+- Accounts: persists Platform Owner, MSP Partner, Company Administrator, Company Technician, and Company Viewer roles; includes API-backed list filters, bulk hard delete, add/edit modal, invitation delivery, module permissions, 2FA state, password policy, and a permission matrix.
+- Policy Engine v2: creates, lists, simulates, promotes, assigns, resolves, and previews entitlement-aware modular policies.
+- Antimalware & Behavior: presents a three-panel triage UI over sample detections and effective policy state. It is a console workflow foundation, not a live AV/EDR detector.
 - Full navigation: Monitoring, Incidents, Threats Xplorer, Network, Risk Management, Policies, Reports, Quarantine, Companies, Accounts, Sandbox Analyzer, Email Security, Mobile Security, Data Insights, Integrations, and Configuration.
 
 Current implementation boundary:
 
-- Company creation, policy package reads, and Quick Deploy are backed by the API.
-- Accounts, subscription add-ons, AI Efficiency Score, white-label controls, and default landing-page recommendations are console foundations until the backend account, subscription, entitlement, and impersonation-audit services exist.
-- Do not rely on the console-only account data for authorization. Backend RBAC and tenant scoping remain required before production or design-partner use.
+- Company creation, accounts, roles, subscriptions, company licenses, AI settings, Policy Engine v2, Quick Deploy, and compliance export are backed by the API.
+- The console still uses `X-Aetherix-Account` dev authentication. Do not treat this as production auth or expose it outside local/test environments.
+- AI Efficiency Score, white-label controls, several sidebar destinations, and default landing-page recommendations are still console foundations or placeholders until their dedicated APIs exist.
+- Antimalware & Behavior currently demonstrates triage/staging UX and policy context; it does not yet collect process trees, quarantine files, kill processes, isolate endpoints, or run malware scans.
 
 Recommended backend order for this surface:
 
-1. Add `accounts`, `account_company_assignments`, `roles`, `role_permissions`, and `impersonation_sessions` tables.
-2. Add `subscriptions`, `subscription_entitlements`, and `partner_branding` tables.
-3. Add authenticated request context with `actor_id`, `role`, `partner_id`, optional `customer_id`, and optional impersonation session id.
-4. Enforce partner/customer filters in every list/detail route and add tests for cross-tenant isolation.
-5. Replace console demo account/add-on state with API reads and writes.
+1. Replace dev header authentication with a production session/token boundary carrying `actor_id`, `role`, `partner_id`, optional `customer_id`, and optional impersonation session id.
+2. Add recursive partner/company filters and cross-tenant denial tests to every list/detail route.
+3. Finish subscription entitlement limits for module-specific policy actions and sidebar visibility.
+4. Add `partner_branding` persistence and replace white-label placeholders with API reads/writes.
+5. Add production impersonation start/end/action audit UX.
 
-## Next Module: Security Event Simulation
+## Security Event Simulation
 
-Build the next slice in this order:
-
-1. Add tables: `telemetry_events`, `security_alerts`, `incident_cases`, and optional `risk_reports`.
-2. Add schemas for event payloads, alerts, incident timeline entries, and simulation requests.
-3. Add service module `apps/api/app/services/simulation.py`.
-4. Add routes:
+The current simulation path is `POST /simulate/scenario`. It writes telemetry,
+security alerts, and incident cases for deterministic scenarios, and customer
+scoped reads are exposed through:
 
 ```http
-POST /simulate/dlp/genai-paste
-POST /simulate/phishing-click
-POST /simulate/usb-copy
-POST /simulate/process-anomaly
-POST /simulate/ransomware-behavior
-POST /simulate/vulnerability-scan
+GET /customers/{customer_id}/telemetry
+GET /customers/{customer_id}/security-alerts
+GET /customers/{customer_id}/incidents
 ```
 
-5. Each route must write telemetry, create at least one alert, audit the action, and return a deterministic response.
-6. Add console customer simulation view with scenario buttons and customer-scoped alert/event output.
-7. Add tests proving events and alerts are created under the correct customer and cannot bleed across customers.
+Keep future scenario endpoints additive unless there is a strong reason to split
+the route family. Each scenario must continue to write tenant-scoped telemetry,
+create at least one alert, audit the action, and avoid raw sensitive content in
+stored payloads.
 
 Minimum alert fields for the simulation module:
 
@@ -247,16 +313,25 @@ confidence, status, recommended_action, ai_summary, payload, created_at
 
 Keep LLM calls out of the first simulation module. Use deterministic templates that are shaped like future AI output, then replace the generator after the LLM gateway exists.
 
-## Parallel Design Track: Policy Engine v2
+## Policy Engine v2
 
-Policy Engine v2 is specified in [docs/policy-engine.md](policy-engine.md). Do not implement it as ad hoc fields on the current v1 DLP document. The required development order is:
+Policy Engine v2 is implemented as raw Postgres-backed services in
+`apps/api/app/services/policy_v2.py` and
+`apps/api/app/services/policy_v2_runtime.py`. Keep it separate from the legacy
+v1 DLP policy document routes under `/policies/document*` and `/policies/active`.
 
-1. Add `subscriptions` and `subscription_entitlements` tables.
-2. Add versioned `PolicyDocumentV2` schemas with module sections.
-3. Add entitlement validation at create, update, assignment, promotion, and effective policy fetch time.
-4. Add inheritance resolution for MSP default, customer, group, and endpoint layers.
-5. Update the console policy editor to show active, available, locked, inherited, and overridden sections.
-6. Add the five default SMB templates from the policy engine design.
+Current responsibilities:
+
+1. Versioned modular policy documents with draft/promoted lifecycle.
+2. Deterministic validation and simulation with evidence tags.
+3. Promotion gates for destructive actions.
+4. Customer/group/endpoint assignment.
+5. Effective policy resolution for console and enrolled agents.
+6. Agent DLP evidence emission into `evidence_events`.
+
+Next hardening items: richer inheritance visualization, more default templates,
+full subscription limit enforcement, policy ack observability, and broader module
+coverage beyond Semantic DLP/GenAI Guardrails.
 
 Policy Engine v2 can proceed in parallel with security event simulation as long as it preserves the existing `/policies/document` and `/policy-packages` POC flows until replacement routes are tested.
 

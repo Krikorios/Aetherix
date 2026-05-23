@@ -1,19 +1,21 @@
 # Aetherix Policy Engine
 
-Status: target architecture for Policy Engine v2, May 2026.
+Status: implemented POC architecture plus target roadmap for Policy Engine v2, May 2026.
 
-This document defines the subscription-aware, AI-enhanced policy engine Aetherix should build on top of the current signed policy document and policy package POC. The goal is a calmer, clearer, more intelligent policy experience for MSPs managing many SMB customers.
+This document defines the subscription-aware, AI-enhanced policy engine Aetherix is building on top of the legacy signed policy document and policy package POC. The current repository implements the v2 foundation; later sections still describe the broader target module set.
 
 The concrete Default Policy v1.01 planning baseline lives in [default-policy-v1.01.md](default-policy-v1.01.md). It maps the GravityZone-style endpoint policy modules into Aetherix-native policy sections and adds Aetherix-specific controls such as GenAI DLP, Compliance Evidence Engine tagging, signed simulation, DRP/EASM, and AI-assisted investigation.
 
-The current implementation already has:
+The current implementation has:
 
-- Versioned signed policy documents.
+- Legacy v1 signed DLP policy document routes under `/policies/document*` and `/policies/active`.
 - Policy packages assigned to customers during Quick Deploy.
-- Policy simulation for deterministic DLP samples.
+- Policy Engine v2 CRUD/list/detail/update/delete under `/policies`.
+- Versioned policy records, simulation records, promotion gates, rollback, assignments, effective policy resolution, agent fetch, policy ack, and DLP evidence emission.
+- Subscription and company-license records used for entitlement checks.
 - Tenant-aware enrollment and installer profiles.
 
-Policy Engine v2 extends that into a modular policy system with subscription enforcement, inheritance, rich endpoint controls, semantic DLP, agentic response, AI reports, and white-label customization.
+Policy Engine v2 extends that into a modular policy system with subscription enforcement, inheritance, semantic DLP, GenAI Guardrails, and evidence-by-construction. Rich endpoint controls, agentic response, AI reports, and white-label customization remain target modules unless a later section explicitly calls out implemented behavior.
 
 ## 1. Design Goals
 

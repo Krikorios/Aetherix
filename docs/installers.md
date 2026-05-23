@@ -1,8 +1,8 @@
 # Installers
 
 The Installers page is the MSP onboarding surface: create an SMB tenant, assign
-a protection policy, and generate signed installers and quick-deploy links from
-one workspace. Most deployments complete in under two minutes.
+a protection policy, and generate installer build records plus quick-deploy
+links from one workspace.
 
 ## Quick deploy flow
 
@@ -23,7 +23,7 @@ generate** saves the deployment first, then calls both
 `POST /customers/{id}/installers` and `POST /customers/{id}/quick-deploy` for
 the selected platforms so an MSP can refresh artifacts for an existing tenant.
 
-## Artifacts
+## Artifacts and current boundary
 
 For every successful run, the result panel exposes:
 
@@ -31,6 +31,10 @@ For every successful run, the result panel exposes:
   appropriate installer for their platform. Each link has an explicit expiry.
 - **Direct installers** — the underlying artifacts with their signing status
   and SHA-256, plus a one-time enrollment token for manual installs.
+
+The current implementation records installer metadata, install profiles,
+artifact URLs, signing status, SHA-256 values, and one-time enrollment tokens.
+It does not yet assemble signed MSI/EXE, PKG, DEB, or RPM binaries.
 
 ## Permissions
 
