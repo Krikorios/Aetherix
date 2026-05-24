@@ -433,15 +433,15 @@ fn forward_evidence(state: &BridgeState, payload: Value) -> (StatusCode, Value) 
     };
 
     let endpoint = format!(
-        "{}/agent/dlp-evidence?endpoint_id={}&token={}",
+        "{}/agent/dlp-evidence?endpoint_id={}",
         state.api_url.trim_end_matches('/'),
         state.agent_id,
-        state.agent_secret
     );
 
     let send_result = state
         .client
         .post(&endpoint)
+        .header("Authorization", format!("Bearer {}", state.agent_secret))
         .timeout(FORWARD_TIMEOUT)
         .json(&envelope)
         .send();
@@ -632,7 +632,8 @@ mod tests {
         }
     }
 
-    /// In-process mock backend that records hits and returns 200.
+    /// In-process mock backend that records hits, validates the Authorization
+    /// header, and returns 200 (or 401 when the header is missing).
     fn start_mock_backend() -> (String, Arc<AtomicUsize>) {
         let server = Server::http("127.0.0.1:0").expect("mock backend bind");
         let addr = server.server_addr().to_ip().unwrap();
@@ -641,6 +642,15 @@ mod tests {
         thread::spawn(move || {
             for req in server.incoming_requests() {
                 counter.fetch_add(1, Ordering::SeqCst);
+                let has_bearer = req
+                    .headers()
+                    .iter()
+                    .any(|h| h.field.as_str().to_ascii_lowercase() == "authorization"
+                        && h.value.as_str().starts_with("Bearer "));
+                if !has_bearer {
+                    let _ = req.respond(Response::from_string("unauthorized").with_status_code(StatusCode(401)));
+                    continue;
+                }
                 let _ = req.respond(Response::from_string("{\"id\":\"evt\"}").with_status_code(StatusCode(200)));
             }
         });

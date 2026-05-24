@@ -103,13 +103,13 @@ pub struct RuntimePolicy {
 
 pub fn fetch_effective_policy(client: &Client, api_url: &str, endpoint_id: &str, token: &str) -> Result<RuntimePolicy> {
     let endpoint = format!(
-        "{}/agent/policy?endpoint_id={}&token={}",
+        "{}/agent/policy?endpoint_id={}",
         api_url.trim_end_matches('/'),
         endpoint_id,
-        token
     );
     let response = client
         .get(endpoint)
+        .header("Authorization", format!("Bearer {token}"))
         .send()
         .context("unable to fetch effective policy")?;
     if !response.status().is_success() {

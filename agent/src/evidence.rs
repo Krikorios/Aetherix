@@ -29,10 +29,9 @@ pub fn emit_dlp_evidence(
     decision: &EnforcementDecision,
 ) -> Result<()> {
     let endpoint = format!(
-        "{}/agent/dlp-evidence?endpoint_id={}&token={}",
+        "{}/agent/dlp-evidence?endpoint_id={}",
         api_url.trim_end_matches('/'),
         endpoint_id,
-        token
     );
 
     let payload = AgentDlpEvidenceRequest {
@@ -50,6 +49,7 @@ pub fn emit_dlp_evidence(
 
     let response = client
         .post(endpoint)
+        .header("Authorization", format!("Bearer {token}"))
         .json(&payload)
         .send()
         .context("failed to post DLP evidence")?;
