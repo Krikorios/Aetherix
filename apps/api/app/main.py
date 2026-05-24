@@ -91,13 +91,25 @@ def _build_invite_url(request: Request, token: str) -> str:
     return f"{base}/#/invite/{token}"
 
 
-def _extract_bearer_token(authorization: str) -> str:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
-    token = authorization[len("Bearer "):]
-    if not token or len(token) < 8:
-        raise HTTPException(status_code=401, detail="invalid token")
-    return token
+def _resolve_agent_token(
+    authorization: str | None = None,
+    token_query: str | None = None,
+) -> str:
+    """Resolve the agent bearer token from either the Authorization header
+    (preferred) or the ``token`` query parameter (deprecated fallback).
+
+    The query-parameter form is maintained for a transition period so that
+    older agents do not break immediately. Only agents newer than the auth
+    header migration use ``Bearer``.
+    """
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[len("Bearer "):]
+        if token and len(token) >= 8:
+            return token
+        raise HTTPException(status_code=401, detail="invalid bearer token")
+    if token_query and len(token_query) >= 8:
+        return token_query
+    raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
 
 
 @app.get("/health")
@@ -1682,11 +1694,12 @@ def rollback_policy_v2_route(
 @app.get("/agent/policy", response_model=AgentPolicyResponse)
 def agent_effective_policy_route(
     endpoint_id: str = Query(..., min_length=1),
-    authorization: str = Header(..., alias="Authorization"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    token: str | None = Query(default=None, min_length=8),
 ) -> AgentPolicyResponse:
-    token = _extract_bearer_token(authorization)
+    resolved = _resolve_agent_token(authorization, token)
     try:
-        return policy_v2_service.effective_policy_for_agent(endpoint_id=endpoint_id, token=token)
+        return policy_v2_service.effective_policy_for_agent(endpoint_id=endpoint_id, token=resolved)
     except policy_v2_service.PolicyV2Error as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
 
@@ -1695,13 +1708,14 @@ def agent_effective_policy_route(
 def agent_dlp_evidence_route(
     payload: AgentDlpEvidenceIngest,
     endpoint_id: str = Query(..., min_length=1),
-    authorization: str = Header(..., alias="Authorization"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    token: str | None = Query(default=None, min_length=8),
 ) -> EvidenceEvent:
-    token = _extract_bearer_token(authorization)
+    resolved = _resolve_agent_token(authorization, token)
     try:
         return policy_v2_service.ingest_agent_dlp_evidence(
             endpoint_id=endpoint_id,
-            token=token,
+            token=resolved,
             payload=payload,
         )
     except policy_v2_service.PolicyV2Error as error:
@@ -1712,11 +1726,12 @@ def agent_dlp_evidence_route(
 def agent_policy_ack_route(
     payload: AgentPolicyAckRequest,
     endpoint_id: str = Query(..., min_length=1),
-    authorization: str = Header(..., alias="Authorization"),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    token: str | None = Query(default=None, min_length=8),
 ) -> AgentPolicyAck:
-    token = _extract_bearer_token(authorization)
+    resolved = _resolve_agent_token(authorization, token)
     try:
-        return policy_v2_service.agent_acknowledge_policy(endpoint_id, token, payload)
+        return policy_v2_service.agent_acknowledge_policy(endpoint_id, resolved, payload)
     except policy_v2_service.PolicyV2Error as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
 
