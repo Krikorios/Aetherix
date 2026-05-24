@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { ScanText } from "lucide-react";
+import { ExternalLink, ScanText } from "lucide-react";
 import { apiGet, apiPost } from "../api";
 import type { Alert, DlpScanResponse, Endpoint } from "../api";
 import { ErrorBanner, LoadingRow, EmptyState, RiskBadge, ActionBadge, PageHeader } from "../components";
@@ -168,7 +168,15 @@ export function DlpScanPage() {
           {scanHistory.slice(0, 20).map((alert) => (
             <article className="endpoint" key={alert.id} style={{ gridTemplateColumns: "1fr auto auto" }}>
               <div>
-                <strong>{alert.title}</strong>
+                <strong
+                  className="linkLike"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "alerts" } }))}
+                  onKeyDown={(e) => { if (e.key === "Enter") window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "alerts" } })); }}
+                >
+                  {alert.title} <ExternalLink size={12} />
+                </strong>
                 <p>
                   {alert.source} · {timeAgo(alert.created_at)}
                 </p>

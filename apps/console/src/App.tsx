@@ -45,6 +45,8 @@ import { CompaniesPage } from "./pages/CompaniesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SetupAccountPage } from "./pages/SetupAccountPage";
 import { CompliancePage } from "./pages/CompliancePage";
+import { DRPPage } from "./pages/DrpPage";
+import { EASMPage } from "./pages/EasmPage";
 import {
   apiGet,
   getAccountId,
@@ -53,12 +55,29 @@ import {
   type MeResponse,
   type PermissionLevel,
 } from "./api";
+import { ExecutiveSummaryPage } from "./pages/ExecutiveSummaryPage";
+import { EndpointHealthPage } from "./pages/EndpointHealthPage";
+import { BlocklistPage } from "./pages/BlocklistPage";
+import { RiskManagementPage } from "./pages/RiskManagementPage";
+import { QuarantinePage } from "./pages/QuarantinePage";
+import { WebProtectionPage } from "./pages/WebProtectionPage";
+import { DeviceControlPage } from "./pages/DeviceControlPage";
+import { ReportsPage } from "./pages/ReportsPage";
+import { PolicyAssignmentsPage } from "./pages/PolicyAssignmentsPage";
+import { ConfigurationPage } from "./pages/ConfigurationPage";
+import { AgenticAiPage } from "./pages/AgenticAiPage";
+import { SearchPage } from "./pages/SearchPage";
+import { DataInsightsPage } from "./pages/DataInsightsPage";
+import { IntegrationsPage } from "./pages/IntegrationsPage";
+import { SandboxPage } from "./pages/SandboxPage";
+import { EmailSecurityPage } from "./pages/EmailSecurityPage";
+import { MobileSecurityPage } from "./pages/MobileSecurityPage";
 
 const DEFAULT_BRANDING: Branding = {
   product_name: "Aetherix",
   tagline: "MSP Console",
-  primary_color: "#0b6b57",
-  accent_color: "#0b6b57",
+  primary_color: "#0f5a6e",
+  accent_color: "#0f5a6e",
   logo_url: null,
   support_email: null,
   support_url: null,
@@ -130,6 +149,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "PROTECTION",
     items: [
       { id: "policies", label: "Policies", icon: <ShieldCheck size={18} />, requires: { resource: "policies", level: "view" } },
+      { id: "policyAssignments", label: "Policy Assignments", icon: <FileCheck size={18} />, requires: { resource: "policies", level: "edit" } },
       { id: "antimalware", label: "Antimalware & Behavior", icon: <Bug size={18} />, requires: { resource: "policies", level: "view" } },
       { id: "webProtection", label: "Web & Email Protection", icon: <Globe size={18} />, requires: { resource: "policies", level: "view" } },
       { id: "deviceControl", label: "Device Control", icon: <Usb size={18} />, requires: { resource: "policies", level: "view" } },
@@ -152,7 +172,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "companies", label: "Companies", icon: <Building2 size={18} />, requires: { resource: "companies", level: "view" } },
       { id: "accounts", label: "Accounts", icon: <Users size={18} />, requires: { resource: "accounts", level: "view" } },
       { id: "installers", label: "Installers", icon: <Package size={18} />, requires: { resource: "companies", level: "edit" } },
-      { id: "policyAssignments", label: "Policy Assignments", icon: <FileCheck size={18} />, requires: { resource: "policies", level: "edit" } },
     ],
   },
   {
@@ -390,26 +409,41 @@ export function App() {
       </aside>
 
       <section className={`workspace ${page === "policies" || page === "installers" ? "policyWorkspace" : ""}`}>
-        {!pageAllowed ? (
-          <ForbiddenPage />
-        ) : (
-          <>
-            {page === "dashboard" && <DashboardPage />}
-            {page === "alerts" && <AlertsPage />}
-            {page === "search" && <AlertsPage />}
-            {page === "threatsXplorer" && <DlpScanPage />}
-            {page === "policies" && <PolicyPage />}
-            {page === "antimalware" && <AntimalwareBehaviorPage me={me} />}
-            {page === "customRules" && <CustomDetectionRulesPage me={me} />}
-            {page === "installers" && <EnrollmentPage />}
-            {page === "companies" && <CompaniesPage />}
-            {page === "accounts" && <AccountsPage />}
-            {page === "compliance" && <CompliancePage />}
-            {!["dashboard", "alerts", "search", "threatsXplorer", "policies", "antimalware", "customRules", "installers", "companies", "accounts", "compliance"].includes(page) ? (
-              <PlaceholderPage page={page} />
-            ) : null}
-          </>
-        )}
+     {!pageAllowed ? (
+       <ForbiddenPage />
+     ) : (
+       <>
+         {page === "dashboard" && <DashboardPage />}
+         {page === "alerts" && <AlertsPage />}
+          {page === "search" && <SearchPage me={me} />}
+         {page === "threatsXplorer" && <DlpScanPage />}
+         {page === "policies" && <PolicyPage />}
+         {page === "antimalware" && <AntimalwareBehaviorPage me={me} />}
+         {page === "customRules" && <CustomDetectionRulesPage me={me} />}
+         {page === "installers" && <EnrollmentPage />}
+         {page === "companies" && <CompaniesPage />}
+         {page === "accounts" && <AccountsPage />}
+         {page === "compliance" && <CompliancePage />}
+         {page === "digitalRisk" && <DRPPage me={me} />}
+         {page === "easm" && <EASMPage me={me} />}
+         {page === "executiveSummary" && <ExecutiveSummaryPage me={me} />}
+         {page === "healthAttackSurface" && <EndpointHealthPage me={me} />}
+         {page === "blocklist" && <BlocklistPage me={me} />}
+         {page === "riskManagement" && <RiskManagementPage me={me} />}
+         {page === "quarantine" && <QuarantinePage me={me} />}
+         {page === "webProtection" && <WebProtectionPage me={me} />}
+         {page === "deviceControl" && <DeviceControlPage me={me} />}
+         {page === "reports" && <ReportsPage me={me} />}
+         {page === "policyAssignments" && <PolicyAssignmentsPage me={me} />}
+         {page === "configuration" && <ConfigurationPage me={me} />}
+         {page === "agenticAi" && <AgenticAiPage me={me} />}
+         {page === "dataInsights" && <DataInsightsPage me={me} />}
+         {page === "integrations" && <IntegrationsPage me={me} />}
+         {page === "sandbox" && <SandboxPage me={me} />}
+         {page === "emailSecurity" && <EmailSecurityPage me={me} />}
+         {page === "mobileSecurity" && <MobileSecurityPage me={me} />}
+       </>
+     )}
       </section>
     </main>
   );
@@ -462,7 +496,7 @@ type PlaceholderMeta = {
   depends: string[];
 };
 
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance">, PlaceholderMeta> = {
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm">, PlaceholderMeta> = {
   executiveSummary: {
     title: "Executive Summary",
     eyebrow: "Partner reporting",
@@ -478,14 +512,6 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "th
     summary:
       "Per-company endpoint health view with policy drift, agent version skew, and action queues. Aggregates the existing /endpoints heartbeat data once company-scoped queries land.",
     depends: ["tenant-scoped /endpoints", "policy drift signal", "action queue API"],
-  },
-  easm: {
-    title: "External Attack Surface Management",
-    eyebrow: "External exposure",
-    status: "planned",
-    summary:
-      "External attack surface discovery (DNS, CT logs, passive DNS, safe scanners) feeding easm_assets and easm_findings. Tracks domains, subdomains, certificates, exposed services, and risky DNS.",
-    depends: ["easm_assets table", "asset-based licensing", "EASM collector workers"],
   },
   blocklist: {
     title: "Blocklist",
@@ -542,14 +568,6 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "th
     summary:
       "Patch inventory, installation packages, tasks, and tags scoped to a company. Reuses the customer hierarchy already enforced on /companies and installer builds.",
     depends: ["patch inventory ingestion", "task runner", "tag schema"],
-  },
-  digitalRisk: {
-    title: "Digital Risk (DRP)",
-    eyebrow: "Continuous threat exposure",
-    status: "planned",
-    summary:
-      "External digital risk detection for brand abuse, impersonation, leaks, and dark web mentions with AI validation and takedown-ready context.",
-    depends: ["DRP asset model", "OSINT collectors", "finding-to-incident mapping"],
   },
   reports: {
     title: "Reports",

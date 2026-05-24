@@ -22,6 +22,7 @@ from app.schemas import (
     PolicySimulationSummaryV2,
 )
 from app.services.compliance import controls_for_event
+from app.services.crypto import canonical_json
 
 
 DESTRUCTIVE_ACTIONS = {"block", "isolate", "rollback"}
@@ -506,5 +507,4 @@ class EvidenceEmitter:
 
 
 def policy_payload_hash(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()
+    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()

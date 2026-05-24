@@ -6,23 +6,29 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, QuickDeployManifest, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate
+from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, PasswordSetRequest, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult
 from app.services import audit
 from app.services import compliance
 from app.schemas import ComplianceReviewCreate, ComplianceReview, ComplianceAttestationCreate, ComplianceAttestation, ComplianceVaultReference
+from app.schemas import DRPFinding, DRPFindingCreate, EASMExposure, EASMExposureCreate
 from app.services import tenancy
 from app.services import licensing
+from app.schemas import PolicyAssignmentListItem as PolicyAssignmentListItemSchema
 from app.services import policy_v2 as policy_v2_service
+from app.services import detection_rules as detection_rules_service
+from app.services import blocklist as blocklist_service
+from app.services import drp_easm as drp_easm_service
 from app.services import totp as totp_service
 from app.services import ai_settings as ai_settings_service
 from app.services.ai_settings import AiSettingsError
 from app.services.tenancy import TenancyError
 from app.services.licensing import LicensingError
-from app.services.customers import CustomerError, assigned_policy, create_customer, create_quick_deploy_links, customer_groups, delete_customer, generate_installers, get_customer, list_customers, list_customers_page, list_partners, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy, update_customer, update_customer_status
+from app.services.customers import CustomerError, assigned_policy, build_installer_download, create_customer, create_quick_deploy_links, customer_groups, delete_customer, generate_installers, get_customer, list_customers, list_customers_page, list_partners, list_policy_packages, policy_package_for_agent, quick_create, resolve_quick_deploy, update_customer, update_customer_status
 from app.services.dlp import apply_policy, scan_text
 from app.services.enrollment import EnrollmentError, consume_enrollment_token, issue_enrollment_token
 from app.services.policy import active_policy_document, list_policy_documents, promote_policy_document, simulate as simulate_policy
@@ -309,10 +315,10 @@ def create_quick_deploy(customer_id: UUID, payload: InstallerBuildRequest, http_
     return links
 
 
-@app.get("/quick-deploy/{link_id}", response_model=QuickDeployManifest)
-def quick_deploy_manifest(link_id: UUID, secret: str, http_request: Request) -> QuickDeployManifest:
+@app.get("/quick-deploy/{link_id}")
+def quick_deploy_redirect(link_id: UUID, secret: str, http_request: Request):
     try:
-        manifest = resolve_quick_deploy(link_id, secret)
+        build_id = resolve_quick_deploy(link_id, secret)
     except CustomerError as error:
         audit.record(
             action="quick_deploy.rejected",
@@ -326,10 +332,33 @@ def quick_deploy_manifest(link_id: UUID, secret: str, http_request: Request) -> 
         action="quick_deploy.download",
         resource=f"quick_deploy:{link_id}",
         actor="download",
-        after={"customer_id": str(manifest.customer.id), "platform": manifest.installer.platform},
+        after={"build_id": str(build_id)},
         request_id=_request_id(http_request),
     )
-    return manifest
+    return RedirectResponse(url=f"/installers/{build_id}/download", status_code=302)
+
+
+@app.get("/installers/{build_id}/download")
+def download_installer(build_id: UUID, http_request: Request):
+    try:
+        package_bytes, filename, sha256, _ = build_installer_download(build_id)
+    except CustomerError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="installer.download",
+        resource=f"installer_build:{build_id}",
+        actor="download",
+        after={"sha256": sha256, "filename": filename},
+        request_id=_request_id(http_request),
+    )
+    return Response(
+        content=package_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Installer-SHA256": sha256,
+        },
+    )
 
 
 @app.get("/agent/{agent_id}/policy", response_model=PolicyPackage)
@@ -438,6 +467,7 @@ def compliance_export(
 @app.post("/simulate/scenario")
 def simulate_scenario(req: SimulationRequest):
     """Simulate security events for testing and demo purposes."""
+    import json
     import uuid
     import psycopg
     from datetime import datetime, timezone
@@ -507,7 +537,37 @@ def simulate_scenario(req: SimulationRequest):
                 (incident_id, customer_id, f"Simulated {req.scenario}", "Generated by simulation", severity, "open", "Investigate", ts, ts)
             )
 
-            return {"status": "ok", "alert_id": alert_id, "incident_id": incident_id}
+            agentic_case_id = uuid.uuid4()
+            steps = [
+                {"id": "s1", "description": "Ingested telemetry from agent", "completed": True, "timestamp": ts.isoformat(), "evidence": None},
+                {"id": "s2", "description": "Correlated events with threat intel", "completed": True, "timestamp": ts.isoformat(), "evidence": "3 IoCs matched"},
+                {"id": "s3", "description": "Generated response recommendation", "completed": True, "timestamp": ts.isoformat(), "evidence": None},
+                {"id": "s4", "description": "Awaiting operator approval", "completed": False, "timestamp": None, "evidence": None},
+            ]
+            cur.execute(
+                """
+                insert into agentic_cases (
+                    id, customer_id, title, summary, status, confidence, confidence_pct,
+                    severity, affected_endpoints, related_events, mitre_tactics,
+                    recommended_response, steps, created_at, updated_at
+                ) values (%s, %s, %s, %s, 'awaiting_approval', 'high', 85, %s,
+                    %s::jsonb, %s, %s::jsonb, %s, %s::jsonb, %s, %s)
+                """,
+                (
+                    agentic_case_id, customer_id,
+                    f"Investigation: {req.scenario} on {req.agent_id}",
+                    f"AI-correlated investigation generated from {req.scenario} scenario simulation with {severity} severity.",
+                    severity,
+                    json.dumps([req.agent_id]),
+                    3 if severity == "high" else 1,
+                    json.dumps(["Anomaly", "Execution"]),
+                    action,
+                    json.dumps(steps),
+                    ts, ts,
+                ),
+            )
+
+            return {"status": "ok", "alert_id": alert_id, "incident_id": incident_id, "agentic_case_id": agentic_case_id}
 
 @app.get("/customers/{customer_id}/telemetry", response_model=list[TelemetryEvent])
 def get_customer_telemetry(customer_id: UUID):
@@ -1125,6 +1185,234 @@ def list_partners_route(
     return [p for p in partners if p.id in allowed]
 
 
+# --- Custom Detection Rules -------------------------------------------------
+
+
+@app.get("/detection-rules", response_model=list[DetectionRule])
+def list_detection_rules_route(
+    customer_id: UUID | None = Query(default=None),
+    partner_id: UUID | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> list[DetectionRule]:
+    try:
+        return detection_rules_service.list_rules(
+            account,
+            customer_id=customer_id,
+            partner_id=partner_id,
+        )
+    except detection_rules_service.DetectionRuleError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@app.post("/detection-rules", response_model=DetectionRule, status_code=201)
+def create_detection_rule_route(
+    payload: DetectionRuleCreate,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> DetectionRule:
+    try:
+        rule = detection_rules_service.create_rule(payload, account)
+    except detection_rules_service.DetectionRuleError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="detection_rule.create",
+        resource=f"detection-rule:{rule.id}",
+        actor=str(account.id),
+        after=rule.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    return rule
+
+
+@app.post("/detection-rules/{rule_id}/simulate", response_model=DetectionRuleSimulation)
+def simulate_detection_rule_route(
+    rule_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> DetectionRuleSimulation:
+    try:
+        simulation = detection_rules_service.simulate_rule(rule_id, account)
+    except detection_rules_service.DetectionRuleError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="detection_rule.simulate",
+        resource=f"detection-rule:{rule_id}",
+        actor=str(account.id),
+        after={"matched_events": simulation.matched_events},
+        request_id=_request_id(http_request),
+    )
+    return simulation
+
+
+@app.post("/detection-rules/{rule_id}/promote", response_model=DetectionRulePromotion)
+def promote_detection_rule_route(
+    rule_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> DetectionRulePromotion:
+    try:
+        promotion = detection_rules_service.promote_rule(rule_id, account)
+    except detection_rules_service.DetectionRuleError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="detection_rule.promote",
+        resource=f"detection-rule:{rule_id}",
+        actor=str(account.id),
+        after={"status": promotion.rule.status},
+        request_id=_request_id(http_request),
+    )
+    return promotion
+
+
+# --- Blocklist Entries -----------------------------------------------------
+
+
+@app.get("/blocklist", response_model=list[BlocklistEntry])
+def list_blocklist_route(
+    customer_id: UUID | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> list[BlocklistEntry]:
+    try:
+        return blocklist_service.list_entries(account, customer_id=customer_id)
+    except blocklist_service.BlocklistError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@app.post("/blocklist", response_model=BlocklistEntry, status_code=201)
+def create_blocklist_entry_route(
+    payload: BlocklistEntryCreate,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> BlocklistEntry:
+    try:
+        entry = blocklist_service.create_entry(payload, account)
+    except blocklist_service.BlocklistError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="blocklist.create",
+        resource=f"blocklist:{entry.id}",
+        actor=str(account.id),
+        after=entry.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    return entry
+
+
+@app.post("/blocklist/{entry_id}/simulate", response_model=BlocklistSimulationResult)
+def simulate_blocklist_entry_route(
+    entry_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> BlocklistSimulationResult:
+    try:
+        result = blocklist_service.simulate_entry(entry_id, account)
+    except blocklist_service.BlocklistError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="blocklist.simulate",
+        resource=f"blocklist:{entry_id}",
+        actor=str(account.id),
+        after={"affected_agents": result.affected_agents},
+        request_id=_request_id(http_request),
+    )
+    return result
+
+
+@app.post("/blocklist/{entry_id}/activate", response_model=BlocklistActivateResult)
+def activate_blocklist_entry_route(
+    entry_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> BlocklistActivateResult:
+    try:
+        result = blocklist_service.activate_entry(entry_id, account)
+    except blocklist_service.BlocklistError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="blocklist.activate",
+        resource=f"blocklist:{entry_id}",
+        actor=str(account.id),
+        after={"status": "active"},
+        request_id=_request_id(http_request),
+    )
+    return result
+
+
+@app.post("/blocklist/{entry_id}/disable", status_code=200)
+def disable_blocklist_entry_route(
+    entry_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> dict[str, str]:
+    try:
+        blocklist_service.disable_entry(entry_id, account)
+    except blocklist_service.BlocklistError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="blocklist.disable",
+        resource=f"blocklist:{entry_id}",
+        actor=str(account.id),
+        request_id=_request_id(http_request),
+    )
+    return {"status": "disabled"}
+
+
+# --- Agentic AI Investigation ----------------------------------------------
+
+
+@app.get("/agentic/cases", response_model=list[AgentCase])
+def list_agentic_cases_route(
+    account: Account = Depends(current_account),
+) -> list[AgentCase]:
+    from app.services import agentic as agentic_service
+    try:
+        return agentic_service.list_cases(account)
+    except agentic_service.AgenticError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@app.post("/agentic/cases/{case_id}/approve", response_model=AgentCaseActionResult)
+def approve_agentic_case_route(
+    case_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> AgentCaseActionResult:
+    from app.services import agentic as agentic_service
+    try:
+        result = agentic_service.approve_case(case_id, account)
+    except agentic_service.AgenticError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="agentic.approve",
+        resource=f"agentic_case:{case_id}",
+        actor=str(account.id),
+        after={"status": result.case.status},
+        request_id=_request_id(http_request),
+    )
+    return result
+
+
+@app.post("/agentic/cases/{case_id}/dismiss", response_model=AgentCaseActionResult)
+def dismiss_agentic_case_route(
+    case_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> AgentCaseActionResult:
+    from app.services import agentic as agentic_service
+    try:
+        result = agentic_service.dismiss_case(case_id, account)
+    except agentic_service.AgenticError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="agentic.dismiss",
+        resource=f"agentic_case:{case_id}",
+        actor=str(account.id),
+        after={"status": result.case.status},
+        request_id=_request_id(http_request),
+    )
+    return result
+
+
 # --- Policy Engine v2 ------------------------------------------------------
 
 
@@ -1330,6 +1618,41 @@ def promote_policy_v2_route(
         request_id=_request_id(http_request),
     )
     return version
+
+
+@app.get("/policy/assignments", response_model=list[PolicyAssignmentListItemSchema])
+def list_policy_assignments_v2_route(
+    partner_id: UUID | None = Query(default=None),
+    customer_id: UUID | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> list[PolicyAssignmentListItemSchema]:
+    try:
+        return policy_v2_service.list_assignments_v2(
+            account,
+            partner_id=partner_id,
+            customer_id=customer_id,
+        )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/policy/assignments/{assignment_id}/apply", status_code=200)
+def apply_policy_assignment_diff_route(
+    assignment_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> dict[str, str]:
+    try:
+        policy_v2_service.apply_assignment_diff(assignment_id, account)
+        audit.record(
+            action="policy_v2.apply_diff",
+            resource=f"assignment:{assignment_id}",
+            actor=str(account.id),
+            request_id=_request_id(http_request),
+        )
+        return {"status": "applied"}
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.post("/policies/{policy_id}/rollback", response_model=PolicyVersion)
@@ -1676,4 +1999,166 @@ def list_compliance_vault_references_route(
         return [ComplianceVaultReference.model_validate(v) for v in compliance.list_vault_references(customer_id, framework)]
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+# --- Digital Risk Protection -----------------------------------------------
+
+@app.get("/drp/findings", response_model=list[DRPFinding])
+def list_drp_findings_route(
+    customer_id: UUID | None = Query(default=None),
+    partner_id: UUID | None = Query(default=None),
+    status: str | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> list[DRPFinding]:
+    try:
+        return drp_easm_service.list_findings(
+            account,
+            customer_id=customer_id,
+            partner_id=partner_id,
+            status=status,
+        )
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@app.post("/drp/findings", response_model=DRPFinding, status_code=201)
+def create_drp_finding_route(
+    payload: DRPFindingCreate,
+    http_request: Request,
+    customer_id: UUID = Query(...),
+    account: Account = Depends(current_account),
+) -> DRPFinding:
+    try:
+        finding = drp_easm_service.create_finding(payload, account, customer_id=customer_id)
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="drp.finding.create",
+        resource=f"drp-finding:{finding.id}",
+        actor=str(account.id),
+        after={"finding_type": finding.finding_type, "severity": finding.severity},
+        request_id=_request_id(http_request),
+    )
+    return finding
+
+
+@app.post("/drp/findings/{finding_id}/validate", response_model=DRPFinding)
+def validate_drp_finding_route(
+    finding_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> DRPFinding:
+    try:
+        finding = drp_easm_service.validate_finding(finding_id, account)
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="drp.finding.validate",
+        resource=f"drp-finding:{finding_id}",
+        actor=str(account.id),
+        after={"status": finding.status},
+        request_id=_request_id(http_request),
+    )
+    return finding
+
+
+@app.post("/drp/findings/{finding_id}/takedown", response_model=DRPFinding)
+def takedown_drp_finding_route(
+    finding_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> DRPFinding:
+    try:
+        finding = drp_easm_service.confirm_takedown(finding_id, account)
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="drp.finding.takedown",
+        resource=f"drp-finding:{finding_id}",
+        actor=str(account.id),
+        after={"status": finding.status},
+        request_id=_request_id(http_request),
+    )
+    return finding
+
+
+# --- External Attack Surface Management ------------------------------------
+
+@app.get("/easm/exposures", response_model=list[EASMExposure])
+def list_easm_exposures_route(
+    customer_id: UUID | None = Query(default=None),
+    partner_id: UUID | None = Query(default=None),
+    status: str | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> list[EASMExposure]:
+    try:
+        return drp_easm_service.list_exposures(
+            account,
+            customer_id=customer_id,
+            partner_id=partner_id,
+            status=status,
+        )
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+
+
+@app.post("/easm/exposures", response_model=EASMExposure, status_code=201)
+def create_easm_exposure_route(
+    payload: EASMExposureCreate,
+    http_request: Request,
+    customer_id: UUID = Query(...),
+    account: Account = Depends(current_account),
+) -> EASMExposure:
+    try:
+        exposure = drp_easm_service.create_exposure(payload, account, customer_id=customer_id)
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="easm.exposure.create",
+        resource=f"easm-exposure:{exposure.id}",
+        actor=str(account.id),
+        after={"exposure_type": exposure.exposure_type, "severity": exposure.severity},
+        request_id=_request_id(http_request),
+    )
+    return exposure
+
+
+@app.post("/easm/exposures/{exposure_id}/investigate", response_model=EASMExposure)
+def investigate_easm_exposure_route(
+    exposure_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> EASMExposure:
+    try:
+        exposure = drp_easm_service.investigate_exposure(exposure_id, account)
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="easm.exposure.investigate",
+        resource=f"easm-exposure:{exposure_id}",
+        actor=str(account.id),
+        after={"status": exposure.status},
+        request_id=_request_id(http_request),
+    )
+    return exposure
+
+
+@app.post("/easm/exposures/{exposure_id}/remediate", response_model=EASMExposure)
+def remediate_easm_exposure_route(
+    exposure_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> EASMExposure:
+    try:
+        exposure = drp_easm_service.remediate_exposure(exposure_id, account)
+    except drp_easm_service.ExternalRiskError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    audit.record(
+        action="easm.exposure.remediate",
+        resource=f"easm-exposure:{exposure_id}",
+        actor=str(account.id),
+        after={"status": exposure.status},
+        request_id=_request_id(http_request),
+    )
+    return exposure
 

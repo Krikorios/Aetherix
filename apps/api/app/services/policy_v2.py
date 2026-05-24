@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -26,6 +25,7 @@ from app.schemas import (
     EffectivePolicyResponse,
     PolicyPromotion,
     PolicyAssignRequest,
+    PolicyAssignmentListItem,
     PolicyAssignmentV2,
     PolicyCreateResponse,
     PolicyDocumentV2,
@@ -46,7 +46,9 @@ from app.schemas import (
 )
 from app.services import licensing, tenancy
 from app.services.compliance import controls_for_event
+from app.services.crypto import canonical_json, _signing_key, signing_key_id
 from app.services.policy_v2_runtime import (
+    DESTRUCTIVE_ACTIONS,
     EffectivePolicyResolver,
     EvidenceEmitter,
     PolicySimulationService,
@@ -113,29 +115,9 @@ ADDON_TO_MODULES: dict[str, set[str]] = {
     "external_attack_surface_management": {"external_attack_surface_management"},
 }
 
-DESTRUCTIVE_ACTIONS = {"block", "isolate", "rollback"}
-PLACEHOLDER_SIGNING_KEY = "aetherix-dev-placeholder-key"
-
-
-def _signing_key() -> bytes:
-    key = os.getenv("AETHERIX_POLICY_SIGNING_KEY", PLACEHOLDER_SIGNING_KEY)
-    return key.encode()
-
-
-def signing_key_id() -> str:
-    return os.getenv("AETHERIX_POLICY_SIGNING_KEY_ID", "control-plane-dev")
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _payload_hash(payload: dict[str, Any]) -> str:
-    return policy_payload_hash(payload)
-
 
 def _signature(payload: dict[str, Any]) -> str:
-    return hmac.new(_signing_key(), _canonical_json(payload).encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_signing_key(), canonical_json(payload).encode(), hashlib.sha256).hexdigest()
 
 
 def _row_to_policy(row: dict[str, Any]) -> PolicyDocumentV2:
@@ -235,25 +217,6 @@ def _module_enabled(module_payload: dict[str, Any]) -> bool:
     if "enabled" in module_payload:
         return bool(module_payload["enabled"])
     return True
-
-
-def _collect_destructive_actions(module_payload: Any) -> list[str]:
-    seen: set[str] = set()
-
-    def _walk(value: Any) -> None:
-        if isinstance(value, dict):
-            for v in value.values():
-                _walk(v)
-            return
-        if isinstance(value, list):
-            for item in value:
-                _walk(item)
-            return
-        if isinstance(value, str) and value in DESTRUCTIVE_ACTIONS:
-            seen.add(value)
-
-    _walk(module_payload)
-    return sorted(seen)
 
 
 def _scope_dict(scope: PolicyScopeV2) -> dict[str, Any]:
@@ -406,7 +369,7 @@ def create_policy(payload: PolicyDocumentV2Input, *, actor: Account) -> PolicyCr
     policy_id = uuid.uuid4()
     version_id = uuid.uuid4()
     payload_json = payload.model_dump(mode="json")
-    payload_hash = _payload_hash(payload_json)
+    payload_hash = policy_payload_hash(payload_json)
     signature = _signature(payload_json)
     controls = controls_for_event("policy_v2.create")
 
@@ -602,7 +565,7 @@ def update_policy(policy_id: UUID, payload: PolicyUpdateInput, *, actor: Account
     new_version = latest.version + 1
     version_id = uuid.uuid4()
     payload_json = new_payload.model_dump(mode="json")
-    payload_hash = _payload_hash(payload_json)
+    payload_hash = policy_payload_hash(payload_json)
     signature = _signature(payload_json)
     controls = controls_for_event("policy_v2.update")
 
@@ -1022,7 +985,7 @@ def promote_policy(policy_id: UUID, request: PolicyPromoteRequest, actor: Accoun
     next_version = latest.version + 1
     now = datetime.now(UTC)
     payload_json = latest.payload.model_dump(mode="json")
-    payload_hash = _payload_hash(payload_json)
+    payload_hash = policy_payload_hash(payload_json)
     signature = _signature(payload_json)
     version_id = uuid.uuid4()
     promotion_id = uuid.uuid4()
@@ -1174,7 +1137,7 @@ def rollback_policy(policy_id: UUID, request: PolicyRollbackRequest, actor: Acco
     next_version = latest.version + 1
     now = datetime.now(UTC)
     payload_json = target.payload.model_dump(mode="json")
-    payload_hash = _payload_hash(payload_json)
+    payload_hash = policy_payload_hash(payload_json)
     signature = _signature(payload_json)
     version_id = uuid.uuid4()
     controls = controls_for_event("policy_v2.rollback")
@@ -1424,7 +1387,7 @@ def effective_policy(
             white_label_names={},
         )
         filtered = _entitlement_filtered_payload(empty_payload, customer_id)
-        version_hash = _payload_hash(filtered.model_dump(mode="json"))
+        version_hash = policy_payload_hash(filtered.model_dump(mode="json"))
         return EffectivePolicyResponse(
             endpoint_id=endpoint_id,
             scope=scope,
@@ -1450,7 +1413,7 @@ def effective_policy(
         raise PolicyV2Error("unable to resolve effective policy")
 
     filtered = _entitlement_filtered_payload(merged_payload, customer_id)
-    version_hash = _payload_hash(filtered.model_dump(mode="json"))
+    version_hash = policy_payload_hash(filtered.model_dump(mode="json"))
     EvidenceEmitter.emit(
         action="policy_v2.effective",
         resource=f"policy:effective:{endpoint_id or customer_id or partner_id or 'global'}",
@@ -1515,7 +1478,7 @@ def effective_policy_for_agent(endpoint_id: str, token: str) -> AgentPolicyRespo
         )
 
     filtered = _entitlement_filtered_payload(merged_payload, scope.customer_id)
-    version_hash = _payload_hash(filtered.model_dump(mode="json"))
+    version_hash = policy_payload_hash(filtered.model_dump(mode="json"))
 
     EvidenceEmitter.emit(
         action="policy_v2.agent_fetch",
@@ -1615,4 +1578,122 @@ def agent_acknowledge_policy(endpoint_id: str, token: str, ack: AgentPolicyAckRe
         policy_version_hash=row["policy_version_hash"],
         agent_version=row["agent_version"],
         acknowledged_at=row["acknowledged_at"],
+    )
+
+
+def list_assignments_v2(
+    actor: Account,
+    *,
+    partner_id: UUID | None = None,
+    customer_id: UUID | None = None,
+) -> list[PolicyAssignmentListItem]:
+    """Return all v2 policy assignments visible to the actor, enriched for the console."""
+    scope = tenancy.compute_scope(actor)
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if partner_id is not None:
+        clauses.append("pa.partner_id = %s")
+        params.append(partner_id)
+    if customer_id is not None:
+        clauses.append("pa.customer_id = %s")
+        params.append(customer_id)
+
+    if not scope.is_platform:
+        if scope.partner_ids:
+            clauses.append("(pa.partner_id = any(%s) or pa.customer_id = any(%s))")
+            params.append(scope.partner_ids)
+            params.append(scope.customer_ids)
+        elif scope.customer_ids:
+            clauses.append("pa.customer_id = any(%s)")
+            params.append(scope.customer_ids)
+        else:
+            return []
+
+    where = f"where {' and '.join(clauses)}" if clauses else ""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select
+                pa.id,
+                pa.partner_id,
+                pa.customer_id,
+                pa.group_id,
+                pa.endpoint_id,
+                pa.policy_id,
+                pa.assigned_at,
+                pd.name as policy_name,
+                pv.version as policy_version
+            from policy_assignments_v2 pa
+            join policy_documents_v2 pd on pd.id = pa.policy_id
+            join policy_versions pv on pv.id = pa.policy_version_id
+            {where}
+            order by pa.assigned_at desc
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+
+    items: list[PolicyAssignmentListItem] = []
+    for row in rows:
+        partner_id_val = row["partner_id"]
+        customer_id_val = row["customer_id"]
+        group_id_val = row["group_id"]
+        endpoint_id_val = row["endpoint_id"]
+
+        if partner_id_val and customer_id_val is None and group_id_val is None and endpoint_id_val is None:
+            scope_type = "partner"
+            scope_label = f"Partner {partner_id_val}"
+        elif customer_id_val and group_id_val is None and endpoint_id_val is None:
+            scope_type = "company"
+            scope_label = f"Customer {customer_id_val}"
+        elif group_id_val and endpoint_id_val is None:
+            scope_type = "group"
+            scope_label = f"Group {group_id_val}"
+        elif endpoint_id_val:
+            scope_type = "endpoint"
+            scope_label = endpoint_id_val
+        else:
+            scope_type = "platform"
+            scope_label = "Aetherix Platform"
+
+        items.append(PolicyAssignmentListItem(
+            id=row["id"],
+            scope=scope_type,
+            scope_id=str(row.get("partner_id") or row.get("customer_id") or row.get("group_id") or row.get("endpoint_id") or "platform"),
+            scope_name=scope_label,
+            policy_id=row["policy_id"],
+            policy_name=row["policy_name"],
+            policy_version=f"v{row['policy_version']}",
+            inherited=False,
+            override=(scope_type != "platform"),
+            effective_since=row["assigned_at"],
+            endpoint_count=0,
+            drift_count=0,
+        ))
+    return items
+
+
+def apply_assignment_diff(assignment_id: UUID, actor: Account) -> None:
+    """Apply pending diff for an assignment (stub — real diff application TBD)."""
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select pa.* from policy_assignments_v2 pa where pa.id = %s",
+            (assignment_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise PolicyV2Error("assignment not found")
+
+    EvidenceEmitter.emit(
+        action="policy_v2.apply_diff",
+        resource=f"assignment:{assignment_id}",
+        actor=str(actor.id),
+        scope={
+            "partner_id": str(row["partner_id"]) if row["partner_id"] else None,
+            "customer_id": str(row["customer_id"]) if row["customer_id"] else None,
+            "group_id": str(row["group_id"]) if row["group_id"] else None,
+            "endpoint_id": row["endpoint_id"],
+        },
+        payload={"assignment_id": str(assignment_id)},
     )

@@ -16,11 +16,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import os
 from datetime import UTC, datetime
 
 from app.db import connection
 from app.services.compliance import controls_for_event
+from app.services.crypto import _signing_key, signing_key_id
 from app.schemas import (
     DlpScanRequest,
     Policy,
@@ -31,18 +31,6 @@ from app.schemas import (
     PolicySimulationResponse,
     PolicySimulationSummary,
 )
-
-
-PLACEHOLDER_SIGNING_KEY = "aetherix-dev-placeholder-key"
-
-
-def signing_key_id() -> str:
-    return os.getenv("AETHERIX_POLICY_SIGNING_KEY_ID", "control-plane-dev")
-
-
-def _signing_key() -> bytes:
-    key = os.getenv("AETHERIX_POLICY_SIGNING_KEY", PLACEHOLDER_SIGNING_KEY)
-    return key.encode()
 
 
 def sign_document_body(body: dict) -> str:

@@ -25,8 +25,8 @@ from app.schemas import (
     InstallerPlatform,
     PolicyAssignment,
     PolicyPackage,
+    PolicyScopeV2,
     QuickDeployLink,
-    QuickDeployManifest,
 )
 from app.services.enrollment import issue_enrollment_token
 
@@ -34,6 +34,47 @@ from app.services.enrollment import issue_enrollment_token
 DEFAULT_PARTNER_ID = UUID("00000000-0000-4000-8000-000000000001")
 DEFAULT_POLICY_PACKAGE_ID = UUID("00000000-0000-4000-8000-000000000101")
 DEFAULT_GROUP_NAME = "Default"
+
+
+def _v2_policy_for_customer(customer_id: UUID, group_id: UUID | None = None) -> dict[str, Any] | None:
+    """Resolve v2 policy assignment info for a customer scope.
+
+    Returns a dict with ``policy_id``, ``policy_name``, ``policy_version``
+    if a v2 assignment is found, or None.
+    """
+    with connection() as conn, conn.cursor() as cur:
+        if group_id is not None:
+            cur.execute(
+                """
+                select pa.policy_id, pd.name as policy_name, pv.version as policy_version
+                from policy_assignments_v2 pa
+                join policy_documents_v2 pd on pd.id = pa.policy_id
+                join policy_versions pv on pv.id = pa.policy_version_id
+                where pa.customer_id = %s and pa.group_id = %s
+                limit 1
+                """,
+                (customer_id, group_id),
+            )
+        else:
+            cur.execute(
+                """
+                select pa.policy_id, pd.name as policy_name, pv.version as policy_version
+                from policy_assignments_v2 pa
+                join policy_documents_v2 pd on pd.id = pa.policy_id
+                join policy_versions pv on pv.id = pa.policy_version_id
+                where pa.customer_id = %s and pa.group_id is null and pa.endpoint_id is null
+                limit 1
+                """,
+                (customer_id,),
+            )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "policy_id": str(row["policy_id"]),
+        "policy_name": row["policy_name"],
+        "policy_version": row["policy_version"],
+    }
 
 
 class CustomerError(Exception):
@@ -590,12 +631,17 @@ def quick_create(request: CustomerQuickCreateRequest) -> CustomerQuickCreateResu
     )
 
 
-def resolve_quick_deploy(link_id: UUID, secret: str) -> QuickDeployManifest:
+def resolve_quick_deploy(link_id: UUID, secret: str) -> UUID:
+    """Validate a quick-deploy link and return the ``installer_build_id``.
+
+    Increments the download counter atomically. The caller should redirect
+    to ``/installers/{build_id}/download`` to serve the actual package.
+    """
     now = datetime.now(UTC)
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select q.*, b.policy_package_id, b.platform as build_platform, b.expires_at as build_expires_at
+            select q.*, b.platform as build_platform, b.expires_at as build_expires_at
             from quick_deploy_links q
             join installer_builds b on b.id = q.installer_build_id
             where q.id = %s
@@ -616,46 +662,84 @@ def resolve_quick_deploy(link_id: UUID, secret: str) -> QuickDeployManifest:
             "update quick_deploy_links set download_count = download_count + 1 where id = %s",
             (link_id,),
         )
+        build_id = row["installer_build_id"]
+
+    return build_id
+
+
+def build_installer_download(build_id: UUID) -> tuple[bytes, str, str, InstallerBuild]:
+    """Build an installer package for the given *build_id*.
+
+    Issues a fresh enrollment token, constructs the install profile, and
+    packages the compiled agent binary together with the profile.
+
+    Returns ``(package_bytes, filename, sha256_hex, installer_build_data)``.
+    """
+    from app.services.installer_packager import PackagerError, package_installer
+
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select * from installer_builds where id = %s",
+            (build_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise CustomerError("Installer build not found")
+    if row["expires_at"] and row["expires_at"] < now:
+        raise CustomerError("Installer build has expired")
 
     customer = get_customer(row["customer_id"])
     if customer is None:
         raise CustomerError("Customer not found")
+
     token = issue_enrollment_token(
         _token_request(
             customer=customer,
             group_id=row["group_id"],
             policy_package_id=row["policy_package_id"],
-            platform=row["build_platform"],
+            platform=row["platform"],
             ttl_seconds=900,
-            created_by="quick-deploy",
+            created_by="installer-download",
         )
     ).token
-    expires_at = row["build_expires_at"] or row["expires_at"]
+
+    expires_at = row["expires_at"] or (now + timedelta(hours=24))
     profile = _install_profile(
         customer=customer,
         group_id=row["group_id"],
         policy_package_id=row["policy_package_id"],
-        platform=row["build_platform"],
+        platform=row["platform"],
         enrollment_token=token,
         expires_at=expires_at,
     )
-    installer = InstallerBuild(
-        id=row["installer_build_id"],
+
+    try:
+        package_bytes, filename, sha256 = package_installer(
+            platform=row["platform"],
+            install_profile=profile,
+        )
+    except PackagerError as error:
+        raise CustomerError(str(error)) from error
+
+    build_data = InstallerBuild(
+        id=row["id"],
         customer_id=row["customer_id"],
         group_id=row["group_id"],
         policy_package_id=row["policy_package_id"],
-        platform=row["build_platform"],
-        status="ready",
-        artifact_url=f"{_public_url()}/installers/{row['installer_build_id']}/download",
-        artifact_sha256=_sha256_json(profile),
-        signing_status="signed",
-        expires_at=expires_at,
+        platform=row["platform"],
+        status=row["status"],
+        artifact_url=f"{_public_url()}/installers/{build_id}/download",
+        artifact_sha256=sha256,
+        signing_status=row["signing_status"],
+        expires_at=row["expires_at"],
         install_profile=profile,
         enrollment_token=token,
         created_by=row["created_by"],
         created_at=row["created_at"],
     )
-    return QuickDeployManifest(customer=customer, installer=installer, enrollment_token=token)
+
+    return package_bytes, filename, sha256, build_data
 
 
 def policy_package_for_agent(agent_id: str) -> PolicyPackage | None:
@@ -670,7 +754,38 @@ def policy_package_for_agent(agent_id: str) -> PolicyPackage | None:
             (agent_id,),
         )
         row = cur.fetchone()
-    return _policy_package_from_row(row) if row else None
+    if row is not None:
+        return _policy_package_from_row(row)
+
+    # Fallback: build a synthetic v1 package from v2 effective policy
+    from app.services.policy_v2 import effective_policy_for_agent
+
+    try:
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "select secret from enrolled_agents where agent_id = %s and revoked = false",
+                (agent_id,),
+            )
+            enrolled = cur.fetchone()
+            if enrolled is None:
+                return None
+            token = enrolled["secret"]
+
+        v2_response = effective_policy_for_agent(endpoint_id=agent_id, token=token)
+        payload = v2_response.resolved_policy.model_dump(mode="json")
+        return PolicyPackage(
+            id=UUID(int=0),
+            name=v2_response.resolved_policy.name,
+            description="Resolved from Policy Engine v2",
+            package_type="custom",
+            payload=payload,
+            version=1,
+            signature=v2_response.policy_version_hash,
+            created_by="system",
+            created_at=datetime.now(UTC),
+        )
+    except Exception:
+        return None
 
 
 def agent_tenant_context(agent_id: str) -> dict[str, Any]:
@@ -770,6 +885,7 @@ def _install_profile(
     enrollment_token: str,
     expires_at: datetime,
 ) -> dict[str, Any]:
+    v2_info = _v2_policy_for_customer(customer.id, group_id)
     body = {
         "control_plane_url": _public_url(),
         "deployment_mode": os.getenv("AETHERIX_DEPLOYMENT_MODE", "cloud"),
@@ -778,6 +894,9 @@ def _install_profile(
         "customer_number": customer.customer_number,
         "group_id": str(group_id) if group_id else None,
         "policy_package_id": str(policy_package_id),
+        "policy_v2_id": v2_info["policy_id"] if v2_info else None,
+        "policy_v2_name": v2_info["policy_name"] if v2_info else None,
+        "policy_v2_version": v2_info["policy_version"] if v2_info else None,
         "platform": platform,
         "enrollment_token": enrollment_token,
         "expires_at": expires_at.isoformat(),

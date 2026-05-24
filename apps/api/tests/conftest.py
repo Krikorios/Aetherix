@@ -52,6 +52,7 @@ def _truncate_tables() -> None:
                 installer_builds,
                 policy_assignments,
                 policy_packages,
+                custom_detection_rules,
                 customer_groups,
                 license_usage_daily,
                 license_products,
@@ -74,6 +75,10 @@ def _truncate_tables() -> None:
                 compliance_attestations,
                 compliance_vault_references,
                 policy_documents,
+                drp_findings,
+                drp_assets,
+                easm_exposures,
+                easm_assets,
                 audit_log
             restart identity cascade
             """

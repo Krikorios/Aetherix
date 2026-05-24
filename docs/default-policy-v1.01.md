@@ -146,6 +146,30 @@ Build note: prefer browser/endpoint event inspection over network-level SSL inte
     "cis_benchmarks": true,
     "misconfiguration_checks": true,
     "business_criticality_weighting": true,
+    "risk_scoring": {
+      "enabled": true,
+      "method": "weighted_average",
+      "vulnerability_weights": {
+        "critical": 1.0,
+        "high": 0.7,
+        "medium": 0.4,
+        "low": 0.1
+      },
+      "epss_threshold": 0.5,
+      "kev_boost": 2.0
+    },
+    "remediation_guidance": {
+      "enabled": true,
+      "auto_generate_tickets": false,
+      "priority_based": true,
+      "sla_tracking": true
+    },
+    "executive_reporting": {
+      "enabled": true,
+      "frequency": "monthly",
+      "include_trends": true,
+      "benchmark_against_peers": true
+    },
     "default_action": "review_remediation"
   }
 }

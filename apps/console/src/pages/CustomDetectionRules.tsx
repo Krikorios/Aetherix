@@ -6,7 +6,7 @@ import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
 import { LoadingState, EmptyState } from "../components/protection/EmptyState";
 import { Detection, StagedAction, SimulationPreview, EffectivePolicy } from "../components/protection/types";
-import { ErrorBanner, SuccessBanner } from "../components";
+import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner } from "../components";
 import { apiGet, apiPost, type MeResponse } from "../api";
 
 export interface CustomDetectionRule {
@@ -22,6 +22,19 @@ export interface CustomDetectionRule {
   last_modified: string;
   last_simulation_run?: string | null;
   scanned_agents_count?: number;
+}
+
+interface DetectionRuleSimulationResponse {
+  rule: CustomDetectionRule;
+  matched_events: number;
+  evidence_controls: string[];
+  created_at: string;
+}
+
+interface DetectionRulePromotionResponse {
+  rule: CustomDetectionRule;
+  evidence_controls: string[];
+  promoted_at: string;
 }
 
 export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
@@ -168,7 +181,24 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
     setSuccess(null);
     setError(null);
     try {
-      await apiPost(`/detection-rules/${selectedRule.id}/simulate`, {});
+      const result = await apiPost<DetectionRuleSimulationResponse>(`/detection-rules/${selectedRule.id}/simulate`, {});
+      const preview: SimulationPreview = {
+        id: `sim-rule-${selectedRule.id}-${Date.now()}`,
+        detection_id: selectedRule.id,
+        action: selectedAction,
+        destructive: false,
+        approval_required: policy.approval_required,
+        affected_systems: result.matched_events,
+        estimated_impact: [
+          `Custom Detection Rule engine successfully compiled '${result.rule.name}'.`,
+          "Rule Query validated successfully.",
+          `Run scoped on ${result.rule.scanned_agents_count ?? 0} online agents. Matches identified: ${result.matched_events} events.`,
+        ],
+        evidence_controls: result.evidence_controls,
+        created_at: result.created_at,
+      };
+      setSimulation(preview);
+      setRules(prev => prev.map(r => r.id === selectedRule.id ? result.rule : r));
       setSuccess(`Simulated dry-run completed successfully for '${selectedRule.name}'.`);
     } catch {
       // Offline fallback simulations
@@ -226,8 +256,8 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
     setStagedActions((current) => [optimisticStaged, ...current]);
 
     try {
-      await apiPost(`/detection-rules/${selectedRule.id}/promote`, {});
-      setRules(prev => prev.map(r => r.id === selectedRule.id ? { ...r, status: "active" } : r));
+      const result = await apiPost<DetectionRulePromotionResponse>(`/detection-rules/${selectedRule.id}/promote`, {});
+      setRules(prev => prev.map(r => r.id === selectedRule.id ? result.rule : r));
       setSuccess(`Staged promotion of '${selectedRule.name}' to production engine.`);
     } catch {
       setRules(prev => prev.map(r => r.id === selectedRule.id ? { ...r, status: "active" } : r));
@@ -291,7 +321,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
+    <ConsolePage>
       
       {/* Module Header */}
       <ModuleHeader
@@ -325,50 +355,17 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
       {error && <ErrorBanner message={error} />}
       {success && <SuccessBanner message={success} />}
 
-      {/* Highlights / Performance Counters Row */}
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: "16px",
-          marginBottom: "24px",
-        }}
-        aria-label="Metrics Dashboard"
-      >
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px", background: "rgba(11, 107, 87, 0.02)" }}>
-          <div style={{ color: "var(--accent)" }}><CheckCircle size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Active Custom Rules</div>
-            <strong style={{ fontSize: "16px" }}>{rules.filter((r) => r.status === "active").length} Executing live</strong>
-          </div>
-        </div>
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ color: "var(--warning)" }}><ShieldAlert size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>New Draft / Simulated Rules</div>
-            <strong style={{ fontSize: "16px" }}>{rules.filter((r) => r.status !== "active").length} In Triage</strong>
-          </div>
-        </div>
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ color: "var(--muted)" }}><Cpu size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Platform Rule Core</div>
-            <strong style={{ fontSize: "16px" }}>1,080 Active Inherited</strong>
-          </div>
-        </div>
-      </section>
+      <MetricGrid
+        ariaLabel="Metrics Dashboard"
+        items={[
+          { label: "Active Custom Rules", value: `${rules.filter((r) => r.status === "active").length} Executing live`, icon: <CheckCircle size={20} />, color: "var(--accent)" },
+          { label: "New Draft / Simulated Rules", value: `${rules.filter((r) => r.status !== "active").length} In Triage`, icon: <ShieldAlert size={20} />, color: "var(--warning)" },
+          { label: "Platform Rule Core", value: "1,080 Active Inherited", icon: <Cpu size={20} />, color: "var(--muted)" },
+        ]}
+      />
 
       {/* Three Panel Grid Workspace */}
-      <section
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "16px",
-          alignItems: "stretch",
-          flex: 1,
-        }}
-        aria-label="Detection Engineering Board"
-      >
+      <section className="panelWorkspace" aria-label="Detection Engineering Board">
         {/* Panel 1: Searchable Rule Table List */}
         <DetectionTable
           detections={detections}
@@ -390,36 +387,24 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
           customContextRenderer={(d) => {
             const rule = rules.find((r) => r.id === d.id);
             return (
-              <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div className="detailStack">
                 <div>
-                  <h4 style={{ margin: "0 0 8px 0", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)" }}>
+                  <h4 className="sectionKicker" style={{ margin: "0 0 8px 0" }}>
                     Rule Definition Language (Query SQL)
                   </h4>
-                  <div
-                    style={{
-                      background: "#1e293b",
-                      color: "#f8fafc",
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                      fontSize: "12px",
-                      padding: "12px",
-                      borderRadius: "6px",
-                      border: "1.5px solid var(--line)",
-                      position: "relative",
-                      minHeight: "80px",
-                    }}
-                  >
+                  <div className="codeBlock" style={{ position: "relative", minHeight: "80px" }}>
                     <Code size={14} style={{ position: "absolute", top: "10px", right: "10px", color: "var(--muted)" }} />
                     <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{rule?.query}</pre>
                   </div>
                 </div>
 
                 <div>
-                  <h4 style={{ margin: "0 0 6px 0", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", color: "var(--muted)" }}>
+                  <h4 className="sectionKicker" style={{ margin: "0 0 6px 0" }}>
                     Rule Metadata Scope
                   </h4>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "12px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ color: "var(--muted)" }}>System Author</span>
+                  <div className="kvStack">
+                    <div className="kvRow">
+                      <span>System Author</span>
                       <strong>{rule?.author}</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -601,7 +586,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
                     padding: "10px",
                     borderRadius: "6px",
                     border: "1px solid var(--line)",
-                    fontFamily: "monospace",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                     fontSize: "12px"
                   }}
                 />
@@ -656,6 +641,6 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
           </section>
         </div>
       )}
-    </div>
+    </ConsolePage>
   );
 }

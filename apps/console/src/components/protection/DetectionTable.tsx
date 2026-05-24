@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { ArrowUpDown, Search, Filter } from "lucide-react";
-import { Detection, RiskRank } from "./types";
+import { Detection } from "./types";
 import { RiskBadge } from "../../components";
 
 interface DetectionTableProps {

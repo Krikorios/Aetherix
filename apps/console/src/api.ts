@@ -169,6 +169,13 @@ export type PolicyListItemV2 = {
   updated_at: string;
 };
 
+export type PolicyListResponseV2 = {
+  items: PolicyListItemV2[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type PolicySimulationModuleOutcome = {
   module: string;
   enabled: boolean;

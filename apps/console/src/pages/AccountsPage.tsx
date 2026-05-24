@@ -194,7 +194,19 @@ export function AccountsPage() {
         <PageHeader eyebrow="Identity" title="Accounts" />
         {error ? <ErrorBanner message={error} /> : null}
         <section className="panel">
-          <EmptyState>Please sign in on the Companies page to view accounts.</EmptyState>
+          <EmptyState>
+            Please{" "}
+            <span
+              className="linkLike"
+              role="button"
+              tabIndex={0}
+              onClick={() => window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "companies" } }))}
+              onKeyDown={(e) => { if (e.key === "Enter") window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "companies" } })); }}
+            >
+              sign in on the Companies page
+            </span>{" "}
+            to view accounts.
+          </EmptyState>
         </section>
       </>
     );

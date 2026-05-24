@@ -598,7 +598,7 @@ export function CompaniesPage() {
                 type="button"
                 className="btnGhost"
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "policy" } }));
+                  window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "policies" } }));
                 }}
               >
                 <ShieldCheck size={16} /> Assign Policy
@@ -738,7 +738,17 @@ export function CompaniesPage() {
                         {col.render(row, { subscriptions })}
                       </td>
                     ))}
-                    <td className="checkboxCell">
+                    <td className="checkboxCell" style={{ display: "flex", gap: 4 }}>
+                      <span
+                        className="linkLike"
+                        role="button"
+                        tabIndex={0}
+                        title="Deploy installer"
+                        onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "installers" } })); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "installers" } })); } }}
+                      >
+                        <Package size={14} />
+                      </span>
                       <MoreHorizontal size={16} />
                     </td>
                   </tr>

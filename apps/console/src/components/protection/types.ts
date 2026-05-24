@@ -1,6 +1,6 @@
-export type ModuleStatus = "protected" | "review_needed" | "disabled" | "planned";
+import type { RiskBand } from "../../api";
 
-export type RiskRank = "low" | "medium" | "high" | "critical";
+export type ModuleStatus = "protected" | "review_needed" | "disabled" | "planned";
 
 export type DetectionStatus = "new" | "investigating" | "staged" | "resolved";
 
@@ -15,7 +15,7 @@ export interface Detection {
   source: string;
   description: string;
   risk_score: number;
-  risk_band: RiskRank;
+  risk_band: RiskBand;
   confidence: number;
   recommended_action: string;
   status: DetectionStatus;

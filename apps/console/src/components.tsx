@@ -11,7 +11,7 @@ export function LoadingRow({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-export function EmptyState({ children }: { children: string }) {
+export function EmptyState({ children }: { children: ReactNode }) {
   return <p className="emptyState">{children}</p>;
 }
 
@@ -21,6 +21,33 @@ export function ErrorBanner({ message }: { message: string }) {
 
 export function SuccessBanner({ message }: { message: string }) {
   return <div className="successBanner" role="status">{message}</div>;
+}
+
+export function ConsolePage({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <main className={["consolePage", className].filter(Boolean).join(" ")}>{children}</main>;
+}
+
+export type MetricGridItem = {
+  label: string;
+  value: ReactNode;
+  icon?: ReactNode;
+  color?: string;
+};
+
+export function MetricGrid({ ariaLabel, items }: { ariaLabel: string; items: MetricGridItem[] }) {
+  return (
+    <section className="statGrid" aria-label={ariaLabel}>
+      {items.map(({ label, value, icon, color }) => (
+        <article key={label} className="statCard">
+          {icon ? <div className="statIcon" style={{ color }}>{icon}</div> : null}
+          <div>
+            <div className="statLabel">{label}</div>
+            <strong className="statValue">{value}</strong>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
 }
 
 export function SeverityBadge({ severity }: { severity: "low" | "medium" | "high" }) {

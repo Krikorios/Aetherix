@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Eye, Globe, Shield, AlertTriangle, FileText, BarChart3, LayoutDashboard, Package, Users, Settings, Mail, Smartphone, FlaskConical, Plug } from "lucide-react";
+import { Eye, Globe, Shield, AlertTriangle, FileText, BarChart3, LayoutDashboard, Package, Users, Settings, Mail, Smartphone, FlaskConical, Plug, RefreshCw } from "lucide-react";
 import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
 import { LoadingState, EmptyState } from "../components/protection/EmptyState";
 import { Detection, StagedAction, SimulationPreview, EffectivePolicy } from "../components/protection/types";
-import { ErrorBanner, SuccessBanner } from "../components";
+import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner } from "../components";
 import { apiGet, apiPost, type MeResponse } from "../api";
 
 export interface DRPFinding {
@@ -77,9 +77,11 @@ export function DRPPage({ me }: { me: MeResponse }) {
         : "gather_more_evidence",
     status:
       finding.status === "confirmed"
-        ? "active"
+        ? "staged"
         : finding.status === "validated"
-        ? "reviewing"
+        ? "staged"
+        : finding.status === "reviewing"
+        ? "investigating"
         : finding.status === "false_positive"
         ? "resolved"
         : "new",
@@ -306,7 +308,7 @@ export function DRPPage({ me }: { me: MeResponse }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
+    <ConsolePage>
       {/* Module Header */}
       <ModuleHeader
         title="Digital Risk Protection"
@@ -342,50 +344,17 @@ export function DRPPage({ me }: { me: MeResponse }) {
       {error && <ErrorBanner message={error} />}
       {success && <SuccessBanner message={success} />}
 
-      {/* Highlights / Performance Counters Row */}
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: "16px",
-          marginBottom: "24px",
-        }}
-        aria-label="DRP Metrics Dashboard"
-      >
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px", background: "rgba(11, 107, 87, 0.02)" }}>
-          <div style={{ color: "var(--accent)" }}><Shield size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Active Threats</div>
-            <strong style={{ fontSize: "16px" }}>{findings.filter((f) => f.status === "confirmed").length} Confirmed</strong>
-          </div>
-        </div>
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ color: "var(--warning)" }}><AlertTriangle size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Under Investigation</div>
-            <strong style={{ fontSize: "16px" }}>{findings.filter((f) => f.status === "validated" || f.status === "reviewing").length} In Review</strong>
-          </div>
-        </div>
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ color: "var(--muted)" }}><Globe size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Assets Monitored</div>
-            <strong style={{ fontSize: "16px" }}>{new Set(findings.map(f => f.asset_id)).size} Digital Assets</strong>
-          </div>
-        </div>
-      </section>
+      <MetricGrid
+        ariaLabel="DRP Metrics Dashboard"
+        items={[
+          { label: "Active Threats", value: `${findings.filter((f) => f.status === "confirmed").length} Confirmed`, icon: <Shield size={20} />, color: "var(--accent)" },
+          { label: "Under Investigation", value: `${findings.filter((f) => f.status === "validated" || f.status === "reviewing").length} In Review`, icon: <AlertTriangle size={20} />, color: "var(--warning)" },
+          { label: "Assets Monitored", value: `${new Set(findings.map(f => f.asset_id)).size} Digital Assets`, icon: <Globe size={20} />, color: "var(--muted)" },
+        ]}
+      />
 
       {/* Three Panel Grid Workspace */}
-      <section
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "16px",
-          alignItems: "stretch",
-          flex: 1,
-        }}
-        aria-label="DRP Investigation Board"
-      >
+      <section className="panelWorkspace" aria-label="DRP Investigation Board">
         {/* Panel 1: Searchable Findings Table List */}
         <DetectionTable
           detections={detections}
@@ -524,7 +493,7 @@ export function DRPPage({ me }: { me: MeResponse }) {
                           style={{
                             display: "inline-block",
                             padding: "4px 8px",
-                            background: "rgba(11, 107, 87, 0.05)",
+                            background: "rgba(15, 90, 110, 0.05)",
                             border: "1px solid var(--line)",
                             borderRadius: "4px",
                             fontSize: "11px",
@@ -603,6 +572,6 @@ export function DRPPage({ me }: { me: MeResponse }) {
           </div>
         </article>
       </section>
-    </div>
+    </ConsolePage>
   );
 }

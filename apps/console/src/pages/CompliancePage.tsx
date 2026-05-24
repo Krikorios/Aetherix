@@ -763,7 +763,7 @@ export function CompliancePage() {
                 maxWidth: "800px",
                 margin: "0 auto",
                 boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-                fontFamily: "Georgia, serif",
+                fontFamily: "var(--font-display)",
                 color: "var(--foreground)"
               }}>
                 <div style={{ textAlign: "center", borderBottom: "2px double var(--border)", paddingBottom: "24px", marginBottom: "30px" }}>

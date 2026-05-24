@@ -309,6 +309,31 @@ _SCHEMA_STATEMENTS = (
         on policy_documents(is_active) where is_active
     """,
     """
+    create table if not exists custom_detection_rules (
+        id uuid primary key,
+        partner_id uuid references partners(id),
+        customer_id uuid references customers(id) on delete cascade,
+        name text not null,
+        description text not null,
+        severity text not null check (severity in ('low', 'medium', 'high', 'critical')),
+        status text not null default 'draft' check (status in ('draft', 'simulated', 'active')),
+        query text not null,
+        author text not null,
+        mitre_attacks jsonb not null default '[]'::jsonb,
+        last_modified timestamptz not null,
+        last_simulation_run timestamptz,
+        scanned_agents_count integer not null default 0
+    )
+    """,
+    """
+    create index if not exists custom_detection_rules_customer_idx
+    on custom_detection_rules(customer_id, last_modified desc)
+    """,
+    """
+    create index if not exists custom_detection_rules_partner_idx
+    on custom_detection_rules(partner_id, last_modified desc)
+    """,
+    """
     create table if not exists policy_documents_v2 (
         id uuid primary key,
         name text not null,
@@ -754,6 +779,170 @@ _SCHEMA_STATEMENTS = (
         started_at timestamptz not null,
         ended_at timestamptz
     )
+    """,
+    """
+    create table if not exists blocklist_entries (
+        id uuid primary key,
+        partner_id uuid references partners(id),
+        customer_id uuid references customers(id) on delete cascade,
+        kind text not null check (kind in ('hash', 'domain', 'url', 'user', 'process')),
+        value text not null,
+        description text not null,
+        severity text not null check (severity in ('low', 'medium', 'high', 'critical')),
+        status text not null default 'review' check (status in ('active', 'review', 'disabled')),
+        added_by text not null,
+        hit_count integer not null default 0,
+        last_triggered timestamptz,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists blocklist_entries_customer_idx
+    on blocklist_entries(customer_id, status, kind)
+    """,
+    """
+    create index if not exists blocklist_entries_partner_idx
+    on blocklist_entries(partner_id, status, kind)
+    """,
+    """
+    create table if not exists agentic_cases (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        partner_id uuid references partners(id),
+        title text not null,
+        summary text not null default '',
+        status text not null default 'open'
+            check (status in ('open', 'in_progress', 'awaiting_approval', 'resolved', 'dismissed')),
+        confidence text not null default 'medium'
+            check (confidence in ('low', 'medium', 'high', 'confirmed')),
+        confidence_pct integer not null default 50,
+        severity text not null default 'medium'
+            check (severity in ('low', 'medium', 'high', 'critical')),
+        affected_endpoints jsonb not null default '[]'::jsonb,
+        related_events integer not null default 0,
+        mitre_tactics jsonb not null default '[]'::jsonb,
+        recommended_response text not null default '',
+        steps jsonb not null default '[]'::jsonb,
+        created_at timestamptz not null,
+        updated_at timestamptz not null,
+        resolved_at timestamptz
+    )
+    """,
+    """
+    create index if not exists agentic_cases_customer_idx
+    on agentic_cases(customer_id, updated_at desc)
+    """,
+    # --- Digital Risk Protection + EASM ------------------------------------
+    """
+    create table if not exists drp_assets (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        partner_id uuid references partners(id) on delete cascade,
+        asset_type text not null,
+        display_name text not null,
+        value text not null,
+        normalized_value text,
+        metadata jsonb not null default '{}'::jsonb,
+        status text not null default 'active'
+            check (status in ('active', 'paused', 'archived')),
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now(),
+        created_by text not null
+    )
+    """,
+    """
+    create index if not exists drp_assets_customer_idx
+    on drp_assets(customer_id, status)
+    """,
+    """
+    create table if not exists drp_findings (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        partner_id uuid references partners(id) on delete cascade,
+        asset_id uuid references drp_assets(id) on delete set null,
+        asset_display_name text not null default '',
+        asset_type text not null default '',
+        finding_type text not null,
+        title text not null,
+        summary text not null,
+        source text not null,
+        severity text not null default 'medium'
+            check (severity in ('low', 'medium', 'high', 'critical')),
+        status text not null default 'new'
+            check (status in ('new', 'reviewing', 'validated', 'false_positive', 'confirmed')),
+        risk_score integer not null default 0 check (risk_score between 0 and 100),
+        confidence_score integer not null default 0 check (confidence_score between 0 and 100),
+        llm_validation text,
+        screenshot_url text,
+        evidence_links jsonb not null default '[]'::jsonb,
+        related_easm_asset_id uuid,
+        detected_at timestamptz not null default now(),
+        created_at timestamptz not null default now()
+    )
+    """,
+    """
+    create index if not exists drp_findings_customer_idx
+    on drp_findings(customer_id, status, created_at desc)
+    """,
+    """
+    create table if not exists easm_assets (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        partner_id uuid references partners(id) on delete cascade,
+        asset_type text not null,
+        display_name text not null,
+        external_id text,
+        ip_address text,
+        fqdn text,
+        provider text,
+        tags jsonb not null default '[]'::jsonb,
+        metadata jsonb not null default '{}'::jsonb,
+        risk_score integer not null default 0 check (risk_score between 0 and 100),
+        shadow_it boolean not null default false,
+        status text not null default 'active'
+            check (status in ('active', 'paused', 'archived')),
+        first_seen_at timestamptz not null default now(),
+        last_seen_at timestamptz not null default now(),
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+    )
+    """,
+    """
+    create index if not exists easm_assets_customer_idx
+    on easm_assets(customer_id, status)
+    """,
+    """
+    create table if not exists easm_exposures (
+        id uuid primary key,
+        customer_id uuid not null references customers(id) on delete cascade,
+        partner_id uuid references partners(id) on delete cascade,
+        asset_id uuid references easm_assets(id) on delete set null,
+        asset_display_name text not null,
+        asset_type text not null,
+        exposure_type text not null,
+        title text not null,
+        summary text not null,
+        severity text not null default 'medium'
+            check (severity in ('low', 'medium', 'high', 'critical')),
+        status text not null default 'new'
+            check (status in ('new', 'investigating', 'confirmed', 'remediated', 'false_positive')),
+        risk_score integer not null default 0 check (risk_score between 0 and 100),
+        confidence_score integer not null default 0 check (confidence_score between 0 and 100),
+        ip_address text,
+        fqdn text,
+        cloud_provider text,
+        open_ports jsonb not null default '[]'::jsonb,
+        tags jsonb not null default '[]'::jsonb,
+        metadata jsonb not null default '{}'::jsonb,
+        first_seen timestamptz not null default now(),
+        last_seen timestamptz not null default now(),
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+    )
+    """,
+    """
+    create index if not exists easm_exposures_customer_idx
+    on easm_exposures(customer_id, status, created_at desc)
     """,
     # --- AI provider catalog + per-company AI settings ---------------------
     """

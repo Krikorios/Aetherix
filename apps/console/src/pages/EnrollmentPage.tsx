@@ -1,121 +1,138 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, CirclePlus, Copy, Download, Link as LinkIcon, RefreshCw, Search } from "lucide-react";
-import { apiGet, apiPost, apiPut } from "../api";
-import type { Customer, CustomerQuickCreateResult, CustomerUpdatePayload, InstallerBuild, InstallerPlatform, PolicyPackage, QuickDeployLink } from "../api";
-import { EmptyState, ErrorBanner, LoadingRow, SuccessBanner } from "../components";
-import { formatDate } from "../utils";
+import {
+  Apple,
+  Bell,
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  Filter,
+  Gift,
+  Link as LinkIcon,
+  Monitor,
+  Package,
+  Search,
+  SlidersHorizontal,
+  Trash2,
+  UserCircle,
+  X,
+} from "lucide-react";
+import { apiGet, apiPost } from "../api";
+import type { Customer, CustomerQuickCreateResult, InstallerPlatform, PolicyPackage, QuickDeployLink } from "../api";
+import { ErrorBanner, LoadingRow, SuccessBanner } from "../components";
 
-const PLATFORM_OPTIONS: { value: InstallerPlatform; label: string; suffix: string }[] = [
-  { value: "windows_msi", label: "Windows MSI", suffix: "MSI" },
-  { value: "windows_exe", label: "Windows EXE", suffix: "EXE" },
-  { value: "macos_pkg", label: "macOS PKG", suffix: "PKG" },
-  { value: "linux_deb", label: "Linux DEB", suffix: "DEB" },
-  { value: "linux_rpm", label: "Linux RPM", suffix: "RPM" },
+const PLATFORM_OPTIONS: { value: InstallerPlatform; label: string; os: "windows" | "linux" | "macos"; arch: string }[] = [
+  { value: "windows_exe", label: "Downloader", os: "windows", arch: "Universal" },
+  { value: "windows_msi", label: "Kit", os: "windows", arch: "Intel/AMD x86 64-bit" },
+  { value: "linux_deb", label: "Downloader", os: "linux", arch: "Debian/Ubuntu" },
+  { value: "linux_rpm", label: "Kit", os: "linux", arch: "RHEL/Fedora" },
+  { value: "macos_pkg", label: "Downloader", os: "macos", arch: "Apple M series / Intel" },
 ];
 
-const COMPANY_SIZES = ["1-10", "11-50", "51-250", "251-1000", "1000+"] as const;
-type CompanySize = (typeof COMPANY_SIZES)[number];
+const MODULES = [
+  { id: "antimalware", label: "Antimalware", os: ["windows", "macos", "linux"] },
+  { id: "advanced-threat", label: "Advanced Threat Control", os: ["windows", "macos", "linux"] },
+  { id: "anti-exploit", label: "Advanced Anti-Exploit", os: ["windows", "linux"] },
+  { id: "firewall", label: "Firewall", os: ["windows", "macos"] },
+  { id: "network", label: "Network Protection", os: ["windows", "macos"] },
+  { id: "content", label: "Content Control", os: ["windows", "macos"] },
+  { id: "antiphishing", label: "Antiphishing", os: ["windows", "macos"] },
+  { id: "web-scan", label: "Web Traffic Scan", os: ["windows", "macos"] },
+  { id: "network-defense", label: "Network Attack Defense", os: ["windows", "macos", "linux"] },
+  { id: "device", label: "Device Control", os: ["windows", "macos"] },
+  { id: "power-user", label: "Power User", os: ["windows"] },
+  { id: "encryption", label: "Encryption", os: ["windows", "macos"] },
+  { id: "patch", label: "Patch Management", os: ["windows", "macos", "linux"] },
+  { id: "integrity", label: "Integrity Monitoring", os: ["windows", "linux"] },
+  { id: "sensor", label: "Endpoint Detection Sensor", os: ["windows", "macos", "linux"] },
+  { id: "dlp", label: "Data Loss Prevention", os: ["windows", "macos"] },
+];
 
-type DeploymentSection =
-  | "details"
-  | "policy"
-  | "agentGeneral"
-  | "agentCommunication"
-  | "agentUpdate"
-  | "agentNotifications"
-  | "platforms";
+const DEFAULT_MODULES = new Set(["antimalware", "advanced-threat", "anti-exploit", "firewall", "network", "content", "antiphishing", "web-scan", "network-defense"]);
 
-const SECTION_TITLE: Record<DeploymentSection, string> = {
-  details: "Company Details",
-  policy: "Policy Package",
-  agentGeneral: "General",
-  agentCommunication: "Communication",
-  agentUpdate: "Update",
-  agentNotifications: "Notifications",
-  platforms: "Installer Platforms",
-};
-
-const AGENT_SECTIONS: DeploymentSection[] = ["agentGeneral", "agentCommunication", "agentUpdate", "agentNotifications"];
-const WIDE_SECTIONS: DeploymentSection[] = ["agentCommunication", "agentUpdate", "platforms"];
-
-type DeploymentDraft = {
+type PackageRow = {
+  id: string;
   name: string;
-  industry: string;
-  country: string;
-  company_size: CompanySize;
-  policy_package_id: string;
-  platforms: InstallerPlatform[];
-  update_channel: "stable" | "slow" | "fast";
-  update_interval_hours: number;
-  proxy_enabled: boolean;
-  proxy_server: string;
-  proxy_port: string;
-  silent_mode: boolean;
-  show_alerts: boolean;
-  telemetry_enabled: boolean;
-};
-
-type DeploymentResult = {
+  type: string;
+  language: string;
+  description: string;
+  company: string;
   customer: Customer;
-  policyName: string;
-  installers: InstallerBuild[];
-  quick_deploy_links: QuickDeployLink[];
 };
 
-function defaultDraft(): DeploymentDraft {
+type Draft = {
+  name: string;
+  description: string;
+  language: string;
+  customerId: string;
+  companyName: string;
+  operationMode: "detect_prevent" | "detect_only" | "monitor";
+  modules: string[];
+  roles: string[];
+};
+
+function defaultDraft(customers: Customer[]): Draft {
+  const first = customers[0];
   return {
     name: "",
-    industry: "Professional Services",
-    country: "US",
-    company_size: "11-50",
-    policy_package_id: "",
-    platforms: ["windows_msi", "macos_pkg"],
-    update_channel: "stable",
-    update_interval_hours: 1,
-    proxy_enabled: false,
-    proxy_server: "",
-    proxy_port: "8080",
-    silent_mode: false,
-    show_alerts: true,
-    telemetry_enabled: false,
+    description: "",
+    language: "English",
+    customerId: first?.id ?? "new",
+    companyName: first?.name ?? "",
+    operationMode: "detect_prevent",
+    modules: Array.from(DEFAULT_MODULES),
+    roles: ["workstations", "servers"],
   };
 }
 
-function platformLabel(platform: InstallerPlatform | null): string {
-  return PLATFORM_OPTIONS.find((p) => p.value === platform)?.label ?? "Installer";
+function osIcon(os: "windows" | "linux" | "macos") {
+  if (os === "macos") return <Apple size={17} />;
+  if (os === "linux") return <Package size={16} />;
+  return <Monitor size={16} />;
 }
 
-function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+function packageType(pkg: PolicyPackage | undefined): string {
+  if (!pkg) return "BEST";
+  if (pkg.package_type === "custom") return "CUSTOM";
+  if (pkg.package_type === "industry") return "INDUSTRY";
+  return "BEST";
+}
+
+function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
-  function copy() {
-    void navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    });
-  }
   return (
-    <button type="button" className="btnSecondary" onClick={copy} aria-label={label}>
-      {copied ? <Check size={16} /> : <Copy size={16} />}
-      {copied ? "Copied" : label}
+    <button
+      type="button"
+      className="installIconButton"
+      onClick={() => {
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1400);
+        });
+      }}
+      aria-label="Copy download link"
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
 }
 
 export function EnrollmentPage() {
-  const [viewMode, setViewMode] = useState<"catalog" | "detail">("catalog");
-  const [detailMode, setDetailMode] = useState<"new" | "existing">("new");
-  const [section, setSection] = useState<DeploymentSection>("details");
-  const [agentExpanded, setAgentExpanded] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [policyPackages, setPolicyPackages] = useState<PolicyPackage[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [draft, setDraft] = useState<DeploymentDraft>(defaultDraft());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [companyFilter, setCompanyFilter] = useState("all");
+  const [nameFilter, setNameFilter] = useState("");
+  const [descriptionFilter, setDescriptionFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [draft, setDraft] = useState<Draft>(() => defaultDraft([]));
+  const [quickLinks, setQuickLinks] = useState<QuickDeployLink[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [result, setResult] = useState<DeploymentResult | null>(null);
-  const [filterQuery, setFilterQuery] = useState("");
   const mountedRef = useRef(true);
 
   async function load() {
@@ -127,10 +144,9 @@ export function EnrollmentPage() {
       if (!mountedRef.current) return;
       setCustomers(nextCustomers);
       setPolicyPackages(nextPackages);
-      setDraft((prev) => ({ ...prev, policy_package_id: prev.policy_package_id || nextPackages[0]?.id || "" }));
       setError(null);
     } catch (err) {
-      if (mountedRef.current) setError(err instanceof Error ? err.message : "Failed to load deployment data");
+      if (mountedRef.current) setError(err instanceof Error ? err.message : "Failed to load installation packages");
     } finally {
       if (mountedRef.current) setIsLoading(false);
     }
@@ -140,738 +156,396 @@ export function EnrollmentPage() {
     mountedRef.current = true;
     void load();
     return () => { mountedRef.current = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function openNew() {
-    const next = defaultDraft();
-    next.policy_package_id = policyPackages[0]?.id ?? "";
-    setDraft(next);
-    setSelectedCustomer(null);
-    setDetailMode("new");
-    setSection("details");
-    setError(null);
-    setSuccess(null);
-    setViewMode("detail");
-  }
-
-  function openExisting(customer: Customer) {
-    setDraft({
-      name: customer.name,
-      industry: customer.industry ?? "Professional Services",
-      country: customer.country ?? "US",
-      company_size: (customer.company_size as CompanySize) ?? "11-50",
-      policy_package_id: customer.assigned_policy_package_id ?? policyPackages[0]?.id ?? "",
-      platforms: ["windows_msi", "macos_pkg"],
-      update_channel: "stable",
-      update_interval_hours: 1,
-      proxy_enabled: false,
-      proxy_server: "",
-      proxy_port: "8080",
-      silent_mode: false,
-      show_alerts: true,
-      telemetry_enabled: false,
+  const rows = useMemo<PackageRow[]>(() => {
+    return customers.map((customer) => {
+      const pkg = policyPackages.find((item) => item.id === customer.assigned_policy_package_id);
+      return {
+        id: customer.id,
+        name: customer.assigned_policy_name ? `${customer.assigned_policy_name} Package` : `${customer.name} Installation Package`,
+        type: packageType(pkg),
+        language: "English",
+        description: pkg?.description || customer.industry || "N/A",
+        company: customer.name,
+        customer,
+      };
     });
-    setSelectedCustomer(customer);
-    setDetailMode("existing");
-    setSection("details");
+  }, [customers, policyPackages]);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      const matchesCompany = companyFilter === "all" || row.customer.id === companyFilter;
+      const matchesName = row.name.toLowerCase().includes(nameFilter.trim().toLowerCase());
+      const matchesDescription = row.description.toLowerCase().includes(descriptionFilter.trim().toLowerCase());
+      const matchesType = typeFilter === "all" || row.type === typeFilter;
+      return matchesCompany && matchesName && matchesDescription && matchesType;
+    });
+  }, [companyFilter, descriptionFilter, nameFilter, rows, typeFilter]);
+
+  const selectedRows = rows.filter((row) => selectedIds.has(row.id));
+  const activeRow = selectedRows[0] ?? filteredRows[0] ?? null;
+  const allVisibleSelected = filteredRows.length > 0 && filteredRows.every((row) => selectedIds.has(row.id));
+
+  function toggleSelection(id: string) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function resetFilters() {
+    setCompanyFilter("all");
+    setNameFilter("");
+    setDescriptionFilter("");
+    setTypeFilter("all");
+  }
+
+  function openCreate() {
+    setDraft(defaultDraft(customers));
+    setQuickLinks([]);
     setError(null);
     setSuccess(null);
-    setViewMode("detail");
+    setCreateOpen(true);
   }
 
-  function closeDetail() {
-    setViewMode("catalog");
-    setError(null);
-    setSuccess(null);
+  function setDraftField<K extends keyof Draft>(key: K, value: Draft[K]) {
+    setDraft((current) => ({ ...current, [key]: value }));
   }
 
-  function setDraftField<K extends keyof DeploymentDraft>(key: K, value: DeploymentDraft[K]) {
-    setDraft((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function togglePlatform(platform: InstallerPlatform) {
-    setDraft((prev) => ({
-      ...prev,
-      platforms: prev.platforms.includes(platform)
-        ? prev.platforms.length === 1
-          ? prev.platforms
-          : prev.platforms.filter((p) => p !== platform)
-        : [...prev.platforms, platform],
+  function toggleModule(id: string) {
+    setDraft((current) => ({
+      ...current,
+      modules: current.modules.includes(id)
+        ? current.modules.filter((item) => item !== id)
+        : [...current.modules, id],
     }));
   }
 
-  async function handleSave(event: FormEvent) {
+  async function createPackage(event: FormEvent) {
     event.preventDefault();
-    if (!draft.name.trim()) { setError("Company name is required"); return; }
-    setError(null); setSuccess(null); setIsWorking(true);
-    try {
-      if (detailMode === "new") {
-        const created = await apiPost<CustomerQuickCreateResult>("/customers/quick-create", {
-          name: draft.name.trim(),
-          industry: draft.industry.trim() || null,
-          country: draft.country.trim() || null,
-          company_size: draft.company_size,
-          policy_package_id: draft.policy_package_id || null,
-          platforms: draft.platforms,
-          installer_ttl_seconds: 86_400,
-          created_by: "msp-admin",
-        });
-        setResult({
-          customer: created.customer,
-          policyName: created.assignment.policy_name,
-          installers: created.installers,
-          quick_deploy_links: created.quick_deploy_links,
-        });
-        await load();
-        closeDetail();
-        setSuccess(`${created.customer.name} is ready for deployment.`);
-      } else if (selectedCustomer) {
-        const payload: CustomerUpdatePayload = {
-          name: draft.name.trim(),
-          industry: draft.industry.trim() || null,
-          country: draft.country.trim() || null,
-          company_size: draft.company_size,
-          policy_package_id: draft.policy_package_id || null,
-          updated_by: "msp-admin",
-        };
-        const updated = await apiPut<Customer>(`/customers/${selectedCustomer.id}`, payload);
-        setSelectedCustomer(updated);
-        setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-        setSuccess(`${updated.name} updated.`);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Operation failed");
-    } finally {
-      setIsWorking(false);
+    if (!draft.name.trim()) {
+      setError("Package name is required.");
+      return;
     }
-  }
+    if (draft.customerId === "new" && !draft.companyName.trim()) {
+      setError("Company name is required for a new company package.");
+      return;
+    }
 
-  async function handleGenerate() {
-    if (!selectedCustomer) return;
-    setError(null); setSuccess(null); setIsWorking(true);
+    setIsWorking(true);
+    setError(null);
+    setSuccess(null);
     try {
-      const payload: CustomerUpdatePayload = {
-        name: draft.name.trim(),
-        industry: draft.industry.trim() || null,
-        country: draft.country.trim() || null,
-        company_size: draft.company_size,
-        policy_package_id: draft.policy_package_id || null,
-        updated_by: "msp-admin",
-      };
-      const updated = await apiPut<Customer>(`/customers/${selectedCustomer.id}`, payload);
-      const body = { platforms: draft.platforms, ttl_seconds: 86_400, created_by: "msp-admin" };
-      const [installers, links] = await Promise.all([
-        apiPost<InstallerBuild[]>(`/customers/${updated.id}/installers`, body),
-        apiPost<QuickDeployLink[]>(`/customers/${updated.id}/quick-deploy`, body),
-      ]);
-      setResult({
-        customer: updated,
-        policyName: updated.assigned_policy_name ?? "No policy",
-        installers,
-        quick_deploy_links: links,
+      const selectedCustomer = customers.find((customer) => customer.id === draft.customerId);
+      const created = await apiPost<CustomerQuickCreateResult>("/customers/quick-create", {
+        name: selectedCustomer?.name ?? draft.companyName.trim(),
+        industry: draft.description.trim() || selectedCustomer?.industry || null,
+        country: selectedCustomer?.country || "US",
+        company_size: selectedCustomer?.company_size || "11-50",
+        policy_package_id: policyPackages[0]?.id ?? null,
+        platforms: PLATFORM_OPTIONS.map((platform) => platform.value),
+        installer_ttl_seconds: 86_400,
+        created_by: "msp-admin",
+        install_profile: {
+          display_name: draft.name.trim(),
+          description: draft.description.trim() || null,
+          language: draft.language,
+          operation_mode: draft.operationMode,
+          modules: draft.modules,
+          roles: draft.roles,
+        },
       });
+      setQuickLinks(created.quick_deploy_links);
+      setSelectedIds(new Set([created.customer.id]));
       await load();
-      closeDetail();
-      setSuccess(`${updated.name} installers generated.`);
+      setSuccess(`${draft.name.trim()} was created and installers are ready.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Generate failed");
+      setError(err instanceof Error ? err.message : "Failed to create installation package");
     } finally {
       setIsWorking(false);
     }
   }
 
-  const filteredCustomers = useMemo(() => {
-    const q = filterQuery.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter((c) =>
-      `${c.name} ${c.customer_number} ${c.industry ?? ""} ${c.company_size ?? ""}`.toLowerCase().includes(q),
-    );
-  }, [customers, filterQuery]);
-
-  const selectedPackage = useMemo(
-    () => policyPackages.find((p) => p.id === draft.policy_package_id) ?? policyPackages[0] ?? null,
-    [policyPackages, draft.policy_package_id],
-  );
-
-  const currentTitle = detailMode === "new" ? "New Deployment" : (selectedCustomer?.name ?? "Deployment");
-  const sectionParent = AGENT_SECTIONS.includes(section) ? "Agent" : "General";
-  const isWideSection = WIDE_SECTIONS.includes(section);
-
-  // ─── DETAIL VIEW ─────────────────────────────────────────────────────────
-  if (viewMode === "detail") {
-    return (
-      <div className="policyDetailPage">
-        <aside className="policyDetailSidebar" aria-label="Deployment settings">
-          <div className="policyDetailSearch">
-            <input placeholder="Search settings" aria-label="Search" />
-          </div>
-          <nav>
-            <section>
-              <h2>General</h2>
-              <button
-                type="button"
-                className={section === "details" ? "active" : ""}
-                onClick={() => setSection("details")}
-              >
-                Company
-              </button>
-              <button
-                type="button"
-                className={section === "policy" ? "active" : ""}
-                onClick={() => setSection("policy")}
-              >
-                Policy package
-              </button>
-              <button
-                type="button"
-                className={section === "platforms" ? "active" : ""}
-                onClick={() => setSection("platforms")}
-              >
-                Installer platforms
-                <span>{draft.platforms.length}/{PLATFORM_OPTIONS.length}</span>
-              </button>
-            </section>
-            <section>
-              <h2>Agent</h2>
-              <button
-                type="button"
-                className={AGENT_SECTIONS.includes(section) ? "active" : ""}
-                aria-expanded={agentExpanded}
-                onClick={() => {
-                  if (!agentExpanded) setSection("agentGeneral");
-                  setAgentExpanded((v) => !v);
-                }}
-              >
-                Agent configuration
-                <span style={{ display: "flex", alignItems: "center" }}>
-                  {agentExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </span>
-              </button>
-              {agentExpanded ? (
-                <div className="policySidebarChildren">
-                  <button
-                    type="button"
-                    className={section === "agentGeneral" ? "active" : ""}
-                    onClick={() => setSection("agentGeneral")}
-                  >
-                    General
-                  </button>
-                  <button
-                    type="button"
-                    className={section === "agentCommunication" ? "active" : ""}
-                    onClick={() => setSection("agentCommunication")}
-                  >
-                    Communication
-                  </button>
-                  <button
-                    type="button"
-                    className={section === "agentUpdate" ? "active" : ""}
-                    onClick={() => setSection("agentUpdate")}
-                  >
-                    Update
-                  </button>
-                  <button
-                    type="button"
-                    className={section === "agentNotifications" ? "active" : ""}
-                    onClick={() => setSection("agentNotifications")}
-                  >
-                    Notifications
-                  </button>
-                </div>
-              ) : null}
-            </section>
-          </nav>
-        </aside>
-
-        <form className="policyDetailWorkspace" onSubmit={handleSave}>
-          <header className="policyDetailHeader">
-            <div className="policyDetailCrumbs">
-              <button type="button" onClick={closeDetail}>Installers</button>
-              <span>/</span>
-              <button type="button" onClick={closeDetail}>{currentTitle}</button>
-              <span>/</span>
-              <strong>{SECTION_TITLE[section]}</strong>
-            </div>
-            <a href="https://support.aetherix.local" target="_blank" rel="noreferrer">
-              Get help from Support Center
-            </a>
-          </header>
-
-          {error ? <ErrorBanner message={error} /> : null}
-          {success ? <SuccessBanner message={success} /> : null}
-
-          <main className={`policyDetailContent ${isWideSection ? "wide" : ""}`}>
-
-            {/* ── Company Details ── */}
-            {section === "details" ? (
-              <section className="policyDetailSection policyAgentBlock">
-                <h1>Company Details</h1>
-                <p>Configure the company information for this managed deployment.</p>
-                <label className="policyDetailField">
-                  <span>Company name*:</span>
-                  <input
-                    required
-                    value={draft.name}
-                    onChange={(e) => setDraftField("name", e.target.value)}
-                    placeholder="Northwind Dental"
-                    maxLength={160}
-                    autoFocus
-                  />
-                </label>
-                <label className="policyDetailField">
-                  <span>Industry:</span>
-                  <input
-                    value={draft.industry}
-                    onChange={(e) => setDraftField("industry", e.target.value)}
-                    maxLength={80}
-                  />
-                </label>
-                <label className="policyDetailField">
-                  <span>Country:</span>
-                  <input
-                    value={draft.country}
-                    onChange={(e) => setDraftField("country", e.target.value)}
-                    maxLength={80}
-                  />
-                </label>
-                <label className="policyDetailField">
-                  <span>Company size:</span>
-                  <select
-                    value={draft.company_size}
-                    onChange={(e) => setDraftField("company_size", e.target.value as CompanySize)}
-                  >
-                    {COMPANY_SIZES.map((s) => (
-                      <option key={s} value={s}>{s} endpoints</option>
-                    ))}
-                  </select>
-                </label>
-                {detailMode === "existing" && selectedCustomer ? (
-                  <div className="policyHistoryBlock" style={{ marginTop: 28 }}>
-                    <h2>Deployment info</h2>
-                    <dl>
-                      <div><dt>Customer #:</dt><dd>{selectedCustomer.customer_number}</dd></div>
-                      <div><dt>Status:</dt><dd>{selectedCustomer.status ?? "Active"}</dd></div>
-                      <div><dt>Assigned policy:</dt><dd>{selectedCustomer.assigned_policy_name ?? "No policy"}</dd></div>
-                    </dl>
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
-
-            {/* ── Policy Package ── */}
-            {section === "policy" ? (
-              <section className="policyDetailSection policyAgentBlock">
-                <h1>Policy Package</h1>
-                <p>Assign a policy package to pre-configure protection modules for this deployment.</p>
-                <label className="policyDetailField">
-                  <span>Policy package:</span>
-                  <select
-                    value={draft.policy_package_id}
-                    onChange={(e) => setDraftField("policy_package_id", e.target.value)}
-                    disabled={policyPackages.length === 0}
-                  >
-                    {policyPackages.map((pkg) => (
-                      <option key={pkg.id} value={pkg.id}>{pkg.name}</option>
-                    ))}
-                  </select>
-                </label>
-                {selectedPackage ? (
-                  <div className="policyAgentSubsection" style={{ marginTop: 16 }}>
-                    <label className="policyInlineField">
-                      <span>Version:</span>
-                      <input readOnly value={`v${selectedPackage.version}`} />
-                    </label>
-                    <label className="policyInlineField">
-                      <span>DLP rules:</span>
-                      <input
-                        readOnly
-                        value={String(
-                          Array.isArray(selectedPackage.payload.dlp_rules)
-                            ? selectedPackage.payload.dlp_rules.length
-                            : 0,
-                        )}
-                      />
-                    </label>
-                    <label className="policyInlineField">
-                      <span>Hardening:</span>
-                      <input readOnly value={selectedPackage.payload.hardening_rules ? "Enabled" : "Custom"} />
-                    </label>
-                  </div>
-                ) : null}
-              </section>
-            ) : null}
-
-            {/* ── Installer Platforms ── */}
-            {section === "platforms" ? (
-              <section className="policyDetailSection policyAgentBlock wideAgent">
-                <h1>Installer Platforms</h1>
-                <p>Select the operating system platforms for which installers will be generated.</p>
-                <div className="policyAccordionList dark" style={{ marginTop: 16 }}>
-                  {PLATFORM_OPTIONS.map((platform) => (
-                    <article key={platform.value} className="policyModuleCard">
-                      <button
-                        type="button"
-                        className="policyModuleHead"
-                        onClick={() => togglePlatform(platform.value)}
-                      >
-                        <span>
-                          <strong>{platform.label}</strong>
-                          <small>.{platform.suffix.toLowerCase()} installer package</small>
-                        </span>
-                        <span className="policyModuleHeadRight">
-                          <label className="toggleRow" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={draft.platforms.includes(platform.value)}
-                              onChange={() => togglePlatform(platform.value)}
-                            />
-                            {draft.platforms.includes(platform.value) ? "Included" : "Excluded"}
-                          </label>
-                        </span>
-                      </button>
-                    </article>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-
-            {/* ── Agent General ── */}
-            {section === "agentGeneral" ? (
-              <section className="policyDetailSection policyAgentBlock">
-                <h1>General</h1>
-                <p>Configure general agent settings including the update ring and telemetry.</p>
-                <div className="policyAgentStack">
-                  <label className="policyInlineField">
-                    <span>Update channel:</span>
-                    <select
-                      value={draft.update_channel}
-                      onChange={(e) =>
-                        setDraftField("update_channel", e.target.value as DeploymentDraft["update_channel"])
-                      }
-                    >
-                      <option value="stable">Stable</option>
-                      <option value="slow">Slow ring</option>
-                      <option value="fast">Fast ring</option>
-                    </select>
-                  </label>
-                  <label
-                    className="policySwitchRow"
-                    onClick={() => setDraftField("telemetry_enabled", !draft.telemetry_enabled)}
-                  >
-                    <span className={`policySwitch ${draft.telemetry_enabled ? "on" : ""}`} aria-hidden="true" />
-                    Security Telemetry
-                  </label>
-                  <p>Export security event raw data to SIEM solutions for advanced analysis and correlation.</p>
-                </div>
-              </section>
-            ) : null}
-
-            {/* ── Agent Communication ── */}
-            {section === "agentCommunication" ? (
-              <section className="policyDetailSection policyAgentBlock wideAgent">
-                <h1>Communication</h1>
-                <p>Configure proxy and relay communication settings for managed endpoints.</p>
-                <div className="policyAgentStack">
-                  <h2>Proxy configuration</h2>
-                  <label
-                    className="policySwitchRow"
-                    onClick={() => setDraftField("proxy_enabled", !draft.proxy_enabled)}
-                  >
-                    <span className={`policySwitch ${draft.proxy_enabled ? "on" : ""}`} aria-hidden="true" />
-                    Enable proxy
-                  </label>
-                  <label className="policyInlineField">
-                    <span>Server:</span>
-                    <input
-                      value={draft.proxy_server}
-                      onChange={(e) => setDraftField("proxy_server", e.target.value)}
-                      placeholder="http://proxy"
-                      disabled={!draft.proxy_enabled}
-                    />
-                  </label>
-                  <label className="policyInlineField">
-                    <span>Port:</span>
-                    <input
-                      type="number"
-                      value={draft.proxy_port}
-                      onChange={(e) => setDraftField("proxy_port", e.target.value)}
-                      disabled={!draft.proxy_enabled}
-                    />
-                  </label>
-                </div>
-                <div className="policyAgentSubsection">
-                  <h2>Communication between endpoints and Cloud Services</h2>
-                  <label className="policyRadioRow">
-                    <input type="radio" name="cloudProxy" defaultChecked /> Use previous settings
-                  </label>
-                  <label className="policyRadioRow">
-                    <input type="radio" name="cloudProxy" /> Autodetect proxy settings
-                  </label>
-                  <label className="policyRadioRow">
-                    <input type="radio" name="cloudProxy" /> Do not use proxy
-                  </label>
-                </div>
-              </section>
-            ) : null}
-
-            {/* ── Agent Update ── */}
-            {section === "agentUpdate" ? (
-              <section className="policyDetailSection policyAgentBlock wideAgent">
-                <h1>Update</h1>
-                <p>Configure how the security agent downloads and installs updates.</p>
-                <h2>Scheduler</h2>
-                <label className="policyInlineField">
-                  <span>Check for updates every (hours):</span>
-                  <input
-                    type="number"
-                    value={draft.update_interval_hours}
-                    onChange={(e) => setDraftField("update_interval_hours", Number(e.target.value))}
-                    min={1}
-                    max={72}
-                  />
-                </label>
-                <label className="policyInlineField">
-                  <span>Update ring:</span>
-                  <select
-                    value={draft.update_channel}
-                    onChange={(e) =>
-                      setDraftField("update_channel", e.target.value as DeploymentDraft["update_channel"])
-                    }
-                  >
-                    <option value="slow">Slow ring</option>
-                    <option value="stable">Stable</option>
-                    <option value="fast">Fast ring</option>
-                  </select>
-                </label>
-                <h2>Update locations</h2>
-                <div className="policyUpdateLocation">
-                  <input placeholder="Add location" />
-                  <label><input type="checkbox" /> Use proxy</label>
-                  <button type="button">+</button>
-                </div>
-                <div className="policyAssignmentTable updateTable">
-                  <div>
-                    <span>Priority</span>
-                    <span>Server</span>
-                    <span>Proxy</span>
-                    <span>Actions</span>
-                  </div>
-                  <div>
-                    <span>1</span>
-                    <span>Aetherix Relay Pool</span>
-                    <span><input type="checkbox" /></span>
-                    <span>Edit</span>
-                  </div>
-                </div>
-                <label className="policyCheckboxRow">
-                  <input type="checkbox" defaultChecked /> Use Aetherix managed update service as fallback
-                </label>
-              </section>
-            ) : null}
-
-            {/* ── Agent Notifications ── */}
-            {section === "agentNotifications" ? (
-              <section className="policyDetailSection policyAgentBlock">
-                <h1>Notifications</h1>
-                <p>Customize how the security agent displays notifications on the endpoint.</p>
-                <div className="policyAgentStack">
-                  <label
-                    className="policySwitchRow"
-                    onClick={() => setDraftField("silent_mode", !draft.silent_mode)}
-                  >
-                    <span className={`policySwitch ${!draft.silent_mode ? "on" : ""}`} aria-hidden="true" />
-                    Show icon in notification area
-                  </label>
-                  <p>A system reboot may be required to apply this setting.</p>
-                  <label
-                    className="policySwitchRow"
-                    onClick={() => setDraftField("show_alerts", !draft.show_alerts)}
-                  >
-                    <span className={`policySwitch ${draft.show_alerts ? "on" : ""}`} aria-hidden="true" />
-                    Display alert pop-ups
-                  </label>
-                  <p>Alert pop-ups require user action. Disabling this option applies the recommended action on the endpoint.</p>
-                  <label className="policySwitchRow">
-                    <span className="policySwitch" aria-hidden="true" />
-                    Display notification pop-ups
-                  </label>
-                  <p>Notifications provide endpoint users with critical security information without requiring user interaction.</p>
-                </div>
-              </section>
-            ) : null}
-
-          </main>
-
-          <footer className="policyDetailFooter">
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {detailMode === "existing" ? (
-                <button
-                  type="button"
-                  className="policySaveButton"
-                  disabled={isWorking || !draft.name.trim() || draft.platforms.length === 0}
-                  onClick={() => void handleGenerate()}
-                >
-                  {isWorking
-                    ? <RefreshCw size={14} style={{ marginRight: 6 }} />
-                    : <Download size={14} style={{ marginRight: 6 }} />}
-                  Save & Generate
-                </button>
-              ) : null}
-              <button
-                className="policySaveButton"
-                type="submit"
-                disabled={isWorking || !draft.name.trim()}
-              >
-                {isWorking ? <RefreshCw size={14} style={{ marginRight: 6 }} /> : null}
-                {detailMode === "new" ? "Create & Deploy" : "Save changes"}
-              </button>
-            </div>
-            <button className="policyCancelButton" type="button" onClick={closeDetail}>
-              Cancel
-            </button>
-          </footer>
-        </form>
-      </div>
-    );
+  async function sendLinks() {
+    if (!activeRow) return;
+    setIsWorking(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const links = await apiPost<QuickDeployLink[]>(`/customers/${activeRow.customer.id}/quick-deploy`, {
+        platforms: PLATFORM_OPTIONS.map((platform) => platform.value),
+        ttl_seconds: 86_400,
+        created_by: "msp-admin",
+      });
+      setQuickLinks(links);
+      setSuccess(`Download links prepared for ${activeRow.company}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to prepare download links");
+    } finally {
+      setIsWorking(false);
+    }
   }
 
-  // ─── CATALOG VIEW ─────────────────────────────────────────────────────────
+  function deleteSelected() {
+    if (selectedIds.size === 0) return;
+    setCustomers((current) => current.filter((customer) => !selectedIds.has(customer.id)));
+    setSelectedIds(new Set());
+    setSuccess("Selected packages removed from this view. Backend deletion is not wired for installer packages yet.");
+  }
+
   return (
-    <div className="policyCatalogPage">
-      <header className="policyCatalogTopbar">
-        <h1>Installers</h1>
+    <main className="installPackagesPage">
+      <div className="installUtilityBar" aria-label="Console utilities">
+        <button type="button" aria-label="User"><UserCircle size={15} /></button>
+        <button type="button" aria-label="Promotions"><Gift size={15} /></button>
+        <button type="button" aria-label="Notifications"><Bell size={15} /></button>
+      </div>
+
+      <header className="installHeader">
+        <h1>Installation packages</h1>
+        <div>
+          <button type="button" className="installTinyButton" onClick={resetFilters}>Reset view</button>
+          <button type="button" className="installIconButton active" aria-label="Filters"><Filter size={15} /></button>
+          <button type="button" className="installIconButton" aria-label="View settings"><SlidersHorizontal size={15} /></button>
+        </div>
       </header>
 
       {error ? <ErrorBanner message={error} /> : null}
       {success ? <SuccessBanner message={success} /> : null}
 
-      {result ? (
-        <section className="panel deployResult">
-          <div className="panelHeader">
-            <div>
-              <h2>{result.customer.name}</h2>
-              <span>{result.customer.customer_number} · {result.policyName}</span>
-            </div>
-            <div className="panelActions">
-              <span className="badge">Ready</span>
-              <button type="button" className="btnGhost" onClick={() => setResult(null)} aria-label="Dismiss">
-                Dismiss
-              </button>
-            </div>
-          </div>
-          <div className="artifactGrid">
-            {result.quick_deploy_links.map((link) => (
-              <article className="artifactCard" key={link.id}>
-                <header>
-                  <LinkIcon size={18} />
-                  <strong>{platformLabel(link.platform)}</strong>
-                </header>
-                <code className="tokenValue">{link.url}</code>
-                <div className="artifactActions">
-                  <CopyButton value={link.url} label="Copy link" />
-                  <span>Expires {formatDate(link.expires_at)}</span>
+      <section className="installToolbar" aria-label="Installation package actions">
+        <button type="button" className="installPrimary" onClick={openCreate}>Create</button>
+        <div className="installDownloadWrap">
+          <button type="button" className="installTextButton" onClick={() => setDownloadOpen((open) => !open)} disabled={!activeRow}>
+            Download <ChevronDown size={14} />
+          </button>
+          {downloadOpen && activeRow ? (
+            <div className="installDownloadMenu">
+              <label className="installFlyoutSearch">
+                <input aria-label="Search installer downloads" />
+                <Search size={15} />
+              </label>
+              {(["windows", "linux", "macos"] as const).map((os) => (
+                <div className="installDownloadColumn" key={os}>
+                  <h2>{osIcon(os)} {os === "macos" ? "macOS" : os[0].toUpperCase() + os.slice(1)} installers</h2>
+                  {PLATFORM_OPTIONS.filter((platform) => platform.os === os).map((platform) => (
+                    <a key={platform.value} href="#" onClick={(event) => event.preventDefault()}>
+                      <span>{platform.label}</span>
+                      <small>{platform.arch}</small>
+                      <Check size={13} />
+                    </a>
+                  ))}
                 </div>
-              </article>
-            ))}
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <button type="button" className="installTextButton" onClick={sendLinks} disabled={!activeRow || isWorking}>
+          Send download links
+        </button>
+        <button type="button" className="installDanger" onClick={deleteSelected} disabled={selectedIds.size === 0}>
+          <Trash2 size={13} /> Delete
+        </button>
+      </section>
+
+      <section className="installFilters" aria-label="Filters">
+        <label>
+          <span>Company</span>
+          <select value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)}>
+            <option value="all">All</option>
+            {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Name</span>
+          <input value={nameFilter} onChange={(event) => setNameFilter(event.target.value)} />
+          <Search size={14} />
+        </label>
+        <label>
+          <span>Description</span>
+          <input value={descriptionFilter} onChange={(event) => setDescriptionFilter(event.target.value)} />
+          <Search size={14} />
+        </label>
+        <label>
+          <span>Type</span>
+          <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+            <option value="all">All</option>
+            <option value="BEST">BEST</option>
+            <option value="CUSTOM">CUSTOM</option>
+            <option value="INDUSTRY">INDUSTRY</option>
+          </select>
+        </label>
+        <button type="button" onClick={resetFilters}>Reset filters</button>
+      </section>
+
+      <section className="installTable" aria-label="Installation packages table">
+        <div className="installTableHead">
+          <label>
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={() => {
+                setSelectedIds((current) => {
+                  if (allVisibleSelected) return new Set([...current].filter((id) => !filteredRows.some((row) => row.id === id)));
+                  return new Set([...current, ...filteredRows.map((row) => row.id)]);
+                });
+              }}
+            />
+            <span>Name</span>
+          </label>
+          <span>Type</span>
+          <span>Language</span>
+          <span>Description</span>
+          <span>Company</span>
+        </div>
+        {isLoading ? <LoadingRow label="Loading installation packages" /> : null}
+        {!isLoading && filteredRows.length === 0 ? (
+          <div className="installEmpty">No installation packages match the current filters.</div>
+        ) : null}
+        {filteredRows.map((row) => {
+          const selected = selectedIds.has(row.id);
+          return (
+            <button
+              type="button"
+              key={row.id}
+              className={selected ? "installTableRow selected" : "installTableRow"}
+              onClick={() => toggleSelection(row.id)}
+            >
+              <span>
+                <input type="checkbox" checked={selected} onChange={() => toggleSelection(row.id)} onClick={(event) => event.stopPropagation()} />
+                <strong>{row.name}</strong>
+              </span>
+              <span>{row.type}</span>
+              <span>{row.language}</span>
+              <span>{row.description}</span>
+              <span>{row.company}</span>
+            </button>
+          );
+        })}
+      </section>
+
+      {quickLinks.length > 0 ? (
+        <section className="installLinkTray" aria-label="Prepared download links">
+          <div>
+            <strong>Prepared download links</strong>
+            <span>{quickLinks.length} link{quickLinks.length === 1 ? "" : "s"} ready to send</span>
           </div>
-          <div className="artifactGrid directInstallers">
-            {result.installers.map((installer) => (
-              <article className="artifactCard" key={installer.id}>
-                <header>
-                  <Download size={18} />
-                  <strong>{platformLabel(installer.platform)}</strong>
-                </header>
-                <div className="policyMeta compactMeta">
-                  <div className="metaItem">
-                    <span>Signing</span>
-                    <strong>{installer.signing_status}</strong>
-                  </div>
-                  <div className="metaItem">
-                    <span>SHA-256</span>
-                    <code>{installer.artifact_sha256?.slice(0, 16)}...</code>
-                  </div>
-                </div>
-                {installer.enrollment_token ? (
-                  <CopyButton value={installer.enrollment_token} label="Copy token" />
-                ) : null}
-              </article>
-            ))}
-          </div>
+          {quickLinks.slice(0, 5).map((link) => (
+            <code key={link.id}>{link.platform ?? "any"}: {link.url}<CopyButton value={link.url} /></code>
+          ))}
         </section>
       ) : null}
 
-      <section className="policyCatalogPanel" aria-label="Deployments table">
-        <div className="policyCatalogToolbar">
-          <button className="policyToolbarButton primary" type="button" onClick={openNew}>
-            <CirclePlus size={16} /> Add
-          </button>
-          <button className="policyToolbarButton primary" type="button" onClick={() => void load()}>
-            <RefreshCw size={16} /> Refresh
-          </button>
-          <div className="searchField" style={{ marginLeft: "auto" }}>
-            <Search size={14} />
-            <input
-              placeholder="Search deployments"
-              value={filterQuery}
-              onChange={(e) => setFilterQuery(e.target.value)}
-            />
-          </div>
+      {createOpen ? (
+        <div className="installCreateOverlay" role="dialog" aria-modal="true" aria-label="Create Installation Package">
+          <form className="installCreatePanel" onSubmit={createPackage}>
+            <header>
+              <h2>Create Installation Package</h2>
+              <button type="button" className="installIconButton" onClick={() => setCreateOpen(false)} aria-label="Close"><X size={18} /></button>
+            </header>
+            <div className="installCreateContent">
+              <section className="installCreateGeneral">
+                <h3>General</h3>
+                <label>
+                  <span>Name*:</span>
+                  <input required value={draft.name} onChange={(event) => setDraftField("name", event.target.value)} placeholder="Type here" autoFocus />
+                </label>
+                <label>
+                  <span>Description:</span>
+                  <input value={draft.description} onChange={(event) => setDraftField("description", event.target.value)} placeholder="Type here" />
+                </label>
+                <label>
+                  <span>Language:</span>
+                  <select value={draft.language} onChange={(event) => setDraftField("language", event.target.value)}>
+                    <option>English</option>
+                    <option>Spanish</option>
+                    <option>French</option>
+                    <option>German</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Company*:</span>
+                  <select
+                    value={draft.customerId}
+                    onChange={(event) => {
+                      const customer = customers.find((item) => item.id === event.target.value);
+                      setDraft((current) => ({ ...current, customerId: event.target.value, companyName: customer?.name ?? "" }));
+                    }}
+                  >
+                    <option value="new">Create new company</option>
+                    {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                  </select>
+                </label>
+                {draft.customerId === "new" ? (
+                  <label>
+                    <span>New company:</span>
+                    <input value={draft.companyName} onChange={(event) => setDraftField("companyName", event.target.value)} placeholder="Company name" />
+                  </label>
+                ) : null}
+
+                <h4>Security modules and roles</h4>
+                <label>
+                  <span>Operation mode:</span>
+                  <select value={draft.operationMode} onChange={(event) => setDraftField("operationMode", event.target.value as Draft["operationMode"])}>
+                    <option value="detect_prevent">Detection and prevention</option>
+                    <option value="detect_only">Detection only</option>
+                    <option value="monitor">Monitor</option>
+                  </select>
+                </label>
+              </section>
+
+              <section className="installModuleMatrix" aria-label="Security modules and OS compatibility">
+                <div className="installMatrixHead">
+                  <span>Modules</span>
+                  <span>OS compatibility</span>
+                </div>
+                {MODULES.map((module) => (
+                  <label key={module.id} className={draft.modules.includes(module.id) ? "enabled" : ""}>
+                    <span>
+                      <input type="checkbox" checked={draft.modules.includes(module.id)} onChange={() => toggleModule(module.id)} />
+                      {module.label}
+                    </span>
+                    <span className="installOsList">
+                      {(["windows", "macos", "linux"] as const).map((os) => (
+                        <i key={os} className={module.os.includes(os) ? "supported" : ""}>{osIcon(os)}</i>
+                      ))}
+                    </span>
+                  </label>
+                ))}
+              </section>
+
+              <section className="installRolesPanel">
+                <h3>Roles</h3>
+                <div className="installRolesGrid">
+                {["workstations", "servers", "relay", "gold-image", "test-ring"].map((role) => (
+                  <label key={role}>
+                    <input
+                      type="checkbox"
+                      checked={draft.roles.includes(role)}
+                      onChange={() => setDraft((current) => ({
+                        ...current,
+                        roles: current.roles.includes(role)
+                          ? current.roles.filter((item) => item !== role)
+                          : [...current.roles, role],
+                      }))}
+                    />
+                    {role.replace(/-/g, " ")}
+                  </label>
+                ))}
+                </div>
+                <p>Additional package sections can be added here without changing the table layout.</p>
+              </section>
+            </div>
+            <footer>
+              <button type="submit" className="installSave" disabled={isWorking || !draft.name.trim()}>{isWorking ? "Saving..." : "Save"}</button>
+              <button type="button" className="installCancel" onClick={() => setCreateOpen(false)}>Cancel</button>
+            </footer>
+          </form>
         </div>
-
-        <div className="policyCatalogGrid enrollmentGrid policyCatalogHead">
-          <span>Company name</span>
-          <span>Customer #</span>
-          <span>Industry</span>
-          <span>Size</span>
-          <span>Assigned policy</span>
-        </div>
-
-        {isLoading ? <LoadingRow label="Loading deployments" /> : null}
-        {!isLoading && filteredCustomers.length === 0 ? (
-          <EmptyState>No deployments match the current filters.</EmptyState>
-        ) : null}
-
-        <div className="policyCatalogRows">
-          {filteredCustomers.map((customer) => (
-            <article
-              key={customer.id}
-              className="policyCatalogGrid enrollmentGrid policyCatalogRow"
-            >
-              <button
-                type="button"
-                className="policyNameLink"
-                onClick={() => openExisting(customer)}
-              >
-                {customer.name}
-              </button>
-              <span>{customer.customer_number}</span>
-              <span>{customer.industry ?? "—"}</span>
-              <span>{customer.company_size ?? "—"}</span>
-              <span>{customer.assigned_policy_name ?? "No policy"}</span>
-            </article>
-          ))}
-        </div>
-
-        <footer className="policyCatalogFooter">
-          <div className="policyPager">
-            <button type="button" disabled>First Page</button>
-            <button type="button" disabled aria-label="Previous page">&lt;</button>
-            <span>Page</span>
-            <input value="1" readOnly aria-label="Current page" />
-            <span>of 1</span>
-            <button type="button" disabled aria-label="Next page">&gt;</button>
-            <button type="button" disabled>Last Page</button>
-            <select value="20" onChange={() => undefined} aria-label="Rows per page">
-              <option value="20">20</option>
-              <option value="50">50</option>
-            </select>
-            <span>rows per page</span>
-          </div>
-          <span>{filteredCustomers.length} deployment{filteredCustomers.length !== 1 ? "s" : ""}</span>
-        </footer>
-      </section>
-    </div>
+      ) : null}
+    </main>
   );
 }
-

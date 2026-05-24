@@ -22,6 +22,8 @@ class DlpFinding(BaseModel):
 
 
 RiskBand = Literal["low", "medium", "high", "critical"]
+DetectionRuleSeverity = Literal["low", "medium", "high", "critical"]
+DetectionRuleStatus = Literal["draft", "simulated", "active"]
 
 
 class DlpScanResponse(BaseModel):
@@ -31,6 +33,130 @@ class DlpScanResponse(BaseModel):
     risk_band: RiskBand = "low"
     context_signals: list[str] = Field(default_factory=list)
     rationale: str = ""
+
+
+class DetectionRuleCreate(BaseModel):
+    customer_id: UUID | None = None
+    partner_id: UUID | None = None
+    name: str = Field(min_length=1, max_length=160)
+    description: str = Field(min_length=1, max_length=500)
+    severity: DetectionRuleSeverity = "medium"
+    status: DetectionRuleStatus = "draft"
+    query: str = Field(min_length=1, max_length=1024)
+    author: str | None = Field(default=None, max_length=160)
+    mitre_attacks: list[str] = Field(default_factory=list, max_length=16)
+
+
+class DetectionRule(BaseModel):
+    id: UUID
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+    name: str
+    description: str
+    severity: DetectionRuleSeverity
+    status: DetectionRuleStatus
+    query: str
+    author: str
+    mitre_attacks: list[str]
+    last_modified: datetime
+    last_simulation_run: datetime | None = None
+    scanned_agents_count: int = Field(default=0, ge=0)
+
+
+class DetectionRuleSimulation(BaseModel):
+    rule: DetectionRule
+    matched_events: int = Field(ge=0)
+    evidence_controls: list[str]
+    created_at: datetime
+
+
+class DetectionRulePromotion(BaseModel):
+    rule: DetectionRule
+    evidence_controls: list[str]
+    promoted_at: datetime
+
+
+# --- Blocklist -------------------------------------------------------------
+
+BlocklistEntryKind = Literal["hash", "domain", "url", "user", "process"]
+BlocklistEntryStatus = Literal["active", "review", "disabled"]
+
+
+class BlocklistEntryCreate(BaseModel):
+    customer_id: UUID | None = None
+    partner_id: UUID | None = None
+    kind: BlocklistEntryKind
+    value: str = Field(min_length=1, max_length=1024)
+    description: str = Field(min_length=1, max_length=500)
+    severity: RiskBand = "medium"
+    added_by: str | None = Field(default=None, max_length=160)
+
+
+class BlocklistEntry(BaseModel):
+    id: UUID
+    partner_id: UUID | None = None
+    customer_id: UUID | None = None
+    kind: BlocklistEntryKind
+    value: str
+    description: str
+    severity: RiskBand
+    status: BlocklistEntryStatus = "review"
+    added_by: str
+    hit_count: int = 0
+    last_triggered: datetime | None = None
+    created_at: datetime
+
+
+class BlocklistSimulationResult(BaseModel):
+    entry: BlocklistEntry
+    affected_agents: int
+    evidence_controls: list[str]
+    created_at: datetime
+
+
+class BlocklistActivateResult(BaseModel):
+    entry: BlocklistEntry
+    evidence_controls: list[str]
+    activated_at: datetime
+
+
+# --- Agentic AI Investigation ----------------------------------------------
+
+AgentInvestigationStatus = Literal["open", "in_progress", "awaiting_approval", "resolved", "dismissed"]
+AgentConfidenceLevel = Literal["low", "medium", "high", "confirmed"]
+
+
+class InvestigationStep(BaseModel):
+    id: str
+    description: str
+    completed: bool = False
+    timestamp: datetime | None = None
+    evidence: str | None = None
+
+
+class AgentCase(BaseModel):
+    id: UUID
+    customer_id: UUID
+    title: str
+    summary: str
+    status: AgentInvestigationStatus = "open"
+    confidence: AgentConfidenceLevel = "medium"
+    confidence_pct: int = Field(default=50, ge=0, le=100)
+    severity: RiskBand = "medium"
+    affected_endpoints: list[str] = Field(default_factory=list)
+    related_events: int = 0
+    mitre_tactics: list[str] = Field(default_factory=list)
+    recommended_response: str = ""
+    steps: list[InvestigationStep] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: datetime | None = None
+
+
+class AgentCaseActionResult(BaseModel):
+    case: AgentCase
+    evidence_controls: list[str]
+    actioned_at: datetime
 
 
 class AgentSignals(BaseModel):
@@ -397,6 +523,31 @@ FindingSeverity = Literal["low", "medium", "high", "critical"]
 FindingStatus = Literal["new", "triaged", "monitoring", "resolved", "false_positive"]
 
 
+DRPFindingStatus = Literal["new", "reviewing", "validated", "false_positive", "confirmed"]
+
+
+EASMExposureType = Literal[
+    "unpatched_vulnerability",
+    "misconfiguration",
+    "exposed_service",
+    "data_leak",
+    "shadow_it",
+]
+
+
+EASMExposureAssetType = Literal[
+    "domain",
+    "subdomain",
+    "ip_address",
+    "cloud_resource",
+    "certificate",
+    "open_port",
+]
+
+
+EASMExposureStatus = Literal["new", "investigating", "confirmed", "remediated", "false_positive"]
+
+
 class DigitalRiskProtectionModule(BaseModel):
     """Policy v2 module payload for DRP.
 
@@ -479,6 +630,42 @@ class ExternalAttackSurfaceManagementModule(BaseModel):
     evidence_controls: list[str] = Field(default_factory=lambda: ["iso27001-2022:A.8.16", "nist-csf-2.0:DE.CM"])
 
 
+class DeploymentProfileModule(BaseModel):
+    """Policy v2 module payload for deployment profile settings.
+
+    Controls how agents are deployed, updated, and how they communicate
+    with relays and cloud services.
+    """
+
+    enabled: bool = True
+    update_channel: Literal["stable", "slow", "fast"] = "stable"
+    update_interval_hours: int = Field(default=1, ge=1, le=72)
+    proxy_enabled: bool = False
+    proxy_server: str = ""
+    proxy_port: str = "8080"
+    silent_mode: bool = False
+    show_alerts: bool = True
+    show_notifications: bool = True
+    endpoint_issues_visibility: bool = True
+    telemetry_enabled: bool = False
+    siem_url: str = ""
+    siem_token: str = ""
+    uninstall_password: str | None = None
+    power_user_password: str | None = None
+    deployment_ring: Literal["slow", "fast", "stable"] = "stable"
+    rollout_percentage: int = Field(default=100, ge=1, le=100)
+    relay_auto_discovery: bool = False
+    allowed_upload_domains: list[str] = Field(default_factory=list)
+    update_locations: list[dict[str, Any]] = Field(default_factory=list)
+    communication_assignments: list[dict[str, Any]] = Field(default_factory=list)
+    use_proxy_for_relay: bool = True
+    use_proxy_for_cloud: bool = True
+    use_proxy_for_siem: bool = False
+    reboot_postpone: bool = True
+    reboot_time: Literal["daily", "weekly", "manual"] = "daily"
+    managed_update_fallback: bool = True
+
+
 class PolicyDocumentV2Input(BaseModel):
     schema_version: Literal["2.0"] = "2.0"
     name: str = Field(min_length=1, max_length=200)
@@ -495,6 +682,11 @@ class PolicyDocumentV2Input(BaseModel):
     def external_attack_surface_management(self) -> ExternalAttackSurfaceManagementModule:
         return ExternalAttackSurfaceManagementModule.model_validate(
             self.modules.get("external_attack_surface_management", {})
+        )
+
+    def deployment_profile(self) -> DeploymentProfileModule:
+        return DeploymentProfileModule.model_validate(
+            self.modules.get("deployment_profile", {})
         )
 
 
@@ -669,6 +861,25 @@ class PolicyAssignRequest(BaseModel):
     endpoint_id: str | None = None
 
 
+class PolicyAssignmentListItem(BaseModel):
+    """Console-facing assignment view with scope, drift, and diff info."""
+
+    id: UUID
+    scope: Literal["platform", "partner", "company", "group", "endpoint"]
+    scope_id: str
+    scope_name: str
+    policy_id: UUID
+    policy_name: str
+    policy_version: str
+    inherited: bool = False
+    override: bool = False
+    effective_since: datetime
+    last_diff: str | None = None
+    pending_diff: str | None = None
+    endpoint_count: int = 0
+    drift_count: int = 0
+
+
 class PolicyGetResponse(BaseModel):
     policy: PolicyDocumentV2
     latest_version: PolicyVersion
@@ -827,13 +1038,15 @@ class DRPAsset(BaseModel):
 class DRPFinding(BaseModel):
     id: UUID
     customer_id: UUID
-    asset_id: UUID
+    asset_id: UUID | None = None
+    asset_display_name: str = ""
+    asset_type: DRPAssetCategory | None = None
     finding_type: DRPFindingType
     title: str
     summary: str
     source: str
     severity: FindingSeverity = "medium"
-    status: FindingStatus = "new"
+    status: DRPFindingStatus = "new"
     risk_score: int = Field(default=0, ge=0, le=100)
     confidence_score: int = Field(default=0, ge=0, le=100)
     llm_validation: str | None = None
@@ -862,6 +1075,63 @@ class EASMAsset(BaseModel):
     last_seen_at: datetime
     created_at: datetime
     updated_at: datetime
+
+
+class EASMExposure(BaseModel):
+    id: UUID
+    customer_id: UUID
+    asset_id: UUID | None = None
+    asset_display_name: str
+    asset_type: EASMExposureAssetType
+    exposure_type: EASMExposureType
+    title: str
+    summary: str
+    severity: FindingSeverity = "medium"
+    status: EASMExposureStatus = "new"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    confidence_score: int = Field(default=0, ge=0, le=100)
+    ip_address: str | None = None
+    fqdn: str | None = None
+    cloud_provider: str | None = None
+    open_ports: list[int] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    first_seen: datetime
+    last_seen: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class DRPFindingCreate(BaseModel):
+    asset_display_name: str
+    asset_type: DRPAssetCategory
+    finding_type: DRPFindingType
+    title: str
+    summary: str
+    source: str
+    severity: FindingSeverity = "medium"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    confidence_score: int = Field(default=0, ge=0, le=100)
+    llm_validation: str | None = None
+    screenshot_url: str | None = None
+    evidence_links: list[str] = Field(default_factory=list)
+    detected_at: datetime | None = None
+
+
+class EASMExposureCreate(BaseModel):
+    asset_display_name: str
+    asset_type: EASMExposureAssetType
+    exposure_type: EASMExposureType
+    title: str
+    summary: str
+    severity: FindingSeverity = "medium"
+    risk_score: int = Field(default=0, ge=0, le=100)
+    confidence_score: int = Field(default=0, ge=0, le=100)
+    ip_address: str | None = None
+    fqdn: str | None = None
+    cloud_provider: str | None = None
+    open_ports: list[int] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 # --- Companies + Licensing + Accounts module --------------------------------

@@ -6,7 +6,7 @@ import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
 import { LoadingState, EmptyState } from "../components/protection/EmptyState";
 import { Detection, StagedAction, SimulationPreview, EffectivePolicy } from "../components/protection/types";
-import { ErrorBanner, SuccessBanner, PageHeader } from "../components";
+import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner, PageHeader } from "../components";
 
 /**
  * ProtectionModuleTemplate
@@ -219,7 +219,7 @@ export default function ProtectionModuleTemplate() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
+    <ConsolePage>
       
       {/* 5. Module Header Integration */}
       <ModuleHeader
@@ -248,50 +248,17 @@ export default function ProtectionModuleTemplate() {
       {error && <ErrorBanner message={error} />}
       {success && <SuccessBanner message={success} />}
 
-      {/* Grid of Highlights/Metrics Cards */}
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: "16px",
-          marginBottom: "24px",
-        }}
-        aria-label="Compliance Summary Statistics"
-      >
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px", background: "rgba(11, 107, 87, 0.02)" }}>
-          <div style={{ color: "var(--accent)" }}><ShieldCheck size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Module Mode</div>
-            <strong style={{ fontSize: "16px" }}>Enforcement Tier Active</strong>
-          </div>
-        </div>
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ color: "var(--warning)" }}><AlertTriangle size={20} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Active Warnings</div>
-            <strong style={{ fontSize: "16px" }}>{detections.filter((d) => d.status === "new").length} Issues Pending</strong>
-          </div>
-        </div>
-        <div className="panel" style={{ padding: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <div><Clock size={20} style={{ color: "var(--muted)" }} /></div>
-          <div>
-            <div style={{ fontSize: "12px", color: "var(--muted)" }}>Approval Workflow</div>
-            <strong style={{ fontSize: "16px" }}>{policy.approval_required ? "MSP Multi-Gate Gatekeeper" : "Automatic Execution"}</strong>
-          </div>
-        </div>
-      </section>
+      <MetricGrid
+        ariaLabel="Compliance Summary Statistics"
+        items={[
+          { label: "Module Mode", value: "Enforcement Tier Active", icon: <ShieldCheck size={20} />, color: "var(--accent)" },
+          { label: "Active Warnings", value: `${detections.filter((d) => d.status === "new").length} Issues Pending`, icon: <AlertTriangle size={20} />, color: "var(--warning)" },
+          { label: "Approval Workflow", value: policy.approval_required ? "MSP Multi-Gate Gatekeeper" : "Automatic Execution", icon: <Clock size={20} />, color: "var(--muted)" },
+        ]}
+      />
 
       {/* 6. Three-Panel Layout (Work Area) */}
-      <section
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "16px",
-          alignItems: "stretch",
-          flex: 1,
-        }}
-        aria-label="Device Rules Management Core Console"
-      >
+      <section className="panelWorkspace" aria-label="Device Rules Management Core Console">
         {/* Panel A: Detection Alarm List Queue */}
         <DetectionTable
           detections={detections}
@@ -424,6 +391,6 @@ export default function ProtectionModuleTemplate() {
           </section>
         </div>
       )}
-    </div>
+    </ConsolePage>
   );
 }

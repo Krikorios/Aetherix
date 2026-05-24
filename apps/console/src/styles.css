@@ -1,16 +1,16 @@
 @import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Newsreader:opsz,wght@6..72,700&display=swap");
 
 :root {
-  color: #13201b;
-  background: #edf2e8;
+  color: #0b1220;
+  background: #f4f6fa;
   font-family: "Instrument Sans", sans-serif;
-  --ink: #13201b;
-  --muted: #607068;
-  --panel: #fbfcf7;
-  --line: #cad7c8;
-  --accent: #0b6b57;
-  --warning: #b45018;
-  --healthy: #2b7a3d;
+  --ink: #0b1220;
+  --muted: #5b6573;
+  --panel: #ffffff;
+  --line: #dde3ec;
+  --accent: #0f5a6e;
+  --warning: #b45309;
+  --healthy: #1f6b3a;
 }
 
 * {
@@ -36,9 +36,9 @@ button {
   display: grid;
   grid-template-columns: 284px 1fr;
   background:
-    linear-gradient(135deg, rgba(11, 107, 87, 0.16), transparent 32%),
-    repeating-linear-gradient(90deg, rgba(19, 32, 27, 0.04) 0 1px, transparent 1px 72px),
-    #edf2e8;
+    linear-gradient(135deg, rgba(15, 90, 110, 0.16), transparent 32%),
+    repeating-linear-gradient(90deg, rgba(11, 18, 32, 0.04) 0 1px, transparent 1px 72px),
+    #f4f6fa;
 }
 
 .shell.railCollapsed {
@@ -51,7 +51,7 @@ button {
   gap: 14px;
   padding: 26px 16px 18px;
   border-right: 1px solid var(--line);
-  background: rgba(247, 250, 243, 0.96);
+  background: rgba(255, 255, 255, 0.96);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -86,8 +86,8 @@ button {
 }
 
 .rail button:hover {
-  background: rgba(11, 107, 87, 0.06);
-  border-color: rgba(11, 107, 87, 0.35);
+  background: rgba(15, 90, 110, 0.06);
+  border-color: rgba(15, 90, 110, 0.35);
 }
 
 .rail button span {
@@ -108,7 +108,7 @@ button {
   border-radius: 0 !important;
   padding: 0 2px !important;
   background: transparent !important;
-  color: #64756d !important;
+  color: #6b7280 !important;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -222,7 +222,7 @@ button {
   font-size: 11px;
   padding: 5px 6px;
   border-radius: 6px;
-  background: rgba(11, 107, 87, 0.08);
+  background: rgba(15, 90, 110, 0.08);
   color: var(--ink);
   word-break: break-all;
 }
@@ -709,16 +709,25 @@ button {
 
 .policyDetailSection h1,
 .policyDetailSection h2 {
-  margin: 0 0 18px;
+  margin: 0 0 10px;
   color: #e6edf3;
   font-size: 18px;
-  line-height: 1.1;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .policyDetailSection p {
-  margin: -10px 0 18px;
-  color: #e6edf3;
-  font-size: 11px;
+  margin: 0 0 18px;
+  color: #b6c0cc;
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.policyDetailSection h1 + p,
+.policyDetailSection h2 + p {
+  margin-top: -2px;
 }
 
 .policyDetailField {
@@ -1014,9 +1023,11 @@ button {
 }
 
 .policyAgentBlock h2 {
-  margin: 28px 0 12px;
-  color: #dce3ea;
-  font-size: 16px;
+  margin: 28px 0 8px;
+  color: #e6edf3;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .policyAgentBlock h2:first-child {
@@ -1025,10 +1036,21 @@ button {
 
 .policyAgentBlock p {
   max-width: 820px;
-  margin: -8px 0 18px;
-  color: #c5ced8;
-  font-size: 11px;
-  line-height: 1.45;
+  margin: 6px 0 18px;
+  color: #aab4c0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  font-weight: 400;
+}
+
+.policyAgentBlock h1 + p,
+.policyAgentBlock h2 + p {
+  margin-top: -2px;
+}
+
+.policyAgentBlock label + p {
+  margin-top: 4px;
+  margin-left: 23px;
 }
 
 .policyAgentStack,
@@ -1073,17 +1095,20 @@ button {
 .policyRadioRow {
   display: flex;
   align-items: center;
-  gap: 9px;
-  color: #dce3ea;
-  font-size: 12px;
-  font-weight: 700;
+  gap: 10px;
+  color: #e6edf3;
+  font-size: 13px;
+  font-weight: 500;
   text-transform: none;
+  line-height: 1.4;
 }
 
 .policySwitchRow {
   text-transform: uppercase;
   color: #aeb8c3;
   font-size: 11px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
 }
 
 .policyCheckboxRow input,
@@ -1479,7 +1504,7 @@ button {
 }
 
 .policyV2Row.active {
-  background: rgba(11, 107, 87, 0.06);
+  background: rgba(15, 90, 110, 0.06);
   border-radius: 8px;
   padding-left: 8px;
   padding-right: 8px;
@@ -1593,7 +1618,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px 9px;
-  background: rgba(11, 107, 87, 0.06);
+  background: rgba(15, 90, 110, 0.06);
 }
 
 .policyGateHint {
@@ -1637,7 +1662,7 @@ button {
 }
 
 .policyAssignTypeSwitch button.active {
-  background: rgba(11, 107, 87, 0.13);
+  background: rgba(15, 90, 110, 0.13);
   color: var(--ink);
 }
 
@@ -2021,7 +2046,7 @@ meter {
   padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: rgba(11, 107, 87, 0.08);
+  background: rgba(15, 90, 110, 0.08);
   color: var(--accent);
 }
 
@@ -2051,7 +2076,7 @@ meter {
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 999px;
-  background: rgba(19, 32, 27, 0.06);
+  background: rgba(11, 18, 32, 0.06);
   color: var(--ink);
   text-transform: capitalize;
 }
@@ -2229,6 +2254,19 @@ meter {
 }
 
 /* Acknowledge button used across dashboard + alerts */
+.linkLike {
+  cursor: pointer;
+  color: var(--accent, #0f5a6e);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.15s;
+}
+.linkLike:hover {
+  opacity: 0.75;
+  text-decoration: underline;
+}
+
 .btnAck {
   min-width: 64px;
   min-height: 34px;
@@ -2370,7 +2408,7 @@ meter {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(19, 32, 27, 0.06);
+  background: rgba(11, 18, 32, 0.06);
   color: var(--ink);
   text-transform: capitalize;
 }
@@ -2395,7 +2433,7 @@ meter {
   border-radius: 4px;
 }
 
-.sevBadge.low    { background: rgba(11, 107, 87, 0.1);   color: var(--accent);  }
+.sevBadge.low    { background: rgba(15, 90, 110, 0.1);   color: var(--accent);  }
 .sevBadge.medium { background: rgba(180, 80, 24, 0.12);  color: var(--warning); }
 .sevBadge.high   { background: rgba(157, 31, 31, 0.12);  color: #9d1f1f;        }
 
@@ -2477,7 +2515,7 @@ meter {
 }
 
 .docItem.current {
-  border-color: rgba(11, 107, 87, 0.4);
+  border-color: rgba(15, 90, 110, 0.4);
 }
 
 .docVersion {
@@ -2516,7 +2554,7 @@ meter {
 }
 
 .promoteSectionHeader:hover {
-  background: rgba(19, 32, 27, 0.03);
+  background: rgba(11, 18, 32, 0.03);
 }
 
 .promoteSectionHeader h3 {
@@ -2814,7 +2852,7 @@ meter {
 
 .platformTab:hover {
   color: var(--ink);
-  border-color: rgba(11, 107, 87, 0.4);
+  border-color: rgba(15, 90, 110, 0.4);
 }
 
 .platformTab.active {
@@ -2852,7 +2890,7 @@ meter {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: rgba(11, 107, 87, 0.12);
+  background: rgba(15, 90, 110, 0.12);
   color: var(--accent);
   font-size: 11px;
   font-weight: 700;
@@ -2875,7 +2913,7 @@ meter {
   align-items: stretch;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: rgba(19, 32, 27, 0.04);
+  background: rgba(11, 18, 32, 0.04);
   overflow: hidden;
 }
 
@@ -2895,7 +2933,7 @@ meter {
   width: 34px;
   border: 0;
   border-left: 1px solid var(--line);
-  background: rgba(19, 32, 27, 0.04);
+  background: rgba(11, 18, 32, 0.04);
   color: var(--muted);
   cursor: pointer;
   display: grid;
@@ -2904,7 +2942,7 @@ meter {
 }
 
 .installCopyBtn:hover {
-  background: rgba(11, 107, 87, 0.1);
+  background: rgba(15, 90, 110, 0.1);
   color: var(--accent);
 }
 
@@ -2916,8 +2954,8 @@ meter {
 }
 
 .tokenBox {
-  border: 1px solid rgba(11, 107, 87, 0.4);
-  background: rgba(11, 107, 87, 0.06);
+  border: 1px solid rgba(15, 90, 110, 0.4);
+  background: rgba(15, 90, 110, 0.06);
   border-radius: 8px;
   padding: 18px 20px;
 }
@@ -2933,8 +2971,8 @@ meter {
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
   font-size: 13px;
   word-break: break-all;
-  background: rgba(11, 107, 87, 0.08);
-  border: 1px solid rgba(11, 107, 87, 0.2);
+  background: rgba(15, 90, 110, 0.08);
+  border: 1px solid rgba(15, 90, 110, 0.2);
   border-radius: 6px;
   padding: 10px 14px;
   color: var(--ink);
@@ -2981,7 +3019,7 @@ meter {
   width: 36px;
   height: 28px;
   border-radius: 6px;
-  background: rgba(19, 32, 27, 0.06);
+  background: rgba(11, 18, 32, 0.06);
   color: var(--ink);
   display: grid;
   place-items: center;
@@ -2990,8 +3028,8 @@ meter {
 }
 
 .platformCheck.active {
-  border-color: rgba(11, 107, 87, 0.48);
-  background: rgba(11, 107, 87, 0.08);
+  border-color: rgba(15, 90, 110, 0.48);
+  background: rgba(15, 90, 110, 0.08);
   color: var(--ink);
 }
 
@@ -3091,8 +3129,8 @@ meter {
 
 .successBanner {
   margin-bottom: 18px;
-  border: 1px solid rgba(11, 107, 87, 0.38);
-  background: rgba(11, 107, 87, 0.1);
+  border: 1px solid rgba(15, 90, 110, 0.38);
+  background: rgba(15, 90, 110, 0.1);
   color: var(--accent);
   border-radius: 8px;
   padding: 12px 14px;
@@ -3118,8 +3156,8 @@ meter {
 }
 
 .licenseBase {
-  border: 1px solid rgba(11, 107, 87, 0.28);
-  background: rgba(11, 107, 87, 0.08);
+  border: 1px solid rgba(15, 90, 110, 0.28);
+  background: rgba(15, 90, 110, 0.08);
   border-radius: 8px;
   padding: 16px;
   display: grid;
@@ -3176,7 +3214,7 @@ meter {
 
 .addonList b {
   color: var(--accent);
-  background: rgba(11, 107, 87, 0.09);
+  background: rgba(15, 90, 110, 0.09);
 }
 
 .addonList em {
@@ -3234,8 +3272,8 @@ meter {
 
 .placeholderStatus.status-designing {
   color: var(--accent);
-  background: rgba(11, 107, 87, 0.1);
-  border-color: rgba(11, 107, 87, 0.25);
+  background: rgba(15, 90, 110, 0.1);
+  border-color: rgba(15, 90, 110, 0.25);
 }
 
 .placeholderStatus.status-planned {
@@ -3373,7 +3411,7 @@ meter {
   display: grid;
   place-items: center;
   border-radius: 999px;
-  background: rgba(11, 107, 87, 0.1);
+  background: rgba(15, 90, 110, 0.1);
   color: var(--accent);
   font-weight: 700;
 }
@@ -3487,13 +3525,13 @@ meter {
   padding: 4px 9px;
   font-size: 12px;
   text-transform: capitalize;
-  background: rgba(19, 32, 27, 0.07);
+  background: rgba(11, 18, 32, 0.07);
   color: var(--muted);
 }
 
 .status-active,
 .status-invited {
-  background: rgba(11, 107, 87, 0.1);
+  background: rgba(15, 90, 110, 0.1);
   color: var(--accent);
 }
 
@@ -3537,7 +3575,7 @@ meter {
 .modalBackdrop {
   position: fixed;
   inset: 0;
-  background: rgba(19, 32, 27, 0.26);
+  background: rgba(11, 18, 32, 0.26);
   display: grid;
   place-items: center;
   padding: 24px;
@@ -3551,7 +3589,7 @@ meter {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 24px 80px rgba(19, 32, 27, 0.22);
+  box-shadow: 0 24px 80px rgba(11, 18, 32, 0.22);
   padding: 22px;
 }
 
@@ -3746,7 +3784,7 @@ meter {
   font-weight: 600;
   cursor: pointer;
 }
-.btnGhost:hover { background: rgba(11, 107, 87, 0.06); }
+.btnGhost:hover { background: rgba(15, 90, 110, 0.06); }
 
 .iconBtn {
   background: transparent;
@@ -3779,7 +3817,7 @@ meter {
   text-align: left;
 }
 .companyGridHead {
-  background: rgba(11, 107, 87, 0.05);
+  background: rgba(15, 90, 110, 0.05);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -3794,7 +3832,7 @@ meter {
   font: inherit;
   color: inherit;
 }
-.companyGridRow:hover { background: rgba(11, 107, 87, 0.04); }
+.companyGridRow:hover { background: rgba(15, 90, 110, 0.04); }
 .cellCompany {
   display: flex;
   align-items: center;
@@ -3815,7 +3853,7 @@ meter {
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: 12px 12px 0 0;
-  background: rgba(11, 107, 87, 0.04);
+  background: rgba(15, 90, 110, 0.04);
   flex-wrap: wrap;
 }
 .dataToolbarLeft,
@@ -3897,7 +3935,7 @@ meter {
   font: inherit;
   color: inherit;
 }
-.moreActionsMenu button:hover { background: rgba(11, 107, 87, 0.08); }
+.moreActionsMenu button:hover { background: rgba(15, 90, 110, 0.08); }
 
 .dataTableWrap {
   border: 1px solid var(--line);
@@ -3914,7 +3952,7 @@ meter {
 .dataTable thead th {
   position: sticky;
   top: 0;
-  background: rgba(11, 107, 87, 0.05);
+  background: rgba(15, 90, 110, 0.05);
   text-align: left;
   font-size: 11.5px;
   text-transform: uppercase;
@@ -3934,8 +3972,8 @@ meter {
   text-overflow: ellipsis;
 }
 .dataTable tbody tr { cursor: pointer; }
-.dataTable tbody tr:hover { background: rgba(11, 107, 87, 0.04); }
-.dataTable tbody tr.selected { background: rgba(11, 107, 87, 0.08); }
+.dataTable tbody tr:hover { background: rgba(15, 90, 110, 0.04); }
+.dataTable tbody tr.selected { background: rgba(15, 90, 110, 0.08); }
 .dataTable th.checkboxCell,
 .dataTable td.checkboxCell {
   width: 40px;
@@ -3953,7 +3991,7 @@ meter {
   border: 1px solid var(--line);
   border-top: 0;
   border-radius: 0 0 12px 12px;
-  background: rgba(11, 107, 87, 0.04);
+  background: rgba(15, 90, 110, 0.04);
   color: var(--muted);
   font-size: 13px;
   flex-wrap: wrap;
@@ -3996,7 +4034,7 @@ meter {
   cursor: pointer;
   font-size: 13.5px;
 }
-.checkboxRow:hover { background: rgba(11, 107, 87, 0.06); }
+.checkboxRow:hover { background: rgba(15, 90, 110, 0.06); }
 .settingsActions { display: flex; gap: 8px; }
 
 .status-trial { background: rgba(255, 167, 38, 0.18); color: #b45309; }
@@ -4019,7 +4057,7 @@ meter {
 .status-suspended { background: rgba(180, 80, 24, 0.15); color: var(--warning); }
 .status-archived { background: rgba(0,0,0,0.1); color: var(--muted); }
 .status-expired { background: rgba(180, 80, 24, 0.15); color: var(--warning); }
-.status-trial { background: rgba(11, 107, 87, 0.15); color: var(--accent); }
+.status-trial { background: rgba(15, 90, 110, 0.15); color: var(--accent); }
 
 .pillSubtle {
   display: inline-flex;
@@ -4033,7 +4071,7 @@ meter {
 .sideSheetOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(19, 32, 27, 0.4);
+  background: rgba(11, 18, 32, 0.4);
   display: flex;
   justify-content: flex-end;
   z-index: 60;
@@ -4043,7 +4081,7 @@ meter {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  box-shadow: -16px 0 40px rgba(19, 32, 27, 0.18);
+  box-shadow: -16px 0 40px rgba(11, 18, 32, 0.18);
   max-width: 100vw;
 }
 .sideSheetHead {
@@ -4180,7 +4218,7 @@ meter {
 
 .behaviorDetectionRow:hover,
 .behaviorDetectionRow.selected {
-  background: rgba(11, 107, 87, 0.06);
+  background: rgba(15, 90, 110, 0.06);
 }
 
 .behaviorProcessCell {
@@ -4210,7 +4248,7 @@ meter {
   place-items: center;
   border-radius: 8px;
   font-weight: 700;
-  background: rgba(11, 107, 87, 0.1);
+  background: rgba(15, 90, 110, 0.1);
   color: var(--accent);
 }
 
@@ -4268,7 +4306,7 @@ meter {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(19, 32, 27, 0.04);
+  background: rgba(11, 18, 32, 0.04);
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -4304,7 +4342,7 @@ meter {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px 9px;
-  background: rgba(19, 32, 27, 0.04);
+  background: rgba(11, 18, 32, 0.04);
 }
 
 .rep-malicious,
@@ -4337,9 +4375,9 @@ meter {
 }
 
 .simulationCard {
-  border: 1px solid rgba(11, 107, 87, 0.28);
+  border: 1px solid rgba(15, 90, 110, 0.28);
   border-radius: 8px;
-  background: rgba(11, 107, 87, 0.07);
+  background: rgba(15, 90, 110, 0.07);
   padding: 12px;
   display: grid;
   gap: 10px;
@@ -4507,7 +4545,7 @@ meter {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(11, 107, 87, 0.06);
+  background: rgba(15, 90, 110, 0.06);
   border: 1px solid var(--line);
   color: var(--ink);
   border-radius: 999px;
@@ -4516,7 +4554,7 @@ meter {
   font-size: 12px;
   cursor: pointer;
 }
-.copyChip:hover { background: rgba(11, 107, 87, 0.12); }
+.copyChip:hover { background: rgba(15, 90, 110, 0.12); }
 .copyChip code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;
@@ -4529,7 +4567,7 @@ meter {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(11, 107, 87, 0.03);
+  background: rgba(15, 90, 110, 0.03);
 }
 .addonGridHead {
   display: flex;
@@ -4556,7 +4594,7 @@ meter {
   cursor: pointer;
   color: var(--ink);
 }
-.addonChip:hover { background: rgba(11, 107, 87, 0.06); }
+.addonChip:hover { background: rgba(15, 90, 110, 0.06); }
 .addonChip.on {
   background: var(--accent);
   border-color: var(--accent);
@@ -4596,7 +4634,7 @@ meter {
   align-items: center;
 }
 .productTableHead {
-  background: rgba(11, 107, 87, 0.05);
+  background: rgba(15, 90, 110, 0.05);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -4793,11 +4831,11 @@ meter {
   place-items: center;
   padding: 32px 20px;
   background:
-    radial-gradient(900px 600px at 20% 0%, rgba(11, 107, 87, 0.18), transparent 60%),
-    radial-gradient(700px 500px at 100% 100%, rgba(11, 107, 87, 0.12), transparent 60%),
-    linear-gradient(135deg, rgba(11, 107, 87, 0.16), transparent 32%),
-    repeating-linear-gradient(90deg, rgba(19, 32, 27, 0.04) 0 1px, transparent 1px 72px),
-    #edf2e8;
+    radial-gradient(900px 600px at 20% 0%, rgba(15, 90, 110, 0.18), transparent 60%),
+    radial-gradient(700px 500px at 100% 100%, rgba(15, 90, 110, 0.12), transparent 60%),
+    linear-gradient(135deg, rgba(15, 90, 110, 0.16), transparent 32%),
+    repeating-linear-gradient(90deg, rgba(11, 18, 32, 0.04) 0 1px, transparent 1px 72px),
+    #f4f6fa;
 }
 
 .loginCard {
@@ -4807,7 +4845,7 @@ meter {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 32px 28px;
-  box-shadow: 0 24px 60px -28px rgba(11, 107, 87, 0.35), 0 2px 6px rgba(19, 32, 27, 0.04);
+  box-shadow: 0 24px 60px -28px rgba(15, 90, 110, 0.35), 0 2px 6px rgba(11, 18, 32, 0.04);
   display: grid;
   gap: 22px;
 }
@@ -4869,7 +4907,7 @@ meter {
 
 .loginInput:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(11, 107, 87, 0.15);
+  box-shadow: 0 0 0 3px rgba(15, 90, 110, 0.15);
 }
 
 .loginInput svg {
@@ -4923,7 +4961,7 @@ meter {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(11, 107, 87, 0.04);
+  background: rgba(15, 90, 110, 0.04);
 }
 
 .totpQr {
@@ -4996,70 +5034,95 @@ meter {
   }
 }
 
-/* --- Aurora theme override: green -> purple refresh --------------------- */
+/* --- Unified UI consistency pass ---------------------------------------- */
 
 :root {
-  --gp-start: #43f39a;
-  --gp-end: #a564ff;
-  --bg-deep: #070a17;
-  --bg-mid: #101430;
-  --ink: #f3edff;
-  --fg: #f3edff;
-  --muted: #b7afd8;
-  --panel: rgba(20, 22, 48, 0.86);
-  --line: rgba(157, 133, 255, 0.32);
-  --accent: #8a60ff;
-  --warning: #ff9f67;
-  --healthy: #57de96;
-  --text-gradient: linear-gradient(96deg, var(--gp-start) 0%, var(--gp-end) 100%);
-  --text-gradient-soft: linear-gradient(96deg, rgba(67, 243, 154, 0.9) 0%, rgba(165, 100, 255, 0.9) 100%);
+  --font-ui: "Instrument Sans", sans-serif;
+  --font-display: "Newsreader", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --bg-base: #edf3f8;
+  --bg-layer: #f7fafc;
+  --ink: #142132;
+  --fg: #142132;
+  --muted: #5d6d80;
+  --panel: rgba(255, 255, 255, 0.92);
+  --line: #d4dfeb;
+  --accent: #0f5a6e;
+  --warning: #b45a1e;
+  --healthy: #1f7a42;
+  --shadow-soft: 0 16px 34px rgba(15, 33, 50, 0.09);
+  --shadow-raised: 0 24px 48px rgba(15, 33, 50, 0.13);
 }
 
 html,
 body {
+  font-family: var(--font-ui);
   background:
-    radial-gradient(1100px 680px at -5% -20%, rgba(67, 243, 154, 0.14), transparent 58%),
-    radial-gradient(1000px 760px at 110% 110%, rgba(165, 100, 255, 0.2), transparent 62%),
-    linear-gradient(150deg, var(--bg-mid), var(--bg-deep) 46%, #050610 100%);
+    radial-gradient(900px 540px at 8% -12%, rgba(15, 90, 110, 0.14), transparent 62%),
+    radial-gradient(860px 620px at 108% 112%, rgba(15, 90, 110, 0.1), transparent 64%),
+    linear-gradient(165deg, var(--bg-layer), var(--bg-base) 52%, #e9f0f7);
   color: var(--ink);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
 }
 
 .shell {
   background:
-    radial-gradient(800px 420px at 0% 0%, rgba(67, 243, 154, 0.08), transparent 56%),
-    radial-gradient(760px 540px at 100% 100%, rgba(165, 100, 255, 0.1), transparent 62%),
-    linear-gradient(160deg, rgba(14, 18, 39, 0.94), rgba(7, 9, 23, 0.98));
+    radial-gradient(720px 420px at 0% 0%, rgba(15, 90, 110, 0.08), transparent 60%),
+    radial-gradient(820px 560px at 100% 100%, rgba(15, 90, 110, 0.06), transparent 62%),
+    linear-gradient(164deg, rgba(247, 250, 252, 0.94), rgba(237, 243, 248, 0.92));
 }
 
-.workspace,
-.policyCatalogPage,
-.loginCard {
-  color: var(--ink);
+.workspace {
+  padding-top: 34px;
+  padding-bottom: 34px;
+}
+
+.pageHeader {
+  gap: 10px;
+  padding-bottom: 24px;
+}
+
+.pageHeader h1,
+.hero h1 {
+  line-height: 1.02;
+  letter-spacing: -0.016em;
 }
 
 .rail {
-  background: linear-gradient(180deg, rgba(20, 24, 52, 0.95), rgba(12, 15, 34, 0.94));
+  background: linear-gradient(180deg, rgba(247, 250, 252, 0.97), rgba(241, 246, 251, 0.96));
   border-right-color: var(--line);
-  backdrop-filter: blur(10px);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.65);
 }
 
 .rail button {
-  background: rgba(21, 24, 52, 0.52);
-  border-color: rgba(157, 133, 255, 0.22);
+  background: rgba(255, 255, 255, 0.75);
+  border-color: rgba(138, 159, 182, 0.3);
   color: var(--muted);
 }
 
 .rail button:hover {
-  background: rgba(138, 96, 255, 0.14);
-  border-color: rgba(157, 133, 255, 0.55);
+  background: rgba(15, 90, 110, 0.08);
+  border-color: rgba(15, 90, 110, 0.38);
   color: var(--ink);
 }
 
+.navGroupToggle {
+  color: #65788d !important;
+}
+
 .navGroupItems button.active {
-  background: linear-gradient(110deg, rgba(67, 243, 154, 0.28), rgba(165, 100, 255, 0.26));
-  border-color: rgba(170, 140, 255, 0.8);
+  background: linear-gradient(112deg, #0f5a6e, #2b7892);
+  border-color: #1d6f88;
   color: #ffffff;
-  box-shadow: 0 8px 22px rgba(111, 87, 225, 0.34);
+  box-shadow: 0 10px 20px rgba(15, 90, 110, 0.22);
 }
 
 .railAuthPanel,
@@ -5076,10 +5139,17 @@ body {
 .columnList,
 .moreActionsMenu,
 .policyCatalogPanel,
-.policyCatalogUtility {
+.policyCatalogUtility,
+.policyDetailSection,
+.policyEngineBlock,
+.policyAgentBlock,
+.policyInheritanceBlock,
+.policyHistoryBlock,
+.policySupportBlock {
   background: var(--panel);
   border-color: var(--line);
-  box-shadow: 0 20px 40px rgba(5, 6, 16, 0.25);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(7px);
 }
 
 .dataToolbar,
@@ -5087,100 +5157,15 @@ body {
 .companyGridHead,
 .dataTable thead th,
 .alertsTableHead {
-  background: linear-gradient(110deg, rgba(67, 243, 154, 0.12), rgba(165, 100, 255, 0.16));
+  background: linear-gradient(105deg, rgba(15, 90, 110, 0.09), rgba(15, 90, 110, 0.13));
 }
 
-.dataTable tbody tr:hover,
-.companyGridRow:hover,
-.alertRow:hover {
-  background: rgba(138, 96, 255, 0.12);
-}
-
-.dataTable tbody tr.selected {
-  background: rgba(67, 243, 154, 0.14);
-}
-
-.btnPrimary,
-.btnAck,
-.loginSubmit {
-  background: linear-gradient(110deg, #43f39a, #a564ff);
-  color: #060912;
-  font-weight: 700;
-}
-
-.btnSecondary,
-.btnGhost,
-.filterChip,
-.tabBtn,
-.iconBtn,
-.dataToolbar select,
-.dataToolbar input,
-.searchField,
-.pagerControls select,
-.loginInput,
-.newRuleRow select,
-.newRuleRow input,
-.policyCatalogHead input,
-.policyCatalogHead select,
-.totpSecretValue {
-  background: rgba(14, 17, 36, 0.78);
-  border-color: var(--line);
-  color: var(--ink);
-}
-
-.filterChip.active,
-.tabBtn.active {
-  background: linear-gradient(110deg, rgba(67, 243, 154, 0.28), rgba(165, 100, 255, 0.26));
-  border-color: rgba(170, 140, 255, 0.8);
-  color: #ffffff;
-}
-
-.policyCatalogPage,
-.policyCatalogRow {
-  background: transparent;
-  color: var(--ink);
-}
-
-.policyCatalogPanel,
-.policyCatalogToolbar,
-.policyCatalogHead,
-.policyCatalogRow {
-  border-color: var(--line);
-}
-
-.policyCatalogRow:nth-child(even) {
-  background: rgba(165, 100, 255, 0.06);
-}
-
-.policyCatalogUtility,
-.policyToolbarButton {
-  color: var(--muted);
-}
-
-.policyToolbarButton.primary,
-.policyColumnsButton {
-  color: #9debc6;
-}
-
-.policyToolbarButton:disabled {
-  color: rgba(183, 175, 216, 0.5);
-}
-
-.loginShell {
-  background:
-    radial-gradient(900px 600px at 12% -8%, rgba(67, 243, 154, 0.2), transparent 56%),
-    radial-gradient(800px 650px at 110% 115%, rgba(165, 100, 255, 0.28), transparent 58%),
-    linear-gradient(146deg, #111733, #070a18 52%, #04050f 100%);
-}
-
-.brandMark strong,
-.pageHeader h1,
-.hero h1,
 .panelHeader h2,
-.loginHeader h1,
+.policyCatalogTopbar h1,
+.brandMark strong,
 .metric strong,
-.policyCatalogTopbar h1 {
-  color: #e7ddff;
+.loginHeader h1 {
+  color: var(--ink);
 }
 
 .brandMark span,
@@ -5200,80 +5185,1271 @@ body {
 .dataTable thead th,
 .companyGridHead,
 .tablePager,
-.policyToolbarButton.primary,
-.policyColumnsButton,
 .loginHeader p,
 .totpSecretLabel,
 .totpSecretHint,
 .placeholderEyebrow,
 .modeLabel,
 .modeDetail {
-  color: #d8cbff;
+  color: var(--muted);
 }
 
-.navGroupItems button.active span,
-.filterChip.active,
-.tabBtn.active,
 .btnPrimary,
 .btnAck,
-.loginSubmit {
+.loginSubmit,
+.policySaveButton {
+  background: linear-gradient(112deg, #0f5a6e, #2f7f99);
+  border: 1px solid rgba(15, 90, 110, 0.36);
   color: #ffffff;
+  font-weight: 700;
 }
 
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .brandMark strong,
-  .pageHeader h1,
-  .hero h1,
-  .panelHeader h2,
-  .loginHeader h1,
-  .metric strong,
-  .policyCatalogTopbar h1 {
-    background-image: var(--text-gradient);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+.btnPrimary:hover,
+.btnAck:hover,
+.loginSubmit:hover,
+.policySaveButton:hover {
+  filter: brightness(1.05);
+}
+
+.consolePage {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.moduleHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.moduleHeaderTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.moduleHeaderTitleBlock,
+.moduleHeaderTitleRow,
+.moduleHeaderActions {
+  display: flex;
+  align-items: center;
+}
+
+.moduleHeaderTitleBlock {
+  gap: 12px;
+}
+
+.moduleHeaderTitleRow {
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.moduleHeaderTitleRow h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.moduleHeaderIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: rgba(15, 90, 110, 0.08);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.moduleHeaderEyebrow,
+.statLabel,
+.sectionKicker {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.moduleHeaderActions {
+  gap: 10px;
+}
+
+.moduleHeaderActions .btnPrimary,
+.moduleHeaderActions .btnSecondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.statCard {
+  min-height: 70px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(7px);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.statIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.statValue {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.panelWorkspace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: stretch;
+  flex: 1;
+}
+
+.detailStack,
+.kvStack {
+  display: flex;
+  flex-direction: column;
+}
+
+.detailStack {
+  gap: 16px;
+}
+
+.kvStack {
+  gap: 8px;
+  font-size: 12px;
+}
+
+.kvRow {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.kvRow span {
+  color: var(--muted);
+}
+
+.kvRow strong {
+  max-width: 60%;
+  color: var(--ink);
+  text-align: right;
+  word-break: break-word;
+}
+
+.codeBlock {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.addOnPage {
+  align-items: center;
+  justify-content: center;
+}
+
+.addOnPanel {
+  width: min(520px, 100%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+@media (max-width: 720px) {
+  .consolePage {
+    padding: 18px;
   }
 
-  .brandMark span,
-  .navGroupToggle,
-  .navGroupItems button:not(.active) span,
-  .railAuthPanel span,
-  .railAuthPanel strong,
-  .railAuthPanel em,
-  .pageHeader p,
-  .pageHeader span,
-  .hero p,
-  .hero span,
-  .panelHeader span,
-  .muted,
-  .filterLabel,
-  .settingsLabel,
-  .dataTable thead th,
-  .companyGridHead,
-  .tablePager,
-  .policyToolbarButton.primary,
-  .policyColumnsButton,
-  .loginHeader p,
-  .totpSecretLabel,
-  .totpSecretHint,
-  .placeholderEyebrow,
-  .modeLabel,
-  .modeDetail {
-    background-image: var(--text-gradient-soft);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+  .moduleHeaderIcon {
+    width: 40px;
+    height: 40px;
   }
 
-  .navGroupItems button.active span,
-  .filterChip.active,
-  .tabBtn.active,
-  .btnPrimary,
-  .btnAck,
-  .loginSubmit {
-    background-image: none;
-    -webkit-background-clip: initial;
-    background-clip: initial;
-    color: #ffffff;
+  .moduleHeaderTitleRow h1 {
+    font-size: 21px;
+  }
+
+  .kvRow strong {
+    max-width: 100%;
+    text-align: left;
+  }
+}
+
+.btnSecondary,
+.btnGhost,
+.filterChip,
+.tabBtn,
+.iconBtn,
+.dataToolbar select,
+.dataToolbar input,
+.searchField,
+.pagerControls select,
+.loginInput,
+.newRuleRow select,
+.newRuleRow input,
+.policyCatalogHead input,
+.policyCatalogHead select,
+.totpSecretValue,
+.policyDetailSearch input,
+.policyDetailField input,
+.policyDetailField select,
+.policyInheritanceBuilder select,
+.policyEditorGrid.compact select,
+.policyInlineField select,
+.policyInlineField input,
+.policyCommunicationBuilder select,
+.policyCommunicationBuilder input,
+.policyUpdateLocation input,
+.policyAccordionList.dark .policyModuleFields select,
+.policyAccordionList.dark .policyModuleFields input {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.filterChip.active,
+.tabBtn.active,
+.policyAssignTypeSwitch button.active {
+  background: rgba(15, 90, 110, 0.16);
+  border-color: rgba(15, 90, 110, 0.48);
+  color: var(--ink);
+}
+
+.dataTable tbody tr:hover,
+.companyGridRow:hover,
+.alertRow:hover,
+.policyCatalogRow:hover {
+  background: rgba(15, 90, 110, 0.08);
+}
+
+.dataTable tbody tr.selected,
+.policyV2Row.active {
+  background: rgba(15, 90, 110, 0.12);
+}
+
+.loginShell {
+  background:
+    radial-gradient(900px 580px at 12% -8%, rgba(15, 90, 110, 0.18), transparent 58%),
+    radial-gradient(820px 650px at 110% 115%, rgba(15, 90, 110, 0.16), transparent 60%),
+    linear-gradient(154deg, #f6f9fc, #edf3f8 54%, #e8eff6 100%);
+}
+
+/* Bring policy experiences into the same visual system as the rest of the app. */
+.policyCatalogPage,
+.policyDetailPage,
+.policyDetailWorkspace,
+.policyCatalogRow {
+  background: transparent;
+  color: var(--ink);
+}
+
+.policyDetailSidebar {
+  background: linear-gradient(180deg, rgba(247, 250, 252, 0.95), rgba(240, 246, 251, 0.94));
+  border-right-color: var(--line);
+  box-shadow: 14px 0 30px rgba(15, 33, 50, 0.08);
+}
+
+.policyCatalogPanel,
+.policyCatalogToolbar,
+.policyCatalogHead,
+.policyCatalogRow,
+.policyCatalogFooter,
+.policyDetailFooter,
+.policyDetailSidebar section,
+.policySidebarChildren button,
+.policyAssignmentTable,
+.policyAssignmentTable > div,
+.policyInheritanceTable,
+.policyInheritanceHead,
+.policySimulationInline,
+.policyMatrixTable,
+.policyMatrixTable > div {
+  border-color: var(--line);
+}
+
+.policyCatalogUtility,
+.policyToolbarButton,
+.policyDetailSidebar h2,
+.policyDetailSection p,
+.policyAgentBlock p,
+.policyEngineHeader p,
+.policySimulationInline p,
+.policyEngineBlock .policyGateHint,
+.policyHistoryBlock dd,
+.policyDetailCrumbs span,
+.policyAccordionList.dark .policyModuleHead small,
+.policyAccordionList.dark .policyLockReason,
+.policyAssignmentTable,
+.policyMatrixTable > div:first-child,
+.policyInlineField,
+.policySwitchRow,
+.policyUpdateLocation label,
+.policyWarningCallout,
+.policyInfoCallout,
+.policyIndentedOptions,
+.policyIndentedOptions .policyCheckboxRow,
+.policyIndentedOptions .policyRadioRow {
+  color: var(--muted);
+}
+
+.policyToolbarButton.primary,
+.policyColumnsButton,
+.policyDetailSidebar button span,
+.policySidebarToggle,
+.policySidebarGroupToggle svg,
+.policyDetailCrumbs button,
+.policyDetailHeader a,
+.policySidebarChildren button:hover span,
+.policySidebarChildren button.active span,
+.policyDetailSidebar button.active span {
+  color: var(--accent);
+}
+
+.policyDetailSidebar button,
+.policySidebarParent > button:first-child,
+.policyDetailCrumbs button,
+.policyDetailCrumbs strong,
+.policyDetailHeader a,
+.policyDetailSection h1,
+.policyDetailSection h2,
+.policyAgentBlock h2,
+.policyCheckboxRow,
+.policyRadioRow,
+.policyDetailField,
+.policyDetailToggle,
+.policyHistoryBlock dt,
+.policyEngineBlock .policySimulationSummary span,
+.policyAccordionList.dark .policyModuleHead,
+.policyAgentBlock,
+.policyAssignmentTable > div:first-child,
+.policyMatrixTable,
+.policyScanProfiles button,
+.policyScanProfiles small {
+  color: var(--ink);
+}
+
+.policyCatalogRow:nth-child(even) {
+  background: rgba(15, 90, 110, 0.05);
+}
+
+.policySidebarParent:hover,
+.policySidebarParent.active,
+.policySidebarChildren button:hover,
+.policySidebarChildren button.active,
+.policyDetailSidebar button.active {
+  background: rgba(15, 90, 110, 0.12);
+  color: var(--ink);
+}
+
+.policyCancelButton,
+.policyDangerButton,
+.policyInheritanceActions button,
+.policyHistoryBlock dd,
+.policyAccordionList.dark .policyModuleCard,
+.policyEngineBlock .policySimulationSummary span,
+.policyScanProfiles button,
+.policyAssignmentTable > div,
+.policyInheritanceBuilder button,
+.policyCommunicationBuilder button,
+.policyUpdateLocation button {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: var(--line);
+}
+
+.policyScanProfiles button.selected {
+  border-color: rgba(15, 90, 110, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(15, 90, 110, 0.22);
+}
+
+.policyInfoCallout {
+  background: rgba(15, 90, 110, 0.1);
+  border-color: rgba(15, 90, 110, 0.35);
+}
+
+.policyWarningCallout {
+  background: rgba(180, 90, 30, 0.1);
+  border-color: rgba(180, 90, 30, 0.36);
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    width: min(100%, calc(100vw - 224px));
+  }
+}
+
+@media (max-width: 820px) {
+  .workspace {
+    width: 100%;
+    padding: 24px 16px 28px;
+  }
+
+  .rail {
+    background: rgba(247, 250, 252, 0.94);
+    backdrop-filter: blur(6px);
+  }
+
+  .permissionEditor {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- Policy editor layout hotfix ---------------------------------------- */
+
+.policyDetailPage {
+  grid-template-columns: 320px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.policyDetailSidebar {
+  padding: 0 14px 18px;
+}
+
+.policyDetailSearch {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 20px 0 14px;
+  background: inherit;
+}
+
+.policyDetailSidebar nav {
+  max-height: calc(100vh - 86px);
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.policyDetailSidebar button,
+.policySidebarParent > button:first-child {
+  min-height: 32px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.policySidebarChildren button {
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.policyDetailWorkspace {
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.policyDetailHeader {
+  min-height: 62px;
+  align-items: center;
+  padding: 20px 24px 0;
+  margin-bottom: 0;
+}
+
+.policyDetailContent {
+  width: 100%;
+  max-width: 1160px;
+  display: grid;
+  gap: 14px;
+  padding: 18px 24px 36px;
+}
+
+.policyDetailContent.wide {
+  max-width: 1240px;
+}
+
+/* --- Installation packages console -------------------------------------- */
+
+.installPackagesPage {
+  --install-bg: #080f16;
+  --install-panel: #0b131c;
+  --install-panel-2: #111923;
+  --install-line: #27313d;
+  --install-line-soft: #1b2530;
+  --install-text: #d6dde7;
+  --install-muted: #8d98a6;
+  --install-blue: #1479ff;
+  --install-red: #ff4d5d;
+  min-height: 100vh;
+  width: 100%;
+  position: relative;
+  background: var(--install-bg);
+  color: var(--install-text);
+  padding: 18px 24px 42px;
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.workspace.policyWorkspace:has(.installPackagesPage) {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  background: var(--install-bg);
+}
+
+.installUtilityBar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  gap: 6px;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom-left-radius: 8px;
+}
+
+.installUtilityBar button,
+.installIconButton {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--install-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.installIconButton.active,
+.installIconButton:hover,
+.installUtilityBar button:hover {
+  color: #8fc3ff;
+  background: rgba(20, 121, 255, 0.11);
+}
+
+.installHeader {
+  min-height: 54px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-right: 96px;
+}
+
+.installHeader h1,
+.installCreatePanel h2 {
+  margin: 0;
+  color: var(--install-text);
+  font-family: var(--font-ui);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.installHeader > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 22px;
+}
+
+.installTinyButton,
+.installTextButton,
+.installFilters button {
+  border: 0;
+  background: transparent;
+  color: var(--install-muted);
+  font: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.installTinyButton {
+  font-size: 10px;
+  text-transform: none;
+}
+
+.installToolbar {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  border-bottom: 1px solid var(--install-line);
+  position: relative;
+}
+
+.installPrimary {
+  min-width: 72px;
+  height: 28px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--install-blue);
+  color: #fff;
+  font: inherit;
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.installTextButton {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  letter-spacing: 0.02em;
+}
+
+.installTextButton:disabled,
+.installDanger:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.installDanger {
+  height: 28px;
+  border: 1px solid rgba(255, 77, 93, 0.75);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--install-red);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 17px;
+  font: inherit;
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.installDownloadWrap {
+  position: relative;
+}
+
+.installDownloadMenu {
+  position: absolute;
+  top: 33px;
+  left: -16px;
+  z-index: 20;
+  width: min(610px, calc(100vw - 260px));
+  min-height: 260px;
+  border: 1px solid #1684ff;
+  background: #0a111a;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.45);
+  padding: 12px 14px 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.installFlyoutSearch {
+  grid-column: 1 / -1;
+  height: 31px;
+  border: 1px solid #334151;
+  background: #0f1822;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+}
+
+.installFlyoutSearch input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--install-text);
+  font: inherit;
+}
+
+.installDownloadColumn {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 14px;
+  border-right: 1px solid var(--install-line-soft);
+}
+
+.installDownloadColumn:last-child {
+  border-right: 0;
+}
+
+.installDownloadColumn h2 {
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--install-text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.installDownloadColumn a {
+  min-height: 24px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 8px;
+  color: var(--install-muted);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.installDownloadColumn a span,
+.installDownloadColumn a small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.installDownloadColumn a small {
+  grid-column: 1;
+  color: #606d7b;
+}
+
+.installDownloadColumn a svg {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  align-self: center;
+}
+
+.installFilters {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.2fr) minmax(220px, 1.4fr) minmax(150px, 0.9fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--install-line);
+}
+
+.installFilters label {
+  height: 29px;
+  border: 1px solid #303b48;
+  background: #0b121b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  color: var(--install-muted);
+}
+
+.installFilters label span {
+  color: var(--install-text);
+  font-size: 11px;
+}
+
+.installFilters input,
+.installFilters select,
+.installCreatePanel input,
+.installCreatePanel select {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--install-text);
+  font: inherit;
+}
+
+.installFilters select,
+.installCreatePanel select {
+  color-scheme: dark;
+}
+
+.installFilters button {
+  color: #78b7ff;
+  font-size: 10px;
+  text-align: left;
+}
+
+.installTable {
+  min-width: 860px;
+}
+
+.installTableHead,
+.installTableRow {
+  display: grid;
+  grid-template-columns: minmax(270px, 1.5fr) minmax(110px, 0.6fr) minmax(150px, 0.75fr) minmax(250px, 1.25fr) minmax(190px, 1fr);
+  align-items: center;
+}
+
+.installTableHead {
+  min-height: 34px;
+  border-bottom: 1px solid var(--install-line-soft);
+  color: #a7b2bf;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.installTableHead label,
+.installTableRow > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.installTableHead input,
+.installTableRow input,
+.installModuleMatrix input,
+.installRolesPanel input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #79b9ff;
+}
+
+.installTableRow {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-bottom: 1px solid var(--install-line-soft);
+  background: transparent;
+  color: #bfc8d4;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.installTableRow:hover,
+.installTableRow.selected {
+  background: #464b52;
+}
+
+.installTableRow strong {
+  color: #7eb9ff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.installTableHead > span,
+.installTableHead label,
+.installTableRow > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 12px;
+}
+
+.installEmpty {
+  padding: 34px 12px;
+  color: var(--install-muted);
+}
+
+.installLinkTray {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 15;
+  width: min(560px, calc(100vw - 36px));
+  border: 1px solid var(--install-line);
+  background: #0d1720;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.44);
+  padding: 13px;
+  display: grid;
+  gap: 8px;
+}
+
+.installLinkTray > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.installLinkTray span {
+  color: var(--install-muted);
+}
+
+.installLinkTray code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--install-line-soft);
+  background: #081019;
+  color: #9db1c8;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.installCreateOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(8, 15, 22, 0.98);
+  color: var(--install-text);
+}
+
+.installCreatePanel {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: #171d24;
+}
+
+.installCreatePanel > header {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+}
+
+.installCreateContent {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 30px 32px;
+  display: grid;
+  grid-template-columns: 360px 430px;
+  align-content: start;
+  column-gap: 44px;
+  row-gap: 24px;
+  max-width: 930px;
+}
+
+.installCreateGeneral,
+.installModuleMatrix,
+.installRolesPanel {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+
+.installCreateGeneral h3,
+.installRolesPanel h3 {
+  margin: 0 0 18px;
+  color: var(--install-text);
+  font-family: var(--font-ui);
+  font-size: 15px;
+}
+
+.installCreateGeneral h4 {
+  margin: 18px 0 6px;
+  color: #8793a1;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.installCreateGeneral label {
+  min-height: 29px;
+  display: grid;
+  grid-template-columns: 160px minmax(180px, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--install-text);
+}
+
+.installCreateGeneral label span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.installCreateGeneral input,
+.installCreateGeneral select {
+  height: 28px;
+  border: 1px solid #3a4653;
+  border-radius: 3px;
+  background: #101820;
+  padding: 0 10px;
+  color: var(--install-text);
+}
+
+.installMatrixHead {
+  min-height: 24px;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 126px;
+  align-items: center;
+  border-bottom: 1px solid #2b3541;
+  color: #8d98a6;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.installModuleMatrix label {
+  min-height: 29px;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) 126px;
+  align-items: center;
+  color: #7e8996;
+  column-gap: 14px;
+}
+
+.installModuleMatrix label.enabled {
+  color: var(--install-text);
+}
+
+.installModuleMatrix label > span:first-child,
+.installRolesPanel label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.installModuleMatrix label > span:first-child {
+  min-width: 0;
+  justify-self: start;
+  width: 100%;
+  text-align: left;
+}
+
+.installModuleMatrix label > span:first-child input {
+  flex: 0 0 auto;
+}
+
+.installOsList {
+  display: inline-flex;
+  justify-content: flex-start;
+  gap: 14px;
+  color: #596472;
+}
+
+.installOsList i {
+  display: inline-flex;
+  color: #596472;
+  font-style: normal;
+}
+
+.installOsList i.supported {
+  color: #a7b2bf;
+}
+
+.installRolesPanel {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+  border-top: 1px solid #2b3541;
+}
+
+.installRolesGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 8px 18px;
+  max-width: 620px;
+}
+
+.installRolesPanel label {
+  min-height: 28px;
+  color: var(--install-text);
+  text-transform: capitalize;
+}
+
+.installRolesPanel p {
+  max-width: 260px;
+  margin: 10px 0 0;
+  color: var(--install-muted);
+  line-height: 1.5;
+}
+
+.installCreatePanel > footer {
+  min-height: 48px;
+  border-top: 1px solid #303a45;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+}
+
+.installSave,
+.installCancel {
+  min-width: 54px;
+  height: 27px;
+  border: 1px solid #586373;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--install-text);
+  font: inherit;
+  font-weight: 800;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.installSave {
+  border: 0;
+  background: #3a414b;
+  color: #858f9d;
+}
+
+.installSave:not(:disabled) {
+  background: var(--install-blue);
+  color: #fff;
+}
+
+.installCancel {
+  margin-left: auto;
+}
+
+@media (max-width: 980px) {
+  .installPackagesPage {
+    padding: 18px 16px 42px;
+  }
+
+  .installFilters,
+  .installCreateContent {
+    grid-template-columns: 1fr;
+  }
+
+  .installDownloadMenu {
+    width: min(520px, calc(100vw - 32px));
+    grid-template-columns: 1fr;
+  }
+
+  .installDownloadColumn {
+    border-right: 0;
+    border-bottom: 1px solid var(--install-line-soft);
+    padding: 0 0 10px;
+  }
+}
+
+.policyDetailSection {
+  margin-bottom: 0;
+  padding: 18px 20px;
+  border-radius: 12px;
+}
+
+.policyDetailSection h1,
+.policyDetailSection h2 {
+  margin-bottom: 14px;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.policyDetailSection p {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.policyDetailField,
+.policyNameField,
+.policyHistoryBlock dl div {
+  grid-template-columns: 220px minmax(280px, 1fr);
+  gap: 12px;
+}
+
+.policyDetailField span {
+  font-size: 13px;
+}
+
+.policyDetailField input,
+.policyDetailField select {
+  min-height: 36px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+.policyDetailToggle {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.policyHistoryBlock dd {
+  min-height: 34px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.policyDetailFooter {
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 10px 24px 16px;
+  border-top: 0;
+}
+
+.policySaveButton,
+.policyCancelButton {
+  min-height: 36px;
+  border-radius: 10px;
+  padding: 0 16px;
+  font-size: 13px;
+  text-transform: none;
+}
+
+@media (max-width: 1240px) {
+  .policyDetailPage {
+    grid-template-columns: 286px minmax(0, 1fr);
+  }
+
+  .policyDetailField,
+  .policyNameField,
+  .policyHistoryBlock dl div {
+    grid-template-columns: 176px minmax(220px, 1fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .policyDetailPage {
+    grid-template-columns: 1fr;
+  }
+
+  .policyDetailSidebar {
+    max-height: 44vh;
+    padding: 0 12px 8px;
+  }
+
+  .policyDetailSearch {
+    position: static;
+    padding: 16px 0 10px;
+  }
+
+  .policyDetailSidebar nav {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .policyDetailHeader {
+    padding: 16px 16px 0;
+  }
+
+  .policyDetailContent {
+    padding: 14px 16px 28px;
+    max-width: none;
+  }
+
+  .policyDetailSection {
+    padding: 14px;
+  }
+
+  .policyDetailField,
+  .policyNameField,
+  .policyHistoryBlock dl div {
+    grid-template-columns: 1fr;
+  }
+
+  .policyDetailFooter {
+    padding: 8px 16px 14px;
   }
 }

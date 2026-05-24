@@ -9,6 +9,94 @@ import assert from "node:assert/strict";
 
 import { classifyText, resolveDecision, policyActionFor } from "../utils/classify.js";
 import { resolveDestinationSlug, isKnownGenaiHost } from "../utils/destinations.js";
+import { deepMerge, mergePolicy, DEFAULT_POLICY } from "../utils/policySync.js";
+
+// ── deepMerge & policy merge ──────────────────────────────────────────
+
+test("deepMerge preserves nested defaults when agent sends partial payload", () => {
+  const agentPolicy = {
+    endpoint_id: "agent-1",
+    policy_version_hash: "v2",
+    resolved: {
+      semantic_dlp: { enabled: true },
+      genai_guardrails: { enabled: true, destinations: ["chatgpt"] },
+    },
+  };
+  const merged = mergePolicy(agentPolicy);
+  // Nested actions retained from DEFAULT_POLICY
+  assert.deepEqual(merged.resolved.semantic_dlp.actions, {
+    paste_sensitive: "review",
+    upload_restricted: "block",
+    copy_to_genai: "review",
+  });
+  // Nested detectors retained
+  assert.deepEqual(merged.resolved.semantic_dlp.detectors, {
+    presidio: true,
+    llm_semantic: true,
+    custom_classifiers: [],
+  });
+  // Sensitivity labels retained from default
+  assert.deepEqual(merged.resolved.semantic_dlp.sensitivity_labels, [
+    "public",
+    "internal",
+    "confidential",
+    "restricted",
+  ]);
+  // Guardrails actions retained
+  assert.deepEqual(merged.resolved.genai_guardrails.actions, {
+    paste_sensitive: "review",
+    upload_restricted: "block",
+    copy_to_genai: "review",
+  });
+  // Agent-supplied values are NOT overwritten
+  assert.equal(merged.endpoint_id, "agent-1");
+  assert.equal(merged.policy_version_hash, "v2");
+  assert.equal(merged.resolved.semantic_dlp.enabled, true);
+  assert.equal(merged.resolved.genai_guardrails.enabled, true);
+  assert.deepEqual(merged.resolved.genai_guardrails.destinations, ["chatgpt"]);
+  // Top-level synthetic fields
+  assert.equal(merged.source, "agent");
+  assert.ok(typeof merged.fetched_at === "number");
+});
+
+test("deepMerge replaces arrays from source (does not concatenate)", () => {
+  const target = { tags: ["a", "b"], inner: { arr: [1, 2] } };
+  const source = { tags: ["c"], inner: { arr: [3] } };
+  const merged = deepMerge(target, source);
+  assert.deepEqual(merged.tags, ["c"]);
+  assert.deepEqual(merged.inner.arr, [3]);
+});
+
+test("deepMerge handles null and undefined source values", () => {
+  const merged = deepMerge({ a: 1, b: { c: 2 } }, { a: null, b: undefined });
+  assert.equal(merged.a, null);
+  // undefined keys should not appear in result
+  assert.equal("b" in merged, true);
+});
+
+test("deepMerge handles two levels of nested objects", () => {
+  const target = { level1: { level2: { a: 1, b: 2 } } };
+  const source = { level1: { level2: { b: 99 } } };
+  const merged = deepMerge(target, source);
+  assert.equal(merged.level1.level2.a, 1);
+  assert.equal(merged.level1.level2.b, 99);
+});
+
+test("resolveDecision works with partial policy from deepMerge", () => {
+  // Simulate what happens after deepMerge: semantic has no actions field,
+  // guardrails only has enabled — all actions come from DEFAULT_POLICY
+  const p = mergePolicy({
+    resolved: {
+      semantic_dlp: { enabled: true },
+      genai_guardrails: { enabled: true },
+    },
+  });
+  assert.equal(resolveDecision(p, "paste", "restricted"), "review");
+  assert.equal(resolveDecision(p, "upload", "restricted"), "block");
+  assert.equal(resolveDecision(p, "copy", "restricted"), "review");
+});
+
+// ── classify / resolveDecision ────────────────────────────────────────
 
 test("classifyText flags credit card numbers as restricted", () => {
   const { label, signals } = classifyText("card 4111 1111 1111 1111 here");

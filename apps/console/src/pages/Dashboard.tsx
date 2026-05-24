@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { TriangleAlert } from "lucide-react";
+import { TriangleAlert, ExternalLink } from "lucide-react";
 import { apiGet, apiPatch } from "../api";
 import type { Alert, Endpoint, Policy } from "../api";
 import { ErrorBanner, LoadingRow, EmptyState, SeverityBadge, PageHeader } from "../components";
@@ -108,7 +108,15 @@ export function DashboardPage() {
             {endpoints.map((ep) => (
               <article className="endpoint" key={ep.id}>
                 <div>
-                  <strong>{ep.hostname}</strong>
+                  <strong
+                    className="linkLike"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "healthAttackSurface" } }))}
+                    onKeyDown={(e) => { if (e.key === "Enter") window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "healthAttackSurface" } })); }}
+                  >
+                    {ep.hostname} <ExternalLink size={12} />
+                  </strong>
                   <p>
                     {ep.os} · agent {ep.agent_version} · {timeAgo(ep.last_seen)}
                   </p>
@@ -134,7 +142,15 @@ export function DashboardPage() {
             <article className="alert" key={alert.id}>
               <TriangleAlert aria-hidden="true" />
               <div>
-                <p>{alert.title}</p>
+                <p
+                  className="linkLike"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "alerts" } }))}
+                  onKeyDown={(e) => { if (e.key === "Enter") window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "alerts" } })); }}
+                >
+                  {alert.title} <ExternalLink size={12} />
+                </p>
                 <small>
                   <SeverityBadge severity={alert.severity} /> · {alert.source} · {timeAgo(alert.created_at)}
                 </small>
@@ -158,7 +174,13 @@ export function DashboardPage() {
 
       {/* Active policy summary */}
       {policy ? (
-        <section className="panel policyStrip">
+        <section
+          className="panel policyStrip"
+          role="button"
+          tabIndex={0}
+          onClick={() => window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "policies" } }))}
+          onKeyDown={(e) => { if (e.key === "Enter") window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "policies" } })); }}
+        >
           <div className="panelHeader">
             <div>
               <h2>Active Policy</h2>
@@ -168,6 +190,7 @@ export function DashboardPage() {
               <span className={`modeLabel mode-${policy.mode}`}>{policy.mode}</span>
               <span className="modeDetail">escalate at {policy.escalate_at}</span>
               {policy.genai_guardrail ? <span className="modeDetail">GenAI guardrail on</span> : null}
+              <ExternalLink size={14} />
             </div>
           </div>
           {policy.protected_entities.length > 0 ? (

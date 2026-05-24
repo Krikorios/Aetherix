@@ -42,6 +42,32 @@ const DEFAULT_POLICY = {
   source: "default",
 };
 
+// Deep merge two plain objects. Arrays and primitives from `source` replace
+// those in `target`; plain objects are merged recursively. This ensures
+// partial agent responses preserve nested defaults like `actions` and
+// `detectors` that don't appear in the wire payload.
+export function deepMerge(target, source) {
+  if (source === null || typeof source !== "object") return source;
+  const result = { ...target };
+  for (const key of Object.keys(source)) {
+    const sv = source[key];
+    if (sv !== null && typeof sv === "object" && !Array.isArray(sv)) {
+      result[key] = deepMerge(result[key] || {}, sv);
+    } else {
+      result[key] = sv;
+    }
+  }
+  return result;
+}
+
+export function mergePolicy(agentPolicy) {
+  return deepMerge(DEFAULT_POLICY, {
+    ...agentPolicy,
+    fetched_at: Date.now(),
+    source: "agent",
+  });
+}
+
 export function installPolicySyncAlarm() {
   chrome.alarms.create(SYNC_ALARM, { periodInMinutes: SYNC_INTERVAL_MIN });
 }
@@ -53,12 +79,7 @@ export function isPolicySyncAlarm(alarm) {
 export async function syncPolicyNow() {
   try {
     const policy = await getPolicy();
-    const enriched = {
-      ...DEFAULT_POLICY,
-      ...policy,
-      fetched_at: Date.now(),
-      source: "agent",
-    };
+    const enriched = mergePolicy(policy);
     await chrome.storage.session.set({ [SESSION_KEY]: enriched });
     await chrome.storage.local.set({ [LOCAL_KEY]: enriched });
     return enriched;

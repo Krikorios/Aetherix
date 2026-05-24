@@ -21,18 +21,23 @@ vi.mock("../api", async () => {
 
 
 function policyList() {
-  return [
-    {
-      id: "policy-1",
-      name: "Default Policy v1.01",
-      status: "draft",
-      latest_version: 1,
-      active_version: null,
-      scope: { partner_id: "partner-1", customer_id: null, group_id: null, endpoint_id: null },
-      created_at: "2026-05-23T00:00:00Z",
-      updated_at: "2026-05-23T00:00:00Z",
-    },
-  ];
+  return {
+    items: [
+      {
+        id: "policy-1",
+        name: "Default Policy v1.01",
+        status: "draft",
+        latest_version: 1,
+        active_version: null,
+        scope: { partner_id: "partner-1", customer_id: null, group_id: null, endpoint_id: null },
+        created_at: "2026-05-23T00:00:00Z",
+        updated_at: "2026-05-23T00:00:00Z",
+      },
+    ],
+    total: 1,
+    limit: 50,
+    offset: 0,
+  };
 }
 
 

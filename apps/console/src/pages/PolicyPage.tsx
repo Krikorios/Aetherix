@@ -13,6 +13,7 @@ import {
   type PolicyDocumentV2Input,
   type PolicyGetResponse,
   type PolicyListItemV2,
+  type PolicyListResponseV2,
   type PolicySimulationRecord,
   type Subscription,
 } from "../api";
@@ -98,7 +99,28 @@ const MODULES: ModuleConfig[] = [
   { key: "general", title: "General", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }, { key: "agent_update_channel", label: "Update channel", type: "select", options: ["stable", "slow", "fast"] }] },
   { key: "tenant_scope", title: "Tenant Scope", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }] },
   { key: "entitlements", title: "Entitlements", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }] },
-  { key: "deployment_profile", title: "Deployment Profile", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }] },
+  {
+    key: "deployment_profile",
+    title: "Deployment Profile",
+    fields: [
+      { key: "enabled", label: "Enabled", type: "boolean" },
+      { key: "update_channel", label: "Update channel", type: "select", options: ["stable", "slow", "fast"] },
+      { key: "update_interval_hours", label: "Update interval (hours)", type: "text" },
+      { key: "deployment_ring", label: "Deployment ring", type: "select", options: ["stable", "slow", "fast"] },
+      { key: "rollout_percentage", label: "Rollout percentage", type: "text" },
+      { key: "proxy_enabled", label: "Proxy enabled", type: "boolean" },
+      { key: "proxy_server", label: "Proxy server", type: "text" },
+      { key: "proxy_port", label: "Proxy port", type: "text" },
+      { key: "silent_mode", label: "Silent mode", type: "boolean" },
+      { key: "show_alerts", label: "Show alert pop-ups", type: "boolean" },
+      { key: "telemetry_enabled", label: "Security Telemetry", type: "boolean" },
+      { key: "relay_auto_discovery", label: "Relay auto-discovery", type: "boolean" },
+      { key: "use_proxy_for_relay", label: "Use proxy for relay", type: "boolean" },
+      { key: "use_proxy_for_cloud", label: "Use proxy for cloud", type: "boolean" },
+      { key: "reboot_postpone", label: "Postpone reboot", type: "boolean" },
+      { key: "managed_update_fallback", label: "Managed update fallback", type: "boolean" },
+    ],
+  },
   { key: "antimalware", title: "Antimalware", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }, { key: "response_action", label: "Response action", type: "select", options: ["allow", "review", "block"] }] },
   { key: "behavior_monitoring", title: "Behavior Monitoring", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }, { key: "high_confidence_action", label: "High-confidence action", type: "select", options: ["review", "isolate"] }] },
   { key: "anti_exploit", title: "Anti Exploit", fields: [{ key: "enabled", label: "Enabled", type: "boolean" }, { key: "high_confidence_action", label: "High-confidence action", type: "select", options: ["review", "block"] }] },
@@ -170,6 +192,36 @@ const POLICY_MODULE_GROUPS = [
 
 const PLATFORM_OPTIONS: InstallerPlatform[] = ["windows_msi", "macos_pkg", "linux_deb"];
 
+interface DeploymentProfileData {
+  enabled: boolean;
+  update_channel: string;
+  update_interval_hours: number;
+  deployment_ring: string;
+  rollout_percentage: number;
+  proxy_enabled: boolean;
+  proxy_server: string;
+  proxy_port: string;
+  silent_mode: boolean;
+  show_alerts: boolean;
+  show_notifications: boolean;
+  endpoint_issues_visibility: boolean;
+  telemetry_enabled: boolean;
+  siem_url: string;
+  siem_token: string;
+  uninstall_password: string | null;
+  power_user_password: string | null;
+  relay_auto_discovery: boolean;
+  allowed_upload_domains: string[];
+  update_locations: Array<{ server: string; use_proxy: boolean }>;
+  communication_assignments: Array<{ priority: number; name: string; ip: string }>;
+  use_proxy_for_relay: boolean;
+  use_proxy_for_cloud: boolean;
+  use_proxy_for_siem: boolean;
+  reboot_postpone: boolean;
+  reboot_time: string;
+  managed_update_fallback: boolean;
+}
+
 function defaultModules(): Record<string, Record<string, unknown>> {
   const base: Record<string, Record<string, unknown>> = {};
   for (const module of MODULES) {
@@ -238,6 +290,21 @@ function defaultModules(): Record<string, Record<string, unknown>> {
   base.phasr = { enabled: false, living_off_land_action: "off", remote_admin_action: "off", tampering_action: "off", piracy_action: "off", crypto_miner_action: "off" };
   base.blocklist = { enabled: true, application_hash: true, dll_files: false, script_files: false, application_path: false, network_connection: true };
   base.live_search = { enabled: false };
+  base.deployment_profile.update_channel = "stable";
+  base.deployment_profile.update_interval_hours = 1;
+  base.deployment_profile.deployment_ring = "stable";
+  base.deployment_profile.rollout_percentage = 100;
+  base.deployment_profile.proxy_enabled = false;
+  base.deployment_profile.proxy_server = "";
+  base.deployment_profile.proxy_port = "8080";
+  base.deployment_profile.silent_mode = false;
+  base.deployment_profile.show_alerts = true;
+  base.deployment_profile.telemetry_enabled = false;
+  base.deployment_profile.relay_auto_discovery = false;
+  base.deployment_profile.use_proxy_for_relay = true;
+  base.deployment_profile.use_proxy_for_cloud = true;
+  base.deployment_profile.reboot_postpone = true;
+  base.deployment_profile.managed_update_fallback = true;
   base.white_label.display_name = "Default";
   return base;
 }
@@ -311,10 +378,11 @@ export function PolicyPage() {
   const mountedRef = useRef(true);
 
   async function loadPolicies() {
-    const list = await apiGet<PolicyListItemV2[]>(
+    const page = await apiGet<PolicyListResponseV2>(
       `/policies${queryString({ status: filterStatus || null, module: filterModule || null })}`,
     );
     if (!mountedRef.current) return;
+    const list = page.items;
     setPolicies(list);
     if (!selectedPolicyId && list[0]) setSelectedPolicyId(list[0].id);
   }
@@ -757,191 +825,239 @@ export function PolicyPage() {
   }
 
   function renderAgentNotifications() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock">
-        {renderSwitchTitle("Notifications")}
+        {renderSwitchTitle("Notifications", !dp.silent_mode)}
         <p>Customize how the security agent displays notifications on the endpoint. Disabling notifications activates Silent Mode.</p>
         <div className="policyAgentStack">
-          <label className="policySwitchRow"><span className="policySwitch on" /> Show icon in notification area</label>
+          <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "silent_mode", !dp.silent_mode)}>
+            <span className={`policySwitch ${!dp.silent_mode ? "on" : ""}`} aria-hidden="true" />
+            Show icon in notification area
+          </label>
           <p>A system reboot may be required to apply this setting.</p>
-          <label className="policySwitchRow"><span className="policySwitch" /> Display alerts pop-ups</label>
+          <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "show_alerts", !dp.show_alerts)}>
+            <span className={`policySwitch ${dp.show_alerts ? "on" : ""}`} aria-hidden="true" />
+            Display alert pop-ups
+          </label>
           <p>Alert pop-ups require user action. Disabling this option applies the recommended action on the endpoint.</p>
-          <label className="policySwitchRow"><span className="policySwitch" /> Display notification pop-ups</label>
-          <p>Notifications pop-ups provide endpoint users with critical security event information without user interaction.</p>
-          <label className="policySwitchRow"><span className="policySwitch on" /> Endpoint issues visibility</label>
+          <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "show_notifications", !dp.show_notifications)}>
+            <span className={`policySwitch ${dp.show_notifications !== false ? "on" : ""}`} aria-hidden="true" />
+            Display notification pop-ups
+          </label>
+          <p>Notifications provide endpoint users with critical security event information without user interaction.</p>
+          <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "endpoint_issues_visibility", !dp.endpoint_issues_visibility)}>
+            <span className={`policySwitch ${dp.endpoint_issues_visibility !== false ? "on" : ""}`} aria-hidden="true" />
+            Endpoint issues visibility
+          </label>
           <p>Status alerts notify endpoint users of current security issues within specified categories.</p>
-        </div>
-        <div className="policyAgentSubsection">
-          <label className="policyCheckboxRow"><input type="checkbox" defaultChecked /> General</label>
-          <label className="policyInlineField"><span>Restart upon agent installation:</span><select defaultValue="warning"><option value="warning">Show as warning</option><option value="critical">Show as critical</option></select></label>
-          <label className="policyInlineField"><span>Cloud Services connectivity:</span><select defaultValue="critical"><option value="warning">Show as warning</option><option value="critical">Show as critical</option></select></label>
-        </div>
-        <div className="policyAgentSubsection">
-          <label className="policyCheckboxRow"><input type="checkbox" defaultChecked /> Antimalware</label>
-          <label className="policyInlineField"><span>On-access Scanning:</span><select defaultValue="critical"><option value="warning">Show as warning</option><option value="critical">Show as critical</option></select></label>
-          <label className="policyInlineField"><span>On-demand Scanning:</span><select defaultValue="warning"><option value="warning">Show as warning</option><option value="critical">Show as critical</option></select></label>
-          <label className="policyInlineField"><span>Show after (days):</span><input type="number" defaultValue="7" /></label>
         </div>
       </section>
     );
   }
 
   function renderAgentSettings() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock">
         <h1>Settings</h1>
         <div className="policyAgentStack">
           <h2>Uninstall password configuration</h2>
-          <label className="policyRadioRow"><input type="radio" name="uninstall" defaultChecked /> Keep installation settings</label>
-          <label className="policyRadioRow"><input type="radio" name="uninstall" /> Set uninstall password</label>
+          <label className="policyRadioRow"><input type="radio" name="uninstall" defaultChecked={!dp.uninstall_password} /> Keep installation settings</label>
+          <label className="policyRadioRow"><input type="radio" name="uninstall" defaultChecked={!!dp.uninstall_password} /> Set uninstall password</label>
           <p>Setting an uninstall password requires users to enter this password to uninstall the security agent.</p>
-          <label className="policyInlineField"><span>Password:</span><input type="password" defaultValue="password12345" /></label>
-          <label className="policyInlineField"><span>Retype password:</span><input type="password" /></label>
-          <label className="policyRadioRow"><input type="radio" name="uninstall" /> Disable password</label>
+          <label className="policyInlineField"><span>Password:</span><input type="password" value={dp.uninstall_password ?? ""} onChange={(e) => setModuleField("deployment_profile", "uninstall_password", e.target.value)} /></label>
         </div>
         <div className="policyAgentSubsection">
-          <label className="policySwitchRow"><span className="policySwitch" /> Proxy configuration</label>
-          <label className="policyInlineField"><span>Server:</span><input placeholder="http://proxy" /></label>
-          <label className="policyInlineField"><span>Port:</span><input type="number" defaultValue="12" /></label>
-          <label className="policyInlineField"><span>Username:</span><input placeholder="username" /></label>
-          <label className="policyInlineField"><span>Password:</span><input type="password" /></label>
+          <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "proxy_enabled", !dp.proxy_enabled)}>
+            <span className={`policySwitch ${dp.proxy_enabled ? "on" : ""}`} aria-hidden="true" />
+            Proxy configuration
+          </label>
+          <label className="policyInlineField"><span>Server:</span><input placeholder="http://proxy" value={dp.proxy_server ?? ""} onChange={(e) => setModuleField("deployment_profile", "proxy_server", e.target.value)} disabled={!dp.proxy_enabled} /></label>
+          <label className="policyInlineField"><span>Port:</span><input type="number" value={dp.proxy_port ?? "8080"} onChange={(e) => setModuleField("deployment_profile", "proxy_port", e.target.value)} disabled={!dp.proxy_enabled} /></label>
         </div>
         <div className="policyAgentSubsection">
-          <label className="policySwitchRow"><span className="policySwitch" /> Power user</label>
-          <label className="policyInlineField"><span>Password:</span><input type="password" /></label>
-          <label className="policyInlineField"><span>Retype password:</span><input type="password" /></label>
+          <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "power_user_password", dp.power_user_password ? null : "changeme")}>
+            <span className={`policySwitch ${dp.power_user_password ? "on" : ""}`} aria-hidden="true" />
+            Power user
+          </label>
+          <label className="policyInlineField"><span>Password:</span><input type="password" value={dp.power_user_password ?? ""} onChange={(e) => setModuleField("deployment_profile", "power_user_password", e.target.value)} /></label>
         </div>
       </section>
     );
   }
 
   function renderAgentCommunication() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock wideAgent">
         <h1>Communication</h1>
         <h2>Endpoint communication assignment</h2>
         <p>Assign one or more Aetherix relays or control-plane communication endpoints to the target endpoints.</p>
         <div className="policyCommunicationBuilder">
-          <input type="number" defaultValue="1" aria-label="Priority" />
-          <select aria-label="Communication name"><option>Name</option></select>
-          <select aria-label="Communication IP address"><option>IP address</option></select>
-          <input placeholder="Custom name/IP" aria-label="Custom name/IP" />
-          <button type="button" aria-label="Add communication assignment">+</button>
+          <input type="number" placeholder="Priority" aria-label="Priority" onChange={(e) => {
+            const assignments = [...(dp.communication_assignments ?? [])];
+            assignments.push({ priority: parseInt(e.target.value) || 1, name: "", ip: "" });
+            setModuleField("deployment_profile", "communication_assignments", assignments);
+          }} />
         </div>
         <div className="policyAssignmentTable">
-          <div><span>Priority</span><span>Name</span><span>IP address</span><span>Custom name/IP</span></div>
-          <p>No assignments</p>
+          <div><span>Priority</span><span>Name</span><span>IP address</span></div>
+          {(dp.communication_assignments ?? []).length === 0 ? <p>No assignments</p> :
+            (dp.communication_assignments ?? []).map((a: Record<string, unknown>, i: number) => (
+              <div key={i}><span>{String(a.priority ?? "")}</span><span>{String(a.name ?? "")}</span><span>{String(a.ip ?? "")}</span></div>
+            ))}
         </div>
         <h2>Communication between endpoints and Aetherix relays</h2>
-        <label className="policyRadioRow"><input type="radio" name="relayProxy" defaultChecked /> Use previous settings</label>
-        <label className="policyRadioRow"><input type="radio" name="relayProxy" /> Use the proxy defined in Agent &gt; Settings</label>
-        <label className="policyRadioRow"><input type="radio" name="relayProxy" /> Do not use proxy</label>
+        <label className="policyRadioRow" onClick={() => setModuleField("deployment_profile", "use_proxy_for_relay", true)}>
+          <input type="radio" name="relayProxy" checked={dp.use_proxy_for_relay !== false} readOnly /> Use previous settings
+        </label>
+        <label className="policyRadioRow" onClick={() => setModuleField("deployment_profile", "use_proxy_for_relay", false)}>
+          <input type="radio" name="relayProxy" checked={dp.use_proxy_for_relay === false} readOnly /> Do not use proxy
+        </label>
         <h2>Communication between endpoints and Cloud Services</h2>
-        <label className="policyRadioRow"><input type="radio" name="cloudProxy" defaultChecked /> Use previous settings</label>
-        <label className="policyRadioRow"><input type="radio" name="cloudProxy" /> Use the proxy defined in Agent &gt; Settings</label>
-        <label className="policyRadioRow"><input type="radio" name="cloudProxy" /> Autodetect proxy settings</label>
-        <label className="policyRadioRow"><input type="radio" name="cloudProxy" /> Do not use proxy</label>
+        <label className="policyRadioRow" onClick={() => setModuleField("deployment_profile", "use_proxy_for_cloud", true)}>
+          <input type="radio" name="cloudProxy" checked={dp.use_proxy_for_cloud !== false} readOnly /> Use previous settings
+        </label>
+        <label className="policyRadioRow" onClick={() => setModuleField("deployment_profile", "use_proxy_for_cloud", false)}>
+          <input type="radio" name="cloudProxy" checked={dp.use_proxy_for_cloud === false} readOnly /> Do not use proxy
+        </label>
       </section>
     );
   }
 
   function renderAgentUpdate() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock wideAgent">
-        {renderSwitchTitle("Product update")}
+        {renderSwitchTitle("Product update", dp.update_channel !== "stable")}
         <p>Configure the frequency with which security agents and Security Servers download and install updates.</p>
         <h2>Scheduler</h2>
-        <label className="policyInlineField"><span>Recurrence:</span><select defaultValue="hourly"><option value="hourly">Hourly</option><option value="daily">Daily</option></select></label>
-        <label className="policyInlineField"><span>Check for updates every:</span><input type="number" defaultValue="1" /></label>
+        <label className="policyInlineField"><span>Recurrence:</span><select value={dp.update_interval_hours === 1 ? "hourly" : "daily"} onChange={(e) => setModuleField("deployment_profile", "update_interval_hours", e.target.value === "hourly" ? 1 : 24)}><option value="hourly">Hourly</option><option value="daily">Daily</option></select></label>
+        <label className="policyInlineField"><span>Check for updates every:</span><input type="number" value={dp.update_interval_hours ?? 1} onChange={(e) => setModuleField("deployment_profile", "update_interval_hours", parseInt(e.target.value) || 1)} /></label>
         <h2>Endpoint reboot scheduler</h2>
-        <label className="policyCheckboxRow"><input type="checkbox" defaultChecked /> Postpone reboot</label>
-        <label className="policyInlineField"><span>Reboot time (if needed):</span><select defaultValue="daily"><option value="daily">Daily</option></select></label>
+        <label className="policyCheckboxRow"><input type="checkbox" checked={dp.reboot_postpone !== false} onChange={(e) => setModuleField("deployment_profile", "reboot_postpone", e.target.checked)} /> Postpone reboot</label>
+        <label className="policyInlineField"><span>Reboot time (if needed):</span><select value={dp.reboot_time ?? "daily"} onChange={(e) => setModuleField("deployment_profile", "reboot_time", e.target.value)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="manual">Manual</option></select></label>
         {renderSwitchTitle("Security content update")}
         <p>Configure the frequency of security content updates, including scan engines, models, and threat components.</p>
         <h2>Update locations</h2>
-        <div className="policyUpdateLocation"><input placeholder="Add location" /><label><input type="checkbox" /> Use proxy</label><button type="button">+</button></div>
+        <div className="policyUpdateLocation"><input placeholder="Add location" /><label><input type="checkbox" /> Use proxy</label><button type="button" onClick={() => {
+          const locations = [...(dp.update_locations ?? [])];
+          locations.push({ server: "", use_proxy: false });
+          setModuleField("deployment_profile", "update_locations", locations);
+        }}>+</button></div>
         <div className="policyAssignmentTable updateTable">
           <div><span>Priority</span><span>Server</span><span>Proxy</span><span>Actions</span></div>
-          <div><span>1</span><span>Aetherix Relay Pool</span><span><input type="checkbox" /></span><span>Edit</span></div>
-          <div><span>2</span><span>https://updates.aetherix.local</span><span><input type="checkbox" /></span><span>Edit</span></div>
+          {(dp.update_locations ?? []).length === 0 ? (
+            <>
+              <div><span>1</span><span>Aetherix Relay Pool</span><span><input type="checkbox" /></span><span>Edit</span></div>
+              <div><span>2</span><span>https://updates.aetherix.local</span><span><input type="checkbox" /></span><span>Edit</span></div>
+            </>
+          ) : (dp.update_locations ?? []).map((loc: Record<string, unknown>, i: number) => (
+            <div key={i}><span>{i + 1}</span><span>{String(loc.server ?? "")}</span><span><input type="checkbox" checked={!!loc.use_proxy} readOnly /></span><span>Edit</span></div>
+          ))}
         </div>
-        <label className="policyCheckboxRow"><input type="checkbox" defaultChecked /> Use Aetherix managed update service as fallback</label>
+        <label className="policyCheckboxRow"><input type="checkbox" checked={dp.managed_update_fallback !== false} onChange={(e) => setModuleField("deployment_profile", "managed_update_fallback", e.target.checked)} /> Use Aetherix managed update service as fallback</label>
         <h2>Update ring</h2>
-        <label className="policyInlineField"><span>Select update ring:</span><select defaultValue="slow"><option value="slow">Slow ring</option><option value="fast">Fast ring</option></select></label>
+        <label className="policyInlineField"><span>Select update ring:</span><select value={dp.deployment_ring ?? "stable"} onChange={(e) => setModuleField("deployment_profile", "deployment_ring", e.target.value)}><option value="slow">Slow ring</option><option value="fast">Fast ring</option><option value="stable">Stable</option></select></label>
       </section>
     );
   }
 
   function renderAgentTelemetry() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock">
-        {renderSwitchTitle("Security Telemetry", false)}
+        {renderSwitchTitle("Security Telemetry", dp.telemetry_enabled)}
         <p>Export security event raw data from protected endpoints to SIEM solutions for advanced analysis and correlation.</p>
-        <h2>SIEM connection settings</h2>
-        <label className="policyInlineField"><span>SIEM solution:</span><select defaultValue="splunk"><option value="splunk">Splunk (HTTP)</option></select></label>
-        <label className="policyInlineField"><span>Server URL*:</span><input placeholder="Server URL" /></label>
-        <label className="policyInlineField"><span>Token*:</span><input type="password" defaultValue="token-value" /></label>
-        <h2>Event types</h2>
-        <div className="policyTelemetryGrid">
-          {["Process creation", "File creation", "Registry key creation", "Process termination", "File deletion", "Registry key deletion", "Network connection", "File modification", "Registry value deletion", "Logon", "File read", "Registry value modification", "Logoff", "File move", "DNS query"].map((eventName, index) => (
-            <label key={eventName} className="policyCheckboxRow"><input type="checkbox" defaultChecked={index !== 14} /> {eventName}</label>
-          ))}
-        </div>
-        <h2>Communication between endpoints and SIEMs</h2>
-        <label className="policyRadioRow"><input type="radio" name="siemProxy" /> Use the proxy defined in Agent &gt; Settings</label>
-        <label className="policyRadioRow"><input type="radio" name="siemProxy" defaultChecked /> Do not use a proxy</label>
+        <label className="policySwitchRow" onClick={() => setModuleField("deployment_profile", "telemetry_enabled", !dp.telemetry_enabled)}>
+          <span className={`policySwitch ${dp.telemetry_enabled ? "on" : ""}`} aria-hidden="true" />
+          Enable Security Telemetry
+        </label>
+        {dp.telemetry_enabled ? (
+          <>
+            <h2>SIEM connection settings</h2>
+            <label className="policyInlineField"><span>SIEM solution:</span><select defaultValue="splunk"><option value="splunk">Splunk (HTTP)</option></select></label>
+            <label className="policyInlineField"><span>Server URL:</span><input placeholder="Server URL" value={dp.siem_url ?? ""} onChange={(e) => setModuleField("deployment_profile", "siem_url", e.target.value)} /></label>
+            <label className="policyInlineField"><span>Token:</span><input type="password" value={dp.siem_token ?? ""} onChange={(e) => setModuleField("deployment_profile", "siem_token", e.target.value)} /></label>
+            <h2>Communication between endpoints and SIEMs</h2>
+            <label className="policyRadioRow" onClick={() => setModuleField("deployment_profile", "use_proxy_for_siem", true)}>
+              <input type="radio" name="siemProxy" checked={dp.use_proxy_for_siem === true} readOnly /> Use the proxy defined in Agent &gt; Settings
+            </label>
+            <label className="policyRadioRow" onClick={() => setModuleField("deployment_profile", "use_proxy_for_siem", false)}>
+              <input type="radio" name="siemProxy" checked={dp.use_proxy_for_siem !== true} readOnly /> Do not use a proxy
+            </label>
+          </>
+        ) : null}
       </section>
     );
   }
 
   function renderRelayCommunication() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock wideAgent">
         <h1>Relay</h1>
         <p>Define communication settings for endpoints that use an Aetherix relay profile.</p>
         <h2>Communication</h2>
-        <label className="policyCheckboxRow"><input type="checkbox" /> Automatic discovery of new endpoints</label>
+        <label className="policyCheckboxRow">
+          <input type="checkbox" checked={dp.relay_auto_discovery === true} onChange={(e) => setModuleField("deployment_profile", "relay_auto_discovery", e.target.checked)} />
+          Automatic discovery of new endpoints
+        </label>
         <p>When enabled, relays periodically discover endpoints in approved network ranges and report them to the Aetherix control plane.</p>
-        <h2>Communication between relays and Aetherix cloud services</h2>
-        <label className="policyRadioRow"><input type="radio" name="relayCloudProxy" defaultChecked /> Use previous settings</label>
-        <p>Select this option to preserve proxy settings already configured by the installer profile or parent policy.</p>
-        <label className="policyRadioRow"><input type="radio" name="relayCloudProxy" /> Use the proxy defined in Agent &gt; Settings</label>
-        <label className="policyRadioRow"><input type="radio" name="relayCloudProxy" /> Do not use proxy</label>
-        <h2>Communication between relays and local endpoints</h2>
-        <label className="policyRadioRow"><input type="radio" name="relayEndpointProxy" defaultChecked /> Use previous settings</label>
-        <p>Preserve the routing profile already defined for this tenant or inherited policy.</p>
-        <label className="policyRadioRow"><input type="radio" name="relayEndpointProxy" /> Use the proxy defined in Agent &gt; Settings</label>
-        <label className="policyRadioRow"><input type="radio" name="relayEndpointProxy" /> Do not use proxy</label>
         <h2>Allowed upload domains for relay tasks</h2>
         <p>Specify domains that relay-managed tasks may use when uploading Live Search and evidence results.</p>
         <div className="policyUpdateLocation relayDomains">
-          <input placeholder="Domain" aria-label="Allowed relay upload domain" />
-          <button type="button" aria-label="Add allowed relay upload domain">+</button>
+          <input placeholder="Domain" aria-label="Allowed relay upload domain" id="relay-domain-input" />
+          <button type="button" aria-label="Add allowed relay upload domain" onClick={() => {
+            const input = document.getElementById("relay-domain-input") as HTMLInputElement;
+            if (input?.value?.trim()) {
+              const domains = [...(dp.allowed_upload_domains ?? [])];
+              domains.push(input.value.trim());
+              setModuleField("deployment_profile", "allowed_upload_domains", domains);
+              input.value = "";
+            }
+          }}>+</button>
         </div>
         <div className="policyAssignmentTable updateTable">
           <div><span>Priority</span><span>Domain</span><span>Status</span><span>Actions</span></div>
-          <p>Add item</p>
+          {(dp.allowed_upload_domains ?? []).length === 0 ? <p>Add item</p> :
+            (dp.allowed_upload_domains ?? []).map((domain: string, i: number) => (
+              <div key={i}><span>{i + 1}</span><span>{domain}</span><span>Active</span><span>Edit</span></div>
+            ))}
         </div>
       </section>
     );
   }
 
   function renderRelayUpdate() {
+    const dp = (draft.modules.deployment_profile ?? {}) as unknown as DeploymentProfileData;
     return (
       <section className="policyDetailSection policyAgentBlock wideAgent">
         <h1>Update</h1>
         <p>Define update settings for endpoints that use an Aetherix relay profile.</p>
-        <label className="policyInlineField"><span><input type="checkbox" defaultChecked /> Check for updates every (hours):</span><input type="number" defaultValue="1" /></label>
-        <label className="policyInlineField"><span>Download folder:</span><input placeholder="Specify the full path" /></label>
+        <label className="policyInlineField"><span><input type="checkbox" checked={dp.managed_update_fallback !== false} onChange={(e) => setModuleField("deployment_profile", "managed_update_fallback", e.target.checked)} /> Check for updates every (hours):</span><input type="number" value={dp.update_interval_hours ?? 1} onChange={(e) => setModuleField("deployment_profile", "update_interval_hours", parseInt(e.target.value) || 1)} /></label>
         <h2>Update locations</h2>
         <div className="policyUpdateLocation">
-          <input placeholder="Add location" />
+          <input placeholder="Add location" id="relay-update-location" />
           <label><input type="checkbox" /> Use proxy</label>
-          <button type="button">+</button>
+          <button type="button" onClick={() => {
+            const input = document.getElementById("relay-update-location") as HTMLInputElement;
+            if (input?.value?.trim()) {
+              const locations = [...(dp.update_locations ?? [])];
+              locations.push({ server: input.value.trim(), use_proxy: false });
+              setModuleField("deployment_profile", "update_locations", locations);
+              input.value = "";
+            }
+          }}>+</button>
         </div>
         <div className="policyAssignmentTable updateTable">
           <div><span>Priority</span><span>Server</span><span>Proxy</span><span>Actions</span></div>
-          <div><span>1</span><span>https://relay-updates.aetherix.local:443</span><span><input type="checkbox" /></span><span>Edit</span></div>
+          {(dp.update_locations ?? []).length === 0 ? (
+            <div><span>1</span><span>https://relay-updates.aetherix.local:443</span><span><input type="checkbox" /></span><span>Edit</span></div>
+          ) : (dp.update_locations ?? []).map((loc: Record<string, unknown>, i: number) => (
+            <div key={i}><span>{i + 1}</span><span>{String(loc.server ?? "")}</span><span><input type="checkbox" checked={!!loc.use_proxy} readOnly /></span><span>Edit</span></div>
+          ))}
         </div>
       </section>
     );
