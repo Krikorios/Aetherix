@@ -332,6 +332,28 @@ local policy-driven actions, emitted back via heartbeat as `response_action` EDR
 events, and dangerous actions are denied unless the active policy already
 promotes the matching detector kind. This keeps operator-queued actions inside
 the same self-protection and evidence pipeline as autonomous endpoint response.
+`quarantine_list` evidence returns operator-safe item summaries with `can_restore`, `severity_hint`, and `approval_hint` fields. `quarantine_restore` treats the quarantine id as the target and returns failed evidence for malformed or missing ids. The control plane now provides the complete operator surface for remote quarantine management (severity-gated restore requests, approve/deny endpoints with distinct-operator enforcement, global pending inbox, per-endpoint cached inventory, and response-action history). All operator steps and agent execution emit differentiated compliance evidence. High/Critical restores require dual-operator approval by default; Medium/Low use single-operator approval plus the tenant `quarantine_restore_approval` policy toggle. Rate-limiting and abuse detection are expected on the operator paths.
+
+Ransomware rollback remains a planned interface, not an executable response in
+the current agent. The first implementation should keep the same default-safe
+shape as quarantine restore: a detector emits affected paths and a rollback
+candidate set, the agent records local snapshot-provider capability, and the
+control plane queues an approved rollback intent only after simulation evidence.
+The endpoint-side boundary should be a narrow `RollbackProvider` interface; see
+[edr-ransomware-rollback-interface.md](edr-ransomware-rollback-interface.md) for
+the planning-only sketch. Provider backends are OS-specific: Windows VSS where
+available, filesystem or volume snapshots on Linux, and APFS snapshots on macOS.
+Until those providers exist and are destructively tested, ransomware response
+stays limited to quarantine, process termination, isolation intent, and evidence.
+
+Richer process-tree behavior and anti-exploit telemetry are also in planning
+only. The next safe increment should deepen deterministic lineage, script-abuse,
+and exploit-precursor evidence before any prevention claim; see
+[edr-behavior-anti-exploit-interface.md](edr-behavior-anti-exploit-interface.md)
+for the interface sketch. New behavior and anti-exploit rules should ship in
+`monitor` by default, emit explicit insufficient-telemetry/refusal states, and
+avoid expanding destructive response actions until policy simulation and OS
+provider testing exist.
 
 #### Deterministic-before-probabilistic, restated for this design
 
@@ -365,7 +387,7 @@ Implemented console foundation:
 - Companies + Licensing page: paged `/companies/summary`, customer creation through `/customers/quick-create`, hard delete and soft lifecycle bulk actions, license editing, AI provider settings/testing, policy assignment, installer generation, Core + add-ons packaging view, AI Efficiency Score, and white-label entry point.
 - Accounts page: API-backed account list, filters, bulk hard delete, add/edit modal, invitation link/email delivery modes, role-based company assignment, module permissions, 2FA enforcement state, password policy, and permission matrix.
 - Policy Engine v2 page: API-backed create/list/detail, effective policy preview, simulation, destructive promotion approval, assignment, and entitlement-aware locked sections.
-- Antimalware & Behavior page: front-end triage workspace backed by effective-policy lookup and EDR detections; staged response actions can now be distinguished from agent-attempted/executed actions through heartbeat `response` evidence and `action_state`.
+- Antimalware & Behavior and Quarantine pages: three-panel triage workspaces with live remote EDR data (per-endpoint quarantine inventory snapshots from the agent, full response-action history, severity-based restore staging with interactive dual-operator approval for high/critical items, global Approvals Inbox, and `StagedActionBadge` driven by real server `ModuleActionResult` status including "executed" and "denied"). The reusable protection module pattern (DetectionTable + DetailPanel + ActionStagingPanel + shared `StagedActionBadge` + `permissions.ts`) is now used consistently across Quarantine, Antimalware, Web Protection, Device Control, Blocklist, Custom Rules, and Risk pages.
 
 Planned console hardening:
 
@@ -644,6 +666,11 @@ A full STRIDE pass belongs in its own document. The headline assumptions:
 
 ---
 
+**Living References for current state** (post-May 2026 remote EDR management milestone):
+- [multi-agent-coordination-protocol.md](multi-agent-coordination-protocol.md) — the operating model.
+- [current-capabilities-snapshot-2026-05-29.md](current-capabilities-snapshot-2026-05-29.md) — concise snapshot of delivered capabilities.
+- Recent `coordination-brief-cycle-*.md` + `console-wiring-remote-edr.md` — detailed cycle artifacts and the authoritative wiring contract (kept as living records).
+
 ## 8. Next Architectural Increments
 
 Ordered by risk-reduction, not by feature appeal.
@@ -665,7 +692,7 @@ Ordered by risk-reduction, not by feature appeal.
 8. **MSP console foundation.** Done in the console/API: Companies + Licensing, Accounts hierarchy, subscriptions/licenses, AI settings, full navigation, role matrix, and implementation roadmap panels. Next: white-label persistence, impersonation start/end/action UX, and server-confirmed action visibility.
 9. **Simulation event store.** Implemented first slice: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/scenario`. Next: more scenarios, console timeline workspace, and DRP/EASM-linked incidents.
 10. **External risk foundation.** Next: monitored assets, DRP findings, EASM asset discovery, finding normalization, and tenant-scoped rollups.
-11. **Agentic correlation.** Next: convert endpoint, DLP, DRP, EASM, and intelligence events into one incident graph with human-approved response actions.
+11. **Agentic correlation.** First slice implemented: FIM ↔ EDR cross-module correlation engine joins `fim_events` and EDR-derived `security_alerts` on a normalised `file_path` within a configurable time window (`AETHERIX_CORRELATION_WINDOW_SECONDS`, default 600s). Matches automatically uplift the security alert severity (medium→high, high→critical), record `correlation_links` edges, decorate the alert payload, and emit a `correlation.severity_uplift` evidence event mapped to ISO 27001 A.5.25/A.8.16, SOC 2 CC7.2/CC7.3, NIST CSF DE.AE + RS.AN. The `GET /security-alerts/{id}/correlations` endpoint exposes the linked signals for the console alert detail view. Next: extend to DLP↔EDR (sha256), DRP/EASM exposure ↔ endpoint incident graph, and human-approved response actions.
 12. **Native AV / EDR module v0.** First slice implemented: YARA-X + IOC scanner, process tree monitoring, ransomware canary/entropy/mass-write heuristics, policy-gated reversible quarantine with Argon2id KDF metadata and list/restore primitives, process kill, isolation-intent evidence, remote action evidence, and control-plane action-state visibility. Next: rollback, platform firewall enforcement, richer OS telemetry, and broader signature/reputation feeds.
 13. **Native SIEM / HIDS module v0.** Next: log + FIM collectors in the agent, parser library + correlation rule engine in the control plane, MITRE ATT&CK tag on every detection, software-inventory + CVE matching with EPSS/KEV.
 14. **Classification + labeling service.** Next: sensitivity-label model (Public / Internal / Confidential / Restricted, customer-extensible), label propagation rules on copy/move/rename, endpoint enforcement of label-aware destination policy.

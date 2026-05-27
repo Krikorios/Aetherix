@@ -44,7 +44,7 @@ from app.schemas import (
     PolicyVersion,
     PolicyVersionSummary,
 )
-from app.services import licensing, tenancy
+from app.services import correlation as correlation_service, licensing, tenancy
 from app.services.compliance import controls_for_event
 from app.services.crypto import canonical_json, _signing_key, signing_key_id
 from app.services.policy_v2_runtime import (
@@ -1600,11 +1600,54 @@ def ingest_agent_dlp_evidence(endpoint_id: str, token: str, payload: AgentDlpEvi
             "destination": payload.destination,
             "label_detected": payload.label_detected,
             "content_hash": payload.content_hash,
+            "sha256_hash": payload.sha256_hash,
             "policy_action_field": payload.policy_action_field,
             "process_name": payload.process_name,
             "endpoint_id": payload.endpoint_id,
         },
     )
+
+    # Persist DLP event in dlp_events table for correlation pipeline
+    # when the agent provides a file sha256_hash alongside the DLP evidence.
+    try:
+        customer_id = enrolled["customer_id"]
+        if payload.sha256_hash and customer_id:
+            now = datetime.now(UTC)
+            dlp_event_id = uuid.uuid4()
+            with connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into dlp_events (
+                        id, customer_id, endpoint_id, source, action,
+                        entity_types, risk_band, sha256_hash,
+                        request_preview_hash, observed_at, created_at
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        dlp_event_id,
+                        customer_id,
+                        endpoint_id,
+                        f"agent:{payload.event_type}",
+                        payload.decision,
+                        json.dumps([payload.label_detected] if payload.label_detected else []),
+                        None,
+                        payload.sha256_hash,
+                        payload.content_hash[:16],
+                        now,
+                        now,
+                    ),
+                )
+                correlation_service.correlate_new_dlp_event(
+                    cur,
+                    dlp_event_id=dlp_event_id,
+                    customer_id=customer_id,
+                    agent_id=endpoint_id,
+                    sha256_hash=payload.sha256_hash,
+                    observed_at=now,
+                )
+    except Exception:
+        pass
+
     return event
 
 

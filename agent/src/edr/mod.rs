@@ -111,6 +111,25 @@ pub struct QuarantineManifest {
     pub manifest_hash: String,
 }
 
+/// Operator-safe summary returned by remote quarantine list requests. This
+/// keeps the list payload focused on triage and restore decisions instead of
+/// exposing raw KDF metadata for every artifact.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuarantineListItem {
+    pub quarantine_id: String,
+    pub original_path: String,
+    pub quarantined_at: String,
+    pub sha256_hash: String,
+    pub rule_id: String,
+    pub file_size: u64,
+    pub severity_hint: String,
+    pub can_restore: bool,
+    pub restore_requires_approval: bool,
+    pub approval_hint: String,
+    pub encrypted: bool,
+    pub manifest_hash: String,
+}
+
 /// Evidence payload that lets the control plane and console distinguish a
 /// staged recommendation from an attempted/executed response action.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,6 +147,8 @@ pub struct ResponseEvidence {
     pub decision_trace: Vec<String>,
     pub error: Option<String>,
     pub quarantine: Option<QuarantineManifest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quarantine_items: Vec<QuarantineListItem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence_controls: Vec<String>,
 }

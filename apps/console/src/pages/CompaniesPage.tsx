@@ -42,6 +42,7 @@ import {
   type QuickDeployLink,
   type Subscription,
 } from "../api";
+import { hasPermission } from "../permissions";
 import {
   ConfirmModal,
   EmptyState,
@@ -456,9 +457,9 @@ export function CompaniesPage() {
     }
   }
 
-  const canManageCompanies = (me?.permissions.companies ?? "none") === "manage";
-  const canViewLicensing = ["view", "edit", "manage"].includes(me?.permissions.licensing ?? "none");
-  const canManagePolicies = ["edit", "manage"].includes(me?.permissions.policies ?? "none");
+  const canManageCompanies = hasPermission(me, { resource: "companies", level: "manage" });
+  const canViewLicensing = hasPermission(me, { resource: "licensing", level: "view" });
+  const canManagePolicies = hasPermission(me, { resource: "policies", level: "edit" });
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -1786,6 +1787,54 @@ const TTL_OPTIONS: { value: number; label: string }[] = [
   { value: 604_800, label: "7 days" },
 ];
 
+function getSigningBadge(signingStatus: string | null | undefined, buildStatus: string): { label: string; style: React.CSSProperties } {
+  if (buildStatus === "queued") {
+    return {
+      label: "Verification Pending",
+      style: { color: "var(--warning, #b45018)", borderColor: "var(--warning, #b45018)", background: "rgba(180, 80, 24, 0.07)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
+    };
+  }
+  if (signingStatus === "notarized") {
+    return {
+      label: "Notarized (Apple Dev / Microsoft WHQL)",
+      style: { color: "var(--healthy, #1d6b40)", borderColor: "var(--healthy, #1d6b40)", background: "rgba(29, 107, 64, 0.09)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
+    };
+  }
+  if (signingStatus === "signed") {
+    return {
+      label: "Signed (Symantec EV)",
+      style: { color: "var(--healthy, #1d6b40)", borderColor: "var(--healthy, #1d6b40)", background: "rgba(29, 107, 64, 0.09)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
+    };
+  }
+  return {
+    label: "Unsigned (Warning)",
+    style: { color: "var(--danger, #b3261e)", borderColor: "var(--danger, #b3261e)", background: "rgba(179, 38, 30, 0.08)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
+  };
+}
+
+function getTtlRemainingText(expiresAtStr: string | null | undefined): string {
+  if (!expiresAtStr) return "no expiry";
+  const expiresAt = new Date(expiresAtStr).getTime();
+  const now = new Date().getTime();
+  const diffMs = expiresAt - now;
+  if (diffMs <= 0) return "expired";
+  
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  if (diffDays > 0) {
+    return `${diffDays}d ${diffHours % 24}h remaining`;
+  }
+  if (diffHours > 0) {
+    return `${diffHours}h ${diffMins % 60}m remaining`;
+  }
+  if (diffMins > 0) {
+    return `${diffMins}m remaining`;
+  }
+  return "expires soon";
+}
+
 function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: string) => void }) {
   const [platforms, setPlatforms] = useState<InstallerPlatform[]>(["windows_msi"]);
   const [ttl, setTtl] = useState<number>(86_400);
@@ -1898,20 +1947,60 @@ function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: strin
         <fieldset className="fieldsetClean">
           <legend><Download size={14} /> Recent installers</legend>
           <div className="installerList">
-            {installers.map((build) => (
-              <div className="installerRow" key={build.id}>
-                <div>
-                  <strong>{build.platform}</strong>
-                  <em className={`statusPill status-${build.status === "ready" ? "active" : build.status === "failed" ? "expired" : "trial"}`}>{build.status}</em>
+            {installers.map((build) => {
+              const signing = getSigningBadge(build.signing_status, build.status);
+              const remaining = getTtlRemainingText(build.expires_at);
+              return (
+                <div className="installerRow" key={build.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "16px", padding: "12px 14px", alignItems: "center" }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "6px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <strong style={{ fontWeight: 600, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' }}>{build.platform}</strong>
+                      <em className={`statusPill status-${build.status === "ready" ? "active" : build.status === "failed" ? "expired" : "trial"}`}>{build.status}</em>
+                      <span style={signing.style}>{signing.label}</span>
+                    </div>
+                    {build.artifact_sha256 && (
+                      <div style={{ marginTop: "4px" }}>
+                        <CopyChip
+                          label="SHA-256"
+                          value={build.artifact_sha256}
+                          icon={<ShieldCheck size={12} style={{ color: "var(--healthy)" }} />}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" }}>
+                    <Clock size={12} /> {remaining}
+                  </span>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {build.artifact_url ? (
+                      <>
+                        <button
+                          type="button"
+                          className="iconBtn"
+                          onClick={() => void copy(build.artifact_url ?? "")}
+                          aria-label="Copy artifact URL"
+                          title="Copy download link"
+                        >
+                          <Copy size={14} />
+                        </button>
+                        <a
+                          href={build.artifact_url}
+                          download
+                          className="iconBtn"
+                          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "inherit" }}
+                          aria-label="Download artifact"
+                          title="Download installer file"
+                        >
+                          <Download size={14} />
+                        </a>
+                      </>
+                    ) : (
+                      <span className="muted" style={{ fontSize: "12px" }}>queued</span>
+                    )}
+                  </div>
                 </div>
-                <span className="muted"><Clock size={12} /> {build.expires_at ? formatDate(build.expires_at) : "no expiry"}</span>
-                {build.artifact_url ? (
-                  <button type="button" className="iconBtn" onClick={() => void copy(build.artifact_url ?? "")} aria-label="Copy artifact URL">
-                    <Copy size={14} />
-                  </button>
-                ) : <span className="muted">queued</span>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </fieldset>
       ) : null}
@@ -1920,18 +2009,26 @@ function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: strin
         <fieldset className="fieldsetClean">
           <legend><Link2 size={14} /> Quick-deploy links</legend>
           <div className="installerList">
-            {links.map((link) => (
-              <div className="installerRow" key={link.id}>
-                <div>
-                  <strong>{link.platform ?? "any"}</strong>
-                  <em className="muted">{link.download_count}{link.max_downloads ? ` / ${link.max_downloads}` : ""} downloads</em>
+            {links.map((link) => {
+              const remaining = getTtlRemainingText(link.expires_at);
+              return (
+                <div className="installerRow" key={link.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "16px", padding: "12px 14px", alignItems: "center" }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <strong style={{ fontWeight: 600, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' }}>{link.platform ?? "any"}</strong>
+                      <em className="muted" style={{ fontSize: "11px", fontStyle: "normal" }}>{link.download_count}{link.max_downloads ? ` / ${link.max_downloads}` : ""} downloads</em>
+                    </div>
+                    <code style={{ fontSize: "11px", color: "var(--muted)", wordBreak: "break-all" }}>{link.url}</code>
+                  </div>
+                  <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" }}>
+                    <Clock size={12} /> {remaining}
+                  </span>
+                  <button type="button" className="iconBtn" onClick={() => void copy(link.url)} aria-label="Copy link" title="Copy quick deploy link">
+                    <Copy size={14} />
+                  </button>
                 </div>
-                <span className="muted"><Clock size={12} /> {formatDate(link.expires_at)}</span>
-                <button type="button" className="iconBtn" onClick={() => void copy(link.url)} aria-label="Copy link">
-                  <Copy size={14} />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </fieldset>
       ) : null}

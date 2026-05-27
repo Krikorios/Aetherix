@@ -19,6 +19,9 @@ interface StagedActionBadgeProps {
 }
 
 function classify(status: ActionStatus, confirmedExecuted: boolean) {
+  if (status === "denied") {
+    return { kind: "denied" as const, label: "DENIED", icon: ShieldCheck };
+  }
   if (status === "failed") {
     return { kind: "failed" as const, label: "FAILED", icon: AlertTriangle };
   }
@@ -35,7 +38,7 @@ function classify(status: ActionStatus, confirmedExecuted: boolean) {
 }
 
 const STYLE_BY_KIND: Record<
-  "staged" | "awaiting" | "executed" | "failed",
+  "staged" | "awaiting" | "executed" | "failed" | "denied",
   React.CSSProperties
 > = {
   staged: {
@@ -54,6 +57,11 @@ const STYLE_BY_KIND: Record<
     background: "rgba(29, 107, 64, 0.09)",
   },
   failed: {
+    color: "var(--danger, #b3261e)",
+    borderColor: "var(--danger, #b3261e)",
+    background: "rgba(179, 38, 30, 0.08)",
+  },
+  denied: {
     color: "var(--danger, #b3261e)",
     borderColor: "var(--danger, #b3261e)",
     background: "rgba(179, 38, 30, 0.08)",

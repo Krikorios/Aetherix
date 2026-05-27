@@ -86,7 +86,7 @@ fn test_quarantine_action() {
     let path = work_dir.path().join("malware.bin");
     fs::write(&path, "malicious content").unwrap();
     let path = path.to_string_lossy().to_string();
-    let key = response::derive_key("test-key");
+    let key = response::quarantine_key_material("test-key");
     assert!(std::path::Path::new(&path).exists());
 
     let res = response::apply(&EdrAction::Quarantine, None, Some(&path), &key);
@@ -127,7 +127,7 @@ fn test_policy_promoted_quarantine_executes_and_emits_evidence() {
     event.file_path = Some(target.to_string_lossy().to_string());
     event.evidence_controls = policy.evidence_controls.clone();
 
-    let key = response::derive_key("test-key");
+    let key = response::quarantine_key_material("test-key");
     let evidence = response::apply_to_event(&mut event, &key);
 
     assert_eq!(event.action, EdrAction::Quarantine);
@@ -161,7 +161,7 @@ fn test_default_policy_keeps_ransomware_in_review_without_mutation() {
 
 #[test]
 fn test_isolation_records_intent_evidence() {
-    let key = response::derive_key("test-key");
+    let key = response::quarantine_key_material("test-key");
     let evidence = response::execute(
         &EdrAction::Isolate,
         None,

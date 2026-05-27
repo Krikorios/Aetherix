@@ -4,11 +4,15 @@ Development proposal and roadmap from the current POC toward an enterprise-ready
 
 Prepared for the development team on May 16, 2026. Version 1.0. Confidential.
 
+**Note (May 29, 2026 update):** Significant progress has been made since this document was written, particularly in remote EDR response management (agent + control plane + full console wiring). For the current state of delivered capabilities, see [current-capabilities-snapshot-2026-05-29.md](current-capabilities-snapshot-2026-05-29.md), [architecture.md](architecture.md), and the most recent coordination briefs. This document remains useful for historical context and original vision.
+
 ## Executive Summary
 
 Aetherix is an AI-native endpoint security platform designed for the generative AI era. It combines a lightweight endpoint agent, semantic DLP, AI-generated vulnerability reporting, and agentic incident response into a privacy-first platform that can be deployed in cloud, self-hosted, or air-gapped environments.
 
 The first production path should remain deliberately narrow: harden the endpoint agent contract, Presidio-compatible DLP scans, policy distribution, alert workflow, account/licensing foundations, and MSP console before expanding into vulnerability reporting, partner workflows, and autonomous response.
+
+(Note: As of late May 2026, a major slice of remote EDR response management — including operator-controlled quarantine actions with approval gates — has been delivered and fully wired across agent, control plane, and console. See the Current Capabilities Snapshot for details.)
 
 ### Core Differentiators
 

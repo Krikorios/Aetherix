@@ -93,7 +93,14 @@ Aetherix is developed using three specialized AI agents working in parallel unde
 - The Coordinator reviews every agent response and issues synchronized, updated prompts for all three tracks.
 - When sending agent outputs for review, provide explicit references to previous work when relevant so the Coordinator can maintain coherence.
 
-This model is designed to accelerate progress while protecting cross-track integration points (especially around ResponseEvidence, autonomous actions, quarantine lifecycle, correlation, and console visibility).
+This model is designed to accelerate progress while protecting cross-track integration points (especially around ResponseEvidence, autonomous vs. operator-controlled actions, quarantine lifecycle (inventory + restore with approval gates), correlation, and console visibility via StagedActionBadge + real backend data).
+
+**Living References** (authoritative for current state):
+- [multi-agent-coordination-protocol.md](multi-agent-coordination-protocol.md) — the operating model and prompt synchronization rules.
+- [current-capabilities-snapshot-2026-05-29.md](current-capabilities-snapshot-2026-05-29.md) — concise post-May 2026 snapshot of what is actually delivered and wired.
+- Recent `coordination-brief-cycle-*.md` files — cycle-by-cycle detail (kept as living records, not rewritten).
+
+See the living "Current Capabilities Snapshot" (docs/current-capabilities-snapshot-2026-05-29.md) for the post-May 2026 state of delivered features.
 
 ## Implemented API Surface
 
@@ -279,7 +286,7 @@ Implemented pages and flows:
 - Companies + Licensing: creates companies through `/customers/quick-create`, displays paged `/companies/summary`, edits licenses, configures/test AI providers, runs hard delete and soft lifecycle bulk actions, displays Core endpoint licensing, add-on packaging, AI Efficiency Score, white-label entry point, policy assignment, and installer generation state.
 - Accounts: persists Platform Owner, MSP Partner, Company Administrator, Company Technician, and Company Viewer roles; includes API-backed list filters, bulk hard delete, add/edit modal, invitation delivery, module permissions, 2FA state, password policy, and a permission matrix.
 - Policy Engine v2: creates, lists, simulates, promotes, assigns, resolves, and previews entitlement-aware modular policies.
-- Antimalware & Behavior: presents a three-panel triage UI over sample detections and effective policy state. It is a console workflow foundation, not a live AV/EDR detector.
+- Antimalware & Behavior and Quarantine: present three-panel triage workspaces over live detections, effective policy, and remote endpoint state. These are now wired to real EDR collectors and remote response actions (quarantine inventory snapshots, response history, and severity-gated restore workflows with operator approval). They demonstrate both triage and production-grade operator-controlled containment.
 - Full navigation: Monitoring, Incidents, Threats Xplorer, Network, Risk Management, Policies, Reports, Quarantine, Companies, Accounts, Sandbox Analyzer, Email Security, Mobile Security, Data Insights, Integrations, and Configuration.
 
 Current implementation boundary:
@@ -287,7 +294,7 @@ Current implementation boundary:
 - Company creation, accounts, roles, subscriptions, company licenses, AI settings, Policy Engine v2, Quick Deploy, and compliance export are backed by the API.
 - The console and API use bearer session authentication (`Authorization: Bearer <jwt>`). The `X-Aetherix-Account` fallback path has been removed.
 - AI Efficiency Score, white-label controls, several sidebar destinations, and default landing-page recommendations are still console foundations or placeholders until their dedicated APIs exist.
-- Antimalware & Behavior currently demonstrates triage/staging UX and policy context; it does not yet collect process trees, quarantine files, kill processes, isolate endpoints, or run malware scans.
+- Antimalware & Behavior and Quarantine surfaces now demonstrate live remote EDR capabilities: the agent collects process trees, ransomware canaries, YARA matches, and FIM events; the control plane surfaces per-endpoint quarantine inventory and full response-action history; the console renders live snapshots, severity-based restore staging (with dual-operator approval for high/critical), and executed/denied states driven by server evidence. These are no longer pure triage foundations.
 
 Recommended backend order for this surface:
 

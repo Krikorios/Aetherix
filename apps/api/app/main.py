@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
+from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, AgentActionAck, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, QuarantineInventoryResponse, QuarantineListRequest, QuarantineRestoreDecision, QuarantineRestoreRequest, PendingQuarantineRestore, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
 from app.services import audit
 from app.services import compliance
 from app.schemas import ComplianceAttestationCreate, ComplianceAttestation, ComplianceReviewCreate, ComplianceReview, ComplianceReviewQueueItem, ComplianceSourceTable
@@ -77,6 +77,10 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1:4173",
         "http://localhost:4173",
+        "http://127.0.0.1:4174",
+        "http://localhost:4174",
+        "http://127.0.0.1:4175",
+        "http://localhost:4175",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
         "http://127.0.0.1:5174",
@@ -287,6 +291,20 @@ def scan_dlp(request: DlpScanRequest, http_request: Request) -> DlpScanResponse:
         raise HTTPException(status_code=409, detail=str(error)) from error
     response = apply_policy(scan_text(request), policy)
     alert = create_dlp_alert(request, response, policy)
+    # Persist DLP event for correlation pipeline (includes DLP↔EDR matching)
+    try:
+        from app.services.state import persist_dlp_event
+        persist_dlp_event(
+            customer_id=request.customer_id,
+            endpoint_id=request.endpoint_id,
+            source=request.source or "manual",
+            action=response.action,
+            entity_types=[f.entity_type for f in response.findings],
+            risk_band=response.risk_band,
+            sha256_hash=request.sha256_hash,
+        )
+    except Exception:
+        pass
     # Audit the scan decision. The raw scan text is hashed, never stored.
     audit.record(
         action="dlp.scan",
@@ -861,6 +879,58 @@ def get_customer_security_alerts(
             cur.execute("select * from security_alerts where customer_id = %s order by created_at desc", (customer_id,))
             return cur.fetchall()
 
+
+@app.get("/security-alerts/{alert_id}/correlations")
+def get_security_alert_correlations(
+    alert_id: UUID,
+    account: Account = Depends(require("incidents", "view")),
+):
+    """Return cross-module correlation links for a security alert.
+
+    Each link describes a related FIM/EDR signal that supported either
+    the alert's automatic severity uplift or an analyst-visible
+    "related evidence" panel. Tenant access is enforced by resolving
+    the alert's ``customer_id`` first.
+    """
+
+    from app.services import correlation as correlation_service
+
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select customer_id, severity, severity_uplifted_from from security_alerts where id = %s",
+            (alert_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="security alert not found")
+    _require_customer_access(row["customer_id"], account, "incidents", "view")
+    return {
+        "alert_id": str(alert_id),
+        "severity": row["severity"],
+        "severity_uplifted_from": row["severity_uplifted_from"],
+        "correlations": correlation_service.list_correlations_for_alert(alert_id),
+    }
+
+@app.get("/dlp-events/{dlp_event_id}/correlations")
+def get_dlp_event_correlations(
+    dlp_event_id: UUID,
+    account: Account = Depends(require("incidents", "view")),
+):
+    """Return security alerts correlated with this DLP event via sha256_match.
+
+    Enables the console to show "this DLP scan also relates to N security
+    alerts" in the DLP scan details or the digital-risk surface.
+    """
+    from app.services import correlation as correlation_service
+
+    correlations = correlation_service.list_correlations_for_dlp_event(dlp_event_id)
+    return {
+        "dlp_event_id": str(dlp_event_id),
+        "total_correlations": len(correlations),
+        "correlations": correlations,
+    }
+
+
 @app.get("/customers/{customer_id}/incidents", response_model=list[IncidentCase])
 def get_customer_incidents(
     customer_id: UUID,
@@ -904,6 +974,8 @@ def _module_action(
     approval_required: bool,
     controls: list[str],
     created_by: str = "operator",
+    requested_by: UUID | None = None,
+    customer_id: UUID | None = None,
 ) -> ModuleActionResult:
     # Persist a queued module action so agents can poll and consume it.
     action_id = uuid.uuid4()
@@ -915,8 +987,11 @@ def _module_action(
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into module_actions(id, endpoint_id, action, payload, status, approval_required, created_by, created_at, evidence_controls)
-            values (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)
+            insert into module_actions(
+                id, endpoint_id, action, payload, status, approval_required,
+                created_by, created_at, evidence_controls, requested_by, customer_id
+            )
+            values (%s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
             returning *
             """,
             (
@@ -929,10 +1004,16 @@ def _module_action(
                 created_by,
                 now,
                 json.dumps(controls),
+                requested_by,
+                customer_id,
             ),
         )
         row = cur.fetchone()
 
+    return _module_action_result_from_row(row)
+
+
+def _module_action_result_from_row(row: dict[str, Any]) -> ModuleActionResult:
     return ModuleActionResult(
         id=str(row["id"]),
         target_id=row["endpoint_id"],
@@ -942,7 +1023,24 @@ def _module_action(
         payload=row["payload"] or None,
         evidence_controls=row["evidence_controls"] or [],
         created_at=row["created_at"],
+        result=row.get("result") or None,
+        processed_at=row.get("processed_at"),
+        requested_by=str(row["requested_by"]) if row.get("requested_by") else None,
+        approved_by=str(row["approved_by"]) if row.get("approved_by") else None,
+        approved_at=row.get("approved_at"),
     )
+
+
+def _endpoint_customer_id(endpoint_id: str) -> UUID | None:
+    """Resolve the enrolled agent's owning customer, if known."""
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select customer_id from enrolled_agents where agent_id = %s",
+            (endpoint_id,),
+        )
+        row = cur.fetchone()
+    return row["customer_id"] if row and row.get("customer_id") else None
+
 
 
 @app.get("/me", response_model=MeResponse)
@@ -1033,6 +1131,517 @@ def remediate_endpoint(endpoint_id: str, payload: ModuleActionRequest, http_requ
     result = _module_action(endpoint_id, payload.action, payload=payload.payload, approval_required=False, controls=["iso27001-2022:A.8.9", "nist-csf-2.0:PR.PS"])
     audit.record(action="endpoint.remediate", resource=f"endpoint:{endpoint_id}", actor=str(account.id), after=result.model_dump(mode="json"), request_id=_request_id(http_request))
     return result
+
+
+# --- Remote EDR management: quarantine list + restore (2026-05-27) --------
+#
+# Operator surface for the remote actions Agent 1 shipped. These routes
+# queue work into `module_actions` so the agent picks them up via
+# GET /agent/actions, then surface the response evidence the agent posts
+# back when it acks the action (or, for backward compatibility, via the
+# next heartbeat where the EdrEvent.matched_indicator points at the action
+# id — see app/services/state.py).
+#
+# Approval model (per Coordination Brief 2026-05-27 §2.1):
+#   - quarantine_restore for high/critical artifacts -> awaiting_approval
+#     (second operator required, dual-auth)
+#   - quarantine_restore for medium/low artifacts    -> queued directly
+#   - quarantine_list is read-only on the endpoint   -> queued directly
+#
+# These compliance controls cover incident response, recovery, and the
+# integrity of the response action itself:
+_QUARANTINE_LIST_CONTROLS: list[str] = [
+    "iso27001-2022:A.8.16",
+    "iso27001-2022:A.5.26",
+    "soc2-2017:CC7.2",
+    "nist-csf-2.0:DE.CM",
+    "nist-csf-2.0:RS.AN",
+]
+_QUARANTINE_RESTORE_CONTROLS: list[str] = [
+    "iso27001-2022:A.5.26",
+    "iso27001-2022:A.5.30",
+    "iso27001-2022:A.8.13",
+    "soc2-2017:CC7.4",
+    "soc2-2017:CC7.5",
+    "nist-csf-2.0:RS.MI",
+    "nist-csf-2.0:RC.RP",
+]
+
+
+def _emit_quarantine_compliance(
+    *,
+    customer_id: UUID | None,
+    action: str,
+    resource: str,
+    account: Account,
+    payload: dict[str, Any],
+) -> None:
+    """Emit a compliance evidence event for an operator-driven quarantine
+    action when the endpoint is tenant-attached. Silently skips when the
+    endpoint has no resolved customer (e.g. pre-enrollment fixtures) so a
+    missing tenant binding can't turn into a 5xx on the operator path."""
+    if customer_id is None:
+        return
+    from app.services.compliance import _emit_compliance_event, controls_for_event
+
+    controls = controls_for_event(action)
+    if not controls:
+        return
+    try:
+        _emit_compliance_event(
+            customer_id=customer_id,
+            action=action,
+            resource=resource,
+            actor=f"account:{account.id}",
+            payload=payload,
+            evidence_controls=controls,
+        )
+    except Exception:  # pragma: no cover - never break the operator path on evidence write
+        _logger.exception("failed to emit compliance evidence for %s", action)
+
+
+def _resolve_endpoint_or_404(endpoint_id: str) -> UUID | None:
+    """Validate the agent is enrolled and return its customer_id (if any).
+
+    Uses ``enrolled_agents`` rather than ``list_endpoints()`` because the
+    latter is sourced from heartbeats — and we need to be able to queue
+    actions against agents that haven't reported yet (e.g. immediately
+    after enrollment, or for a forensic restore on a quiet endpoint).
+    """
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select customer_id from enrolled_agents where agent_id = %s and revoked = false",
+            (endpoint_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="endpoint not found")
+    return row["customer_id"] if row.get("customer_id") else None
+
+
+@app.post("/endpoints/{endpoint_id}/quarantine-list", response_model=ModuleActionResult)
+def request_endpoint_quarantine_list(
+    endpoint_id: str,
+    payload: QuarantineListRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+    action_payload: dict[str, Any] = {"reason": payload.reason} if payload.reason else {}
+    result = _module_action(
+        endpoint_id,
+        "quarantine_list",
+        payload=action_payload or None,
+        approval_required=False,
+        controls=_QUARANTINE_LIST_CONTROLS,
+        created_by=str(account.id),
+        requested_by=account.id,
+        customer_id=customer_id,
+    )
+    audit.record(
+        action="endpoint.quarantine.list_requested",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_quarantine_compliance(
+        customer_id=customer_id,
+        action="endpoint.quarantine.list_requested",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={"action_id": result.id, "reason": payload.reason or None},
+    )
+    return result
+
+
+@app.post("/endpoints/{endpoint_id}/quarantine-restore", response_model=ModuleActionResult)
+def request_endpoint_quarantine_restore(
+    endpoint_id: str,
+    payload: QuarantineRestoreRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+    # Dual-operator approval for high/critical severities; single-operator
+    # for medium/low. Per-tenant override could later read from
+    # customer_ai_settings or a policy module — for now this honors the
+    # binding default in the coordination brief.
+    approval_required = payload.severity_hint in {"high", "critical"}
+    action_payload: dict[str, Any] = {
+        "quarantine_id": payload.quarantine_id,
+        "severity_hint": payload.severity_hint,
+    }
+    if payload.target_path:
+        action_payload["target_path"] = payload.target_path
+        action_payload["file_path"] = payload.target_path
+    if payload.reason:
+        action_payload["reason"] = payload.reason
+    result = _module_action(
+        endpoint_id,
+        "quarantine_restore",
+        payload=action_payload,
+        approval_required=approval_required,
+        controls=_QUARANTINE_RESTORE_CONTROLS,
+        created_by=str(account.id),
+        requested_by=account.id,
+        customer_id=customer_id,
+    )
+    audit.record(
+        action="endpoint.quarantine.restore_requested",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_quarantine_compliance(
+        customer_id=customer_id,
+        action="endpoint.quarantine.restore_requested",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "quarantine_id": payload.quarantine_id,
+            "severity_hint": payload.severity_hint,
+            "approval_required": approval_required,
+            "reason": payload.reason or None,
+        },
+    )
+    return result
+
+
+@app.post(
+    "/endpoints/{endpoint_id}/quarantine-restore/{action_id}/approve",
+    response_model=ModuleActionResult,
+)
+def approve_endpoint_quarantine_restore(
+    endpoint_id: str,
+    action_id: UUID,
+    http_request: Request,
+    decision: QuarantineRestoreDecision | None = None,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+    reason = (decision.reason or "").strip() if decision else ""
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select * from module_actions where id = %s and endpoint_id = %s",
+            (action_id, endpoint_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="action not found")
+        if row["action"] != "quarantine_restore":
+            raise HTTPException(status_code=400, detail="action is not a quarantine_restore")
+        if row["status"] != "awaiting_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=f"action is {row['status']}, not awaiting_approval",
+            )
+        # Dual-auth: the approver must be a distinct account from the requester.
+        if row.get("requested_by") and str(row["requested_by"]) == str(account.id):
+            raise HTTPException(
+                status_code=403,
+                detail="dual-operator approval requires a second account",
+            )
+        merged_payload: dict[str, Any] = dict(row["payload"] or {})
+        if reason:
+            merged_payload["approval_reason"] = reason
+        cur.execute(
+            """
+            update module_actions
+               set status = 'queued',
+                   approved_by = %s,
+                   approved_at = %s,
+                   payload = %s::jsonb
+             where id = %s
+             returning *
+            """,
+            (account.id, now, json.dumps(merged_payload), action_id),
+        )
+        updated = cur.fetchone()
+    result = _module_action_result_from_row(updated)
+    audit.record(
+        action="endpoint.quarantine.restore_approved",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_quarantine_compliance(
+        customer_id=customer_id,
+        action="endpoint.quarantine.restore_approved",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "requested_by": result.requested_by,
+            "approved_by": result.approved_by,
+            "reason": reason or None,
+        },
+    )
+    return result
+
+
+@app.post(
+    "/endpoints/{endpoint_id}/quarantine-restore/{action_id}/deny",
+    response_model=ModuleActionResult,
+)
+def deny_endpoint_quarantine_restore(
+    endpoint_id: str,
+    action_id: UUID,
+    http_request: Request,
+    decision: QuarantineRestoreDecision | None = None,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    """Reject an awaiting-approval restore. Mirrors approve so the console
+    can drive a complete decision flow without leaving stale rows in the
+    inbox. The reason (if provided) is persisted on the action payload and
+    in the compliance evidence trail."""
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+    reason = (decision.reason or "").strip() if decision else ""
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select * from module_actions where id = %s and endpoint_id = %s",
+            (action_id, endpoint_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="action not found")
+        if row["action"] != "quarantine_restore":
+            raise HTTPException(status_code=400, detail="action is not a quarantine_restore")
+        if row["status"] != "awaiting_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=f"action is {row['status']}, not awaiting_approval",
+            )
+        merged_payload: dict[str, Any] = dict(row["payload"] or {})
+        if reason:
+            merged_payload["denial_reason"] = reason
+        merged_payload["denied_by"] = str(account.id)
+        cur.execute(
+            """
+            update module_actions
+               set status = 'denied',
+                   processed_by = %s,
+                   processed_at = %s,
+                   payload = %s::jsonb
+             where id = %s
+             returning *
+            """,
+            (str(account.id), now, json.dumps(merged_payload), action_id),
+        )
+        updated = cur.fetchone()
+    result = _module_action_result_from_row(updated)
+    audit.record(
+        action="endpoint.quarantine.restore_denied",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_quarantine_compliance(
+        customer_id=customer_id,
+        action="endpoint.quarantine.restore_denied",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "requested_by": result.requested_by,
+            "denied_by": str(account.id),
+            "reason": reason or None,
+        },
+    )
+    return result
+
+
+@app.get(
+    "/endpoints/{endpoint_id}/quarantine-inventory",
+    response_model=QuarantineInventoryResponse,
+)
+def endpoint_quarantine_inventory(
+    endpoint_id: str,
+    account: Account = Depends(current_account),
+) -> QuarantineInventoryResponse:
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select endpoint_id, customer_id, items, source_action_id, refreshed_at
+              from endpoint_quarantine_inventory
+             where endpoint_id = %s
+            """,
+            (endpoint_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return QuarantineInventoryResponse(
+            endpoint_id=endpoint_id,
+            customer_id=customer_id,
+            items=[],
+            source_action_id=None,
+            refreshed_at=None,
+        )
+    return QuarantineInventoryResponse(
+        endpoint_id=row["endpoint_id"],
+        customer_id=row["customer_id"],
+        items=list(row["items"] or []),
+        source_action_id=str(row["source_action_id"]) if row.get("source_action_id") else None,
+        refreshed_at=row["refreshed_at"],
+    )
+
+
+_RESPONSE_ACTION_STATUSES = {
+    "queued",
+    "awaiting_approval",
+    "completed",
+    "failed",
+    "denied",
+}
+
+
+@app.get(
+    "/endpoints/{endpoint_id}/response-actions",
+    response_model=list[ModuleActionResult],
+)
+def endpoint_response_actions(
+    endpoint_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    action: str | None = Query(default=None, min_length=1, max_length=120),
+    status: str | None = Query(default=None),
+    account: Account = Depends(current_account),
+) -> list[ModuleActionResult]:
+    """Return recent queued/completed actions for an endpoint, including the
+    ResponseEvidence payload returned by the agent. Powers the console's
+    StagedActionBadge "executed" state and quarantine restore history.
+
+    Optional ``action`` and ``status`` filters let the console scope to,
+    for example, only the restore history (``action=quarantine_restore``)
+    or only items awaiting an operator decision
+    (``status=awaiting_approval``)."""
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+    clauses = ["endpoint_id = %s"]
+    params: list[object] = [endpoint_id]
+    if action is not None:
+        clauses.append("action = %s")
+        params.append(action)
+    if status is not None:
+        if status not in _RESPONSE_ACTION_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"status must be one of {sorted(_RESPONSE_ACTION_STATUSES)}",
+            )
+        clauses.append("status = %s")
+        params.append(status)
+    params.append(limit)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select id, endpoint_id, action, payload, status, approval_required,
+                   evidence_controls, created_at, result, processed_at,
+                   requested_by, approved_by, approved_at
+              from module_actions
+             where {' and '.join(clauses)}
+             order by created_at desc
+             limit %s
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+    return [_module_action_result_from_row(row) for row in rows]
+
+
+@app.get(
+    "/quarantine-restores/pending",
+    response_model=list[PendingQuarantineRestore],
+)
+def list_pending_quarantine_restores(
+    customer_id: UUID | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    account: Account = Depends(current_account),
+) -> list[PendingQuarantineRestore]:
+    """Tenant-wide approval inbox for high/critical quarantine restores.
+
+    Returns every ``awaiting_approval`` ``quarantine_restore`` the caller
+    is allowed to see (scoped by partner/customer membership), along with
+    the endpoint hostname so the console can render a single approval
+    queue page without one-fetch-per-endpoint.
+    """
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+
+    clauses = [
+        "ma.action = 'quarantine_restore'",
+        "ma.status = 'awaiting_approval'",
+    ]
+    params: list[object] = []
+    if customer_id is not None:
+        clauses.append("ma.customer_id = %s")
+        params.append(customer_id)
+    else:
+        scope = tenancy.compute_scope(account)
+        if not scope.is_platform:
+            tenant_clauses: list[str] = []
+            if scope.customer_ids:
+                tenant_clauses.append("ma.customer_id = any(%s)")
+                params.append(scope.customer_ids)
+            if scope.partner_ids:
+                # join through enrolled_agents -> customers to honor
+                # partner-scoped visibility for restores queued before
+                # ma.customer_id was backfilled or for cross-customer
+                # MSP reviewers.
+                tenant_clauses.append(
+                    "ea.customer_id in (select id from customers where partner_id = any(%s))"
+                )
+                params.append(scope.partner_ids)
+            if tenant_clauses:
+                clauses.append("(" + " or ".join(tenant_clauses) + ")")
+            else:
+                return []
+    params.append(limit)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select ma.id, ma.endpoint_id, ma.action, ma.payload, ma.status,
+                   ma.approval_required, ma.evidence_controls, ma.created_at,
+                   ma.result, ma.processed_at, ma.requested_by, ma.approved_by,
+                   ma.approved_at, ma.customer_id,
+                   ea.hostname as ea_hostname,
+                   coalesce(ma.customer_id, ea.customer_id) as resolved_customer_id
+              from module_actions ma
+              left join enrolled_agents ea on ea.agent_id = ma.endpoint_id
+             where {' and '.join(clauses)}
+             order by ma.created_at asc
+             limit %s
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+    out: list[PendingQuarantineRestore] = []
+    for row in rows:
+        out.append(
+            PendingQuarantineRestore(
+                action=_module_action_result_from_row(row),
+                endpoint_id=row["endpoint_id"],
+                hostname=row.get("ea_hostname"),
+                customer_id=row.get("resolved_customer_id"),
+            )
+        )
+    return out
 
 
 @app.patch("/branding", response_model=MeResponse)
@@ -3132,25 +3741,14 @@ def agent_get_actions(
 
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "select id, endpoint_id, action, payload, status, approval_required, evidence_controls, created_at from module_actions where endpoint_id = %s and status = 'queued' order by created_at asc",
+            "select id, endpoint_id, action, payload, status, approval_required, evidence_controls, created_at, result, processed_at, requested_by, approved_by, approved_at from module_actions where endpoint_id = %s and status = 'queued' order by created_at asc",
             (endpoint_id,),
         )
         rows = cur.fetchall()
 
     results: list[ModuleActionResult] = []
     for row in rows:
-        results.append(
-            ModuleActionResult(
-                id=str(row["id"]),
-                target_id=row["endpoint_id"],
-                action=row["action"],
-                status=row["status"],
-                approval_required=bool(row["approval_required"]),
-                payload=row["payload"] or None,
-                evidence_controls=row["evidence_controls"] or [],
-                created_at=row["created_at"],
-            )
-        )
+        results.append(_module_action_result_from_row(row))
     return results
 
 
@@ -3160,6 +3758,7 @@ def agent_ack_action(
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
     token: str | None = Query(default=None, min_length=8),
+    body: AgentActionAck | None = None,
 ) -> ModuleActionResult:
     resolved = _resolve_agent_token(authorization, token)
     try:
@@ -3168,26 +3767,55 @@ def agent_ack_action(
         raise HTTPException(status_code=401, detail=str(error)) from error
 
     now = datetime.now(UTC)
+    final_status = (body.status if body else None) or "completed"
+    result_payload = body.result if body else None
+    result_json = json.dumps(result_payload) if result_payload is not None else None
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "update module_actions set status = %s, processed_by = %s, processed_at = %s where id = %s and endpoint_id = %s returning *",
-            ("completed", endpoint_id, now, action_id, endpoint_id),
+            """
+            update module_actions
+               set status = %s,
+                   processed_by = %s,
+                   processed_at = %s,
+                   result = coalesce(%s::jsonb, result)
+             where id = %s and endpoint_id = %s
+             returning *
+            """,
+            (final_status, endpoint_id, now, result_json, action_id, endpoint_id),
         )
         row = cur.fetchone()
 
     if row is None:
         raise HTTPException(status_code=404, detail="action not found")
 
-    return ModuleActionResult(
-        id=str(row["id"]),
-        target_id=row["endpoint_id"],
-        action=row["action"],
-        status=row["status"],
-        approval_required=bool(row["approval_required"]),
-        payload=row["payload"] or None,
-        evidence_controls=row["evidence_controls"] or [],
-        created_at=row["created_at"],
-    )
+    # When a quarantine_list response is returned, cache the latest
+    # inventory snapshot so the console can render it without scanning
+    # the full security_alerts table.
+    if (
+        row["action"] in {"quarantine_list", "list_quarantine"}
+        and isinstance(result_payload, dict)
+    ):
+        items = result_payload.get("quarantine_items") or []
+        if isinstance(items, list):
+            customer_id = row.get("customer_id") or _endpoint_customer_id(endpoint_id)
+            items_json = json.dumps(items)
+            with db.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into endpoint_quarantine_inventory(
+                        endpoint_id, customer_id, items, source_action_id, refreshed_at
+                    )
+                    values (%s, %s, %s::jsonb, %s, %s)
+                    on conflict (endpoint_id) do update set
+                        customer_id = excluded.customer_id,
+                        items = excluded.items,
+                        source_action_id = excluded.source_action_id,
+                        refreshed_at = excluded.refreshed_at
+                    """,
+                    (endpoint_id, customer_id, items_json, row["id"], now),
+                )
+
+    return _module_action_result_from_row(row)
 
 
 # --- Subscriptions catalog -------------------------------------------------

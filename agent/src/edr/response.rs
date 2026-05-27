@@ -1,5 +1,6 @@
 use super::{
-    EdrAction, EdrEvent, QuarantineKdf, QuarantineManifest, ResponseEvidence, ResponseStatus,
+    EdrAction, EdrEvent, QuarantineKdf, QuarantineListItem, QuarantineManifest, ResponseEvidence,
+    ResponseStatus,
 };
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -20,12 +21,7 @@ const ARGON2_TIME_COST: u32 = 2;
 const ARGON2_PARALLELISM: u32 = 1;
 const KEY_LEN: usize = 32;
 
-/// Derive an AES-256 key from a passphrase using SHA-256.
-///
-/// Deprecated compatibility helper for older tests and manifests. New
-/// quarantines derive per-artifact keys with Argon2id and store KDF metadata
-/// in the manifest.
-pub fn derive_key(passphrase: &str) -> [u8; 32] {
+fn legacy_sha256_key(passphrase: &str) -> [u8; 32] {
     let mut key = [0u8; 32];
     let hash = Sha256::digest(passphrase.as_bytes());
     key.copy_from_slice(&hash);
@@ -33,7 +29,10 @@ pub fn derive_key(passphrase: &str) -> [u8; 32] {
 }
 
 pub fn quarantine_key_material(passphrase: &str) -> [u8; 32] {
-    derive_key(passphrase)
+    passphrase
+        .as_bytes()
+        .try_into()
+        .unwrap_or_else(|_| legacy_sha256_key(passphrase))
 }
 
 pub fn quarantine_secret_from_agent_secret(agent_secret: &str) -> String {
@@ -132,6 +131,7 @@ pub fn execute(
         decision_trace: Vec::new(),
         error: None,
         quarantine: None,
+        quarantine_items: Vec::new(),
         evidence_controls: evidence_controls.to_vec(),
     };
 
@@ -164,13 +164,20 @@ pub fn execute(
             },
             None => fail_message(&mut evidence, "quarantine requires target_path"),
         },
-        EdrAction::QuarantineList => match list_quarantine() {
+        EdrAction::QuarantineList => match list_quarantine_items() {
             Ok(items) => {
                 evidence.status = ResponseStatus::Executed;
                 evidence.platform_api = "filesystem-quarantine-list".to_string();
+                evidence.quarantine_items = items;
                 evidence
                     .decision_trace
-                    .push(format!("quarantine list completed: {} item(s)", items.len()));
+                    .push(format!(
+                        "quarantine list completed: {} item(s)",
+                        evidence.quarantine_items.len()
+                    ));
+                evidence.decision_trace.push(
+                    "list payload includes severity hints and restore approval hints".to_string(),
+                );
             }
             Err(err) => fail(&mut evidence, err),
         },
@@ -186,7 +193,13 @@ pub fn execute(
                         .decision_trace
                         .push("quarantine restore completed after manifest and hash verification".to_string());
                 }
-                Err(err) => fail(&mut evidence, err),
+                Err(err) => {
+                    fail(&mut evidence, err);
+                    evidence.decision_trace.push(
+                        "restore failed before host mutation completed; artifact left quarantined when available"
+                            .to_string(),
+                    );
+                }
             },
             None => fail_message(&mut evidence, "quarantine restore requires quarantine_id as target_path"),
         },
@@ -236,7 +249,7 @@ pub fn quarantine_file(
     rule_id: &str,
     encryption_key: &[u8; 32],
 ) -> Result<QuarantineManifest> {
-    quarantine_file_at(path, rule_id, encryption_key, &quarantine_dir())
+    quarantine_file_with_secret(path, rule_id, encryption_key)
 }
 
 pub fn quarantine_file_with_secret(
@@ -332,14 +345,17 @@ fn restore_file_at(
     quarantine_secret: &[u8],
     qdir: &Path,
 ) -> Result<QuarantineManifest> {
+    validate_quarantine_id(quarantine_id)?;
     let quarantined_path = qdir.join(format!("{quarantine_id}.{ENCRYPTED_EXT}"));
     let metadata_path = qdir.join(format!("{quarantine_id}{METADATA_EXT}"));
 
-    let meta_json = fs::read_to_string(&metadata_path).context("metadata not found")?;
+    let meta_json = fs::read_to_string(&metadata_path)
+        .with_context(|| format!("quarantine id not found: {quarantine_id}"))?;
     let manifest: QuarantineManifest = serde_json::from_str(&meta_json)?;
     verify_manifest_hash(&manifest)?;
 
-    let encrypted_data = fs::read(&quarantined_path).context("quarantined file not found")?;
+    let encrypted_data = fs::read(&quarantined_path)
+        .with_context(|| format!("quarantined artifact not found for id: {quarantine_id}"))?;
     if encrypted_data.len() < 12 {
         anyhow::bail!("corrupted quarantine file: too short");
     }
@@ -391,6 +407,72 @@ pub fn list_quarantine() -> Result<Vec<(String, QuarantineManifest)>> {
         }
     }
     Ok(items)
+}
+
+pub fn list_quarantine_items() -> Result<Vec<QuarantineListItem>> {
+    let mut items = list_quarantine()?
+        .into_iter()
+        .map(|(_, manifest)| quarantine_list_item(&manifest))
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| right.quarantined_at.cmp(&left.quarantined_at));
+    Ok(items)
+}
+
+fn quarantine_list_item(manifest: &QuarantineManifest) -> QuarantineListItem {
+    let severity_hint = severity_hint_for_rule(&manifest.rule_id);
+    let approval_hint = restore_approval_hint(&severity_hint);
+    QuarantineListItem {
+        quarantine_id: manifest.quarantine_id.clone(),
+        original_path: manifest.original_path.clone(),
+        quarantined_at: manifest.quarantined_at.clone(),
+        sha256_hash: manifest.sha256_hash.clone(),
+        rule_id: manifest.rule_id.clone(),
+        file_size: manifest.file_size,
+        can_restore: manifest.encrypted,
+        restore_requires_approval: true,
+        approval_hint,
+        severity_hint,
+        encrypted: manifest.encrypted,
+        manifest_hash: manifest.manifest_hash.clone(),
+    }
+}
+
+fn severity_hint_for_rule(rule_id: &str) -> String {
+    let normalized = rule_id.to_ascii_lowercase();
+    if normalized.contains("ransom")
+        || normalized.contains("canary")
+        || normalized.contains("critical")
+    {
+        "critical".to_string()
+    } else if normalized.contains("eicar")
+        || normalized.contains("yara")
+        || normalized.contains("ioc")
+        || normalized.contains("malware")
+        || normalized.contains("suspicious")
+    {
+        "high".to_string()
+    } else if normalized.contains("medium") || normalized.contains("pua") {
+        "medium".to_string()
+    } else {
+        "medium".to_string()
+    }
+}
+
+fn restore_approval_hint(severity_hint: &str) -> String {
+    match severity_hint {
+        "critical" | "high" => {
+            "dual_operator_approval_recommended_by_default".to_string()
+        }
+        "medium" | "low" => "single_operator_approval_with_tenant_policy".to_string(),
+        _ => "single_operator_approval_with_tenant_policy".to_string(),
+    }
+}
+
+fn validate_quarantine_id(quarantine_id: &str) -> Result<()> {
+    if uuid::Uuid::parse_str(quarantine_id).is_err() {
+        anyhow::bail!("invalid quarantine id: expected UUID");
+    }
+    Ok(())
 }
 
 fn derive_new_quarantine_key(secret: &[u8]) -> Result<([u8; KEY_LEN], QuarantineKdf)> {
@@ -630,7 +712,7 @@ mod tests {
         let test_file = dir.path().join("malware.exe");
         fs::write(&test_file, "this is malicious content").unwrap();
 
-        let key = derive_key("test-key-123");
+        let key = quarantine_key_material("test-key-123");
         let manifest = quarantine_file_at(&test_file, "yara_eicar", &key, qdir.path()).unwrap();
 
         assert!(manifest.encrypted);
@@ -647,7 +729,7 @@ mod tests {
     fn quarantine_manifest_chains_to_previous_manifest() {
         let qdir = tempdir().unwrap();
         let dir = tempdir().unwrap();
-        let key = derive_key("test-key-123");
+        let key = quarantine_key_material("test-key-123");
         let first_file = dir.path().join("first.bin");
         let second_file = dir.path().join("second.bin");
         fs::write(&first_file, "first").unwrap();
@@ -661,7 +743,7 @@ mod tests {
 
     #[test]
     fn response_evidence_records_staged_monitor_mode() {
-        let key = derive_key("test-key");
+        let key = quarantine_key_material("test-key");
         let evidence = execute(
             &EdrAction::Review,
             None,
@@ -678,7 +760,7 @@ mod tests {
 
     #[test]
     fn kill_refuses_current_process() {
-        let key = derive_key("test-key");
+        let key = quarantine_key_material("test-key");
         let evidence = execute(
             &EdrAction::Kill,
             Some(std::process::id()),
@@ -694,18 +776,18 @@ mod tests {
     }
 
     #[test]
-    fn derive_key_is_deterministic() {
-        let key1 = derive_key("passphrase");
-        let key2 = derive_key("passphrase");
+    fn compatibility_key_material_is_deterministic() {
+        let key1 = quarantine_key_material("passphrase");
+        let key2 = quarantine_key_material("passphrase");
         assert_eq!(key1, key2);
-        assert_ne!(key1, derive_key("different"));
+        assert_ne!(key1, quarantine_key_material("different"));
     }
 
     #[test]
     fn quarantine_kdf_uses_unique_salt_per_manifest() {
         let qdir = tempdir().unwrap();
         let dir = tempdir().unwrap();
-        let key = derive_key("test-key-123");
+        let key = quarantine_key_material("test-key-123");
         let first_file = dir.path().join("first.bin");
         let second_file = dir.path().join("second.bin");
         fs::write(&first_file, "first").unwrap();
@@ -715,5 +797,38 @@ mod tests {
         let second = quarantine_file_at(&second_file, "rule_2", &key, qdir.path()).unwrap();
 
         assert_ne!(first.kdf.unwrap().salt_b64, second.kdf.unwrap().salt_b64);
+    }
+
+    #[test]
+    fn quarantine_list_items_include_restore_triage_hints() {
+        let qdir = tempdir().unwrap();
+        let dir = tempdir().unwrap();
+        let key = quarantine_key_material("test-key-123");
+        let target = dir.path().join("eicar.bin");
+        fs::write(&target, "eicar").unwrap();
+
+        quarantine_file_at(&target, "yara_eicar", &key, qdir.path()).unwrap();
+        std::env::set_var("AETHERIX_QUARANTINE_DIR", qdir.path());
+        let items = list_quarantine_items().unwrap();
+        std::env::remove_var("AETHERIX_QUARANTINE_DIR");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].severity_hint, "high");
+        assert!(items[0].can_restore);
+        assert!(items[0].restore_requires_approval);
+        assert_eq!(
+            items[0].approval_hint,
+            "dual_operator_approval_recommended_by_default"
+        );
+    }
+
+    #[test]
+    fn restore_rejects_invalid_quarantine_id() {
+        let qdir = tempdir().unwrap();
+        let key = quarantine_key_material("test-key-123");
+
+        let err = restore_file_at("not-a-uuid", &key, qdir.path()).unwrap_err();
+
+        assert!(err.to_string().contains("invalid quarantine id"));
     }
 }

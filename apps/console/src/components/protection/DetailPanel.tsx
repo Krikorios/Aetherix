@@ -7,9 +7,11 @@ interface DetailPanelProps {
   detection: Detection | null;
   /** Custom renderer for specific contexts (e.g. custom tree view, network connections, complex config). */
   customContextRenderer?: (detection: Detection) => React.ReactNode;
+  /** Optional pre-rendered node shown at the top of the content area (e.g. CorrelationBanner). */
+  correlationBanner?: React.ReactNode;
 }
 
-export function DetailPanel({ detection, customContextRenderer }: DetailPanelProps) {
+export function DetailPanel({ detection, customContextRenderer, correlationBanner }: DetailPanelProps) {
   if (!detection) {
     return (
       <article className="panel" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: "300px" }}>
@@ -38,6 +40,9 @@ export function DetailPanel({ detection, customContextRenderer }: DetailPanelPro
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px" }}>
+        {/* Correlation uplift banner — rendered before main content when present */}
+        {correlationBanner}
+
         {/* Threat summary */}
         <div style={{ padding: "12px", borderRadius: "8px", border: "1px solid var(--line)", background: "rgba(11, 107, 87, 0.01)" }}>
           <h3 style={{ margin: "0 0 6px 0", fontSize: "13px", color: "var(--accent)", fontWeight: 600 }}>AI Threat Summary</h3>

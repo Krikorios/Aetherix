@@ -9,7 +9,8 @@ export type ActionStatus =
   | "awaiting_approval"
   | "approved"
   | "executed"
-  | "failed";
+  | "failed"
+  | "denied";
 
 export interface Detection {
   id: string;
@@ -26,6 +27,8 @@ export interface Detection {
   status: DetectionStatus;
   created_at: string;
   context?: Record<string, any>;
+  /** Populated when the backend uplifted severity due to cross-module correlation. */
+  severity_uplifted_from?: string | null;
 }
 
 export interface StagedAction {

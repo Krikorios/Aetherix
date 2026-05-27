@@ -38,6 +38,44 @@ export type Alert = {
   created_at: string;
   source: string;
   entity_types: string[];
+  severity_uplifted_from?: string | null;
+};
+
+export type CorrelationLink = {
+  id: string;
+  related_kind: string;
+  related_id: string;
+  correlation_type: string;
+  score: number;
+  window_seconds: number;
+  evidence: Record<string, unknown>;
+  created_at: string;
+};
+
+export type CorrelationResponse = {
+  alert_id: string;
+  severity: string;
+  severity_uplifted_from: string | null;
+  correlations: CorrelationLink[];
+};
+
+export type DlpCorrelationLink = {
+  id: string;
+  security_alert_id: string;
+  correlation_type: string;
+  score: number;
+  window_seconds: number;
+  evidence: Record<string, unknown>;
+  alert_severity: string;
+  alert_category: string;
+  alert_status: string;
+  created_at: string;
+};
+
+export type DlpCorrelationResponse = {
+  dlp_event_id: string;
+  total_correlations: number;
+  correlations: DlpCorrelationLink[];
 };
 
 export type DlpFinding = {

@@ -38,6 +38,7 @@ import { DashboardPage } from "./pages/Dashboard";
 import { AlertsPage } from "./pages/AlertsPage";
 import { DlpScanPage } from "./pages/DlpScanPage";
 import { PolicyPage } from "./pages/PolicyPage";
+import { PolicyEditorPage } from "./pages/PolicyEditorPage";
 import { AntimalwareBehaviorPage } from "./pages/AntimalwareBehavior";
 import { CustomDetectionRulesPage } from "./pages/CustomDetectionRules";
 import { EnrollmentPage } from "./pages/EnrollmentPage";
@@ -118,7 +119,8 @@ type Page =
   | "mobileSecurity"
   | "dataInsights"
   | "integrations"
-  | "configuration";
+  | "configuration"
+  | "policyEditor";
 
 type NavItem = {
   id: Page;
@@ -439,6 +441,7 @@ export function App() {
          {page === "deviceControl" && <DeviceControlPage me={me} />}
          {page === "reports" && <ReportsPage me={me} />}
          {page === "policyAssignments" && <PolicyAssignmentsPage me={me} />}
+         {page === "policyEditor" && <PolicyEditorPage me={me} onBack={() => setPage("policies")} />}
          {page === "network" && <NetworkPage me={me} />}
          {page === "configuration" && <ConfigurationPage me={me} />}
          {page === "agenticAi" && <AgenticAiPage me={me} />}
@@ -501,7 +504,7 @@ type PlaceholderMeta = {
   depends: string[];
 };
 
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm" | "network">, PlaceholderMeta> = {
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm" | "network" | "antimalware" | "quarantine">, PlaceholderMeta> = {
   executiveSummary: {
     title: "Executive Summary",
     eyebrow: "Partner reporting",
@@ -542,14 +545,6 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "th
       "Investigation agents correlate endpoint telemetry, DLP events, asset criticality, and threat intel into auditable timelines with confidence-scored response recommendations and approval gates.",
     depends: ["incident_cases correlation", "LLM gateway", "response_actions table"],
   },
-  antimalware: {
-    title: "Antimalware & Behavior",
-    eyebrow: "Endpoint protection",
-    status: "planned",
-    summary:
-      "Next-stage antimalware and behavior workflows with high-confidence triage, suspicious process context, and response action staging before destructive enforcement.",
-    depends: ["detector integration", "behavior pipeline", "response action queue"],
-  },
   webProtection: {
     title: "Web & Email Protection",
     eyebrow: "Content and communication",
@@ -581,14 +576,6 @@ const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "th
     summary:
       "Templated AI executive reports, ransomware readiness, and integrity reports backed by ai_reports with structured confidence, source references, and deterministic fallbacks.",
     depends: ["ai_reports table", "report templates", "object storage for evidence"],
-  },
-  quarantine: {
-    title: "Quarantine",
-    eyebrow: "Containment",
-    status: "planned",
-    summary:
-      "Scoped restore and release workflows for quarantined files, email items, and processes. Audit-trail mirrors the existing signed policy and enrollment audit events.",
-    depends: ["quarantine store", "restore workflow", "audit hash chain"],
   },
   sandbox: {
     title: "Sandbox Analyzer",

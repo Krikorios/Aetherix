@@ -260,6 +260,46 @@ _SCHEMA_STATEMENTS = (
         evidence_controls jsonb not null default '[]'::jsonb
     )
     """,
+    # --- Remote EDR management additions (2026-05-27) ---------------------
+    # `result` captures the ResponseEvidence payload returned by the agent
+    # when it acks an action (or when a heartbeat carries a response_action
+    # EdrEvent that references the action via matched_indicator).
+    # `requested_by` records the operator account id that submitted the
+    # request; `approved_by` records the second operator for dual-approval
+    # flows (e.g. high/critical quarantine restores).
+    """
+    alter table module_actions add column if not exists result jsonb
+    """,
+    """
+    alter table module_actions add column if not exists requested_by uuid
+    """,
+    """
+    alter table module_actions add column if not exists approved_by uuid
+    """,
+    """
+    alter table module_actions add column if not exists approved_at timestamptz
+    """,
+    """
+    alter table module_actions add column if not exists customer_id uuid references customers(id)
+    """,
+    """
+    create index if not exists module_actions_customer_idx on module_actions(customer_id)
+    """,
+    """
+    create index if not exists module_actions_action_idx on module_actions(action)
+    """,
+    # Latest quarantine inventory snapshot per endpoint, refreshed when the
+    # agent acks a `quarantine_list` request. Keeps the console fast without
+    # rescanning security_alerts every render.
+    """
+    create table if not exists endpoint_quarantine_inventory (
+        endpoint_id text primary key references enrolled_agents(agent_id) on delete cascade,
+        customer_id uuid references customers(id) on delete cascade,
+        items jsonb not null default '[]'::jsonb,
+        source_action_id uuid,
+        refreshed_at timestamptz not null
+    )
+    """,
     """
     alter table heartbeats add column if not exists partner_id uuid references partners(id)
     """,
@@ -560,6 +600,113 @@ _SCHEMA_STATEMENTS = (
     """,
     """
     alter table security_alerts add column if not exists evidence_controls jsonb not null default '[]'::jsonb
+    """,
+    """
+    alter table security_alerts add column if not exists severity_uplifted_from text
+    """,
+    # Persisted FIM events used for cross-module correlation (FIM ↔ EDR).
+    # The compliance trail still flows through evidence_events; this table
+    # exists so the correlation engine can do cheap (agent_id, file_path,
+    # observed_at) lookups without scanning the evidence stream.
+    """
+    create table if not exists fim_events (
+        id uuid primary key,
+        customer_id uuid not null references customers(id),
+        agent_id text not null references enrolled_agents(agent_id),
+        event_type text not null,
+        file_path text not null,
+        file_path_norm text not null,
+        sha256_hash text,
+        observed_at timestamptz not null,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists fim_events_agent_path_idx
+    on fim_events(agent_id, file_path_norm, observed_at desc)
+    """,
+    """
+    create index if not exists fim_events_customer_idx
+    on fim_events(customer_id, observed_at desc)
+    """,
+    # Persisted DLP scan results for future DLP ↔ EDR correlation.
+    # DLP scans run via the /dlp/scan API endpoint (not agent heartbeats),
+    # so this table lets the correlation engine join security_alerts against
+    # recent DLP activity on the same customer/endpoint by sha256_hash
+    # (when the scan context includes a file hash) or endpoint_id proximity.
+    """
+    create table if not exists dlp_events (
+        id uuid primary key,
+        customer_id uuid not null references customers(id),
+        endpoint_id text,
+        source text not null,
+        action text not null,
+        entity_types jsonb not null default '[]'::jsonb,
+        risk_band text,
+        sha256_hash text,
+        request_preview_hash text not null,
+        observed_at timestamptz not null,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists dlp_events_customer_idx
+    on dlp_events(customer_id, observed_at desc)
+    """,
+    """
+    create index if not exists dlp_events_sha256_idx
+    on dlp_events(sha256_hash)
+    """,
+    # Cross-module correlation edges. Each row records that
+    # `security_alert_id` is supported by a related signal (`related_kind`
+    # + `related_id`) — e.g. a FIM event on the same file_path within the
+    # correlation window. Used for the automatic severity uplift on
+    # security_alerts and rendered by the console alert detail view.
+    """
+    create table if not exists correlation_links (
+        id uuid primary key,
+        customer_id uuid not null references customers(id),
+        security_alert_id uuid not null references security_alerts(id) on delete cascade,
+        related_kind text not null,
+        related_id text not null,
+        correlation_type text not null,
+        score double precision not null default 1.0,
+        window_seconds integer not null,
+        evidence jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null,
+        constraint ck_correlation_related_kind
+            check (related_kind in ('fim_event', 'edr_event', 'security_alert', 'dlp_event')),
+        constraint ck_correlation_type
+            check (correlation_type in ('file_path_match', 'process_path_match', 'sha256_match'))
+    )
+    """,
+    """
+    create index if not exists correlation_links_alert_idx
+    on correlation_links(security_alert_id, created_at desc)
+    """,
+    """
+    create index if not exists correlation_links_related_idx
+    on correlation_links(related_kind, related_id)
+    """,
+    # Migration: add dlp_event to related_kind check constraint. The original
+    # constraint was created inline, so we drop-and-recreate for upgrades.
+    """
+    do $$
+    begin
+        if exists (
+            select 1 from pg_constraint
+            where conname = 'ck_correlation_related_kind'
+              and conrelid = 'correlation_links'::regclass
+        ) then
+            alter table correlation_links
+                drop constraint ck_correlation_related_kind;
+        end if;
+        alter table correlation_links
+            add constraint ck_correlation_related_kind
+            check (related_kind in ('fim_event', 'edr_event', 'security_alert', 'dlp_event'));
+    exception
+        when duplicate_object then null;
+    end $$;
     """,
     """
     create table if not exists compliance_controls (

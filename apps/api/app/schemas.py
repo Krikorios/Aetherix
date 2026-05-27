@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class DlpScanRequest(BaseModel):
@@ -11,6 +11,7 @@ class DlpScanRequest(BaseModel):
     endpoint_id: str | None = None
     source: str | None = None
     customer_id: UUID | None = None
+    sha256_hash: str | None = None
 
 
 class DlpFinding(BaseModel):
@@ -319,11 +320,119 @@ class ModuleActionResult(BaseModel):
     id: str
     target_id: str
     action: str
-    status: Literal["queued", "awaiting_approval", "completed"] = "queued"
+    status: Literal["queued", "awaiting_approval", "completed", "failed", "denied"] = "queued"
     approval_required: bool = False
     payload: dict[str, Any] | None = None
     evidence_controls: list[str] = Field(default_factory=list)
     created_at: datetime
+    # Populated when the agent acks the action and returns ResponseEvidence,
+    # or when a heartbeat-borne EdrEvent with kind=response_action references
+    # this action via matched_indicator. Schema matches the agent's
+    # `ResponseEvidence` Rust struct.
+    result: dict[str, Any] | None = None
+    processed_at: datetime | None = None
+    requested_by: str | None = None
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+
+
+class AgentActionAck(BaseModel):
+    """Optional body the agent may post when acknowledging a queued action.
+
+    `result` carries the `ResponseEvidence` payload (status, decision_trace,
+    quarantine manifest, quarantine_items, etc.) so the control plane can
+    surface executed state and quarantine inventories without waiting for the
+    next heartbeat.
+    """
+
+    status: Literal["completed", "failed"] = "completed"
+    result: dict[str, Any] | None = None
+
+
+class QuarantineRestoreRequest(BaseModel):
+    """Operator request to restore a previously quarantined artifact."""
+
+    quarantine_id: str = Field(min_length=1, max_length=256)
+    target_path: str | None = Field(default=None, max_length=4096)
+    severity_hint: RiskBand = "medium"
+    reason: str = Field(default="", max_length=1000)
+
+
+class QuarantineListRequest(BaseModel):
+    """Operator request to refresh the endpoint quarantine inventory."""
+
+    reason: str = Field(default="", max_length=1000)
+
+
+class QuarantineInventoryItem(BaseModel):
+    """Operator-facing view of a single quarantined artifact.
+
+    Mirrors the agent's ``QuarantineListItem`` (see
+    ``agent/src/edr/mod.rs``). Field names match the agent's serde
+    serialization so the console can consume cached and live payloads
+    interchangeably. ``AliasChoices`` keeps the older ``sha256`` /
+    ``size_bytes`` names accepted for forward-compat.
+
+    ``extra="allow"`` keeps newer agent builds from being silently
+    truncated.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    quarantine_id: str
+    original_path: str | None = None
+    quarantined_at: datetime | None = None
+    sha256_hash: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sha256_hash", "sha256"),
+    )
+    rule_id: str | None = None
+    file_size: int | None = Field(
+        default=None,
+        ge=0,
+        validation_alias=AliasChoices("file_size", "size_bytes"),
+    )
+    severity_hint: RiskBand | None = None
+    can_restore: bool = True
+    restore_requires_approval: bool = False
+    approval_hint: str | None = None
+    encrypted: bool = False
+    manifest_hash: str | None = None
+    # Optional extras some agent builds include but the canonical
+    # ``QuarantineListItem`` does not. Kept typed for stable console use.
+    stored_path: str | None = None
+    reason: str | None = None
+
+
+class QuarantineInventoryResponse(BaseModel):
+    endpoint_id: str
+    customer_id: UUID | None = None
+    items: list[QuarantineInventoryItem] = Field(default_factory=list)
+    source_action_id: str | None = None
+    refreshed_at: datetime | None = None
+
+
+class QuarantineRestoreDecision(BaseModel):
+    """Optional body for approve / deny on an awaiting-approval restore.
+
+    ``reason`` is stored in the action ``payload`` (under
+    ``approval_reason`` / ``denial_reason``) and surfaced through the
+    compliance evidence trail so auditors can see *why* a destructive
+    response was authorized or rejected.
+    """
+
+    reason: str = Field(default="", max_length=1000)
+
+
+class PendingQuarantineRestore(BaseModel):
+    """Approval-inbox entry: a single awaiting-approval restore plus the
+    endpoint context Agent 2 needs to render the row without an extra
+    fan-out call per endpoint."""
+
+    action: ModuleActionResult
+    endpoint_id: str
+    hostname: str | None = None
+    customer_id: UUID | None = None
 
 
 DeviceType = Literal["usb_storage", "usb_other", "printer", "bluetooth", "optical", "thunderbolt", "clipboard"]
@@ -1107,6 +1216,7 @@ class AgentDlpEvidenceIngest(BaseModel):
     destination: str | None = Field(default=None, max_length=255)
     label_detected: str | None = Field(default=None, max_length=120)
     content_hash: str = Field(min_length=8, max_length=255)
+    sha256_hash: str | None = Field(default=None, min_length=64, max_length=64)
     policy_version: str = Field(min_length=1, max_length=255)
     endpoint_id: str = Field(min_length=1, max_length=120)
     event_type: Literal["paste", "upload", "copy"]

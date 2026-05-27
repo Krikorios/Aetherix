@@ -38,7 +38,60 @@ CONTROL_MAPPINGS: dict[str, list[str]] = {
     "agent.heartbeat": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
     "agent.fim_event": ["iso27001-2022:A.8.12", "soc2-2017:CC7.1", "nist-csf-2.0:PR.PS"],
     "agent.edr_event": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
+    # `agent.response_action` covers operator-driven or policy-driven
+    # responses (quarantine, restore, list, kill, isolate) — i.e. incident
+    # response + recovery + integrity-of-response controls. Kept distinct
+    # from `agent.edr_event` so auditor exports show the recovery trail
+    # alongside detection telemetry.
+    "agent.response_action": [
+        "iso27001-2022:A.5.26",
+        "iso27001-2022:A.5.30",
+        "iso27001-2022:A.8.13",
+        "iso27001-2022:A.8.16",
+        "soc2-2017:CC7.2",
+        "soc2-2017:CC7.4",
+        "soc2-2017:CC7.5",
+        "nist-csf-2.0:RS.MI",
+        "nist-csf-2.0:RS.AN",
+        "nist-csf-2.0:RC.RP",
+    ],
     "agent.cis_check": ["iso27001-2022:A.8.8", "soc2-2017:CC7.1", "nist-csf-2.0:PR.PS"],
+    # Operator-driven quarantine management — distinct from
+    # `agent.response_action` (which is the agent's executed outcome) so
+    # auditor exports can show *request*, *approve*, *deny*, and
+    # *execute* as separate evidence steps for one remote response.
+    "endpoint.quarantine.list_requested": [
+        "iso27001-2022:A.5.26",
+        "iso27001-2022:A.8.16",
+        "soc2-2017:CC7.2",
+        "nist-csf-2.0:DE.CM",
+        "nist-csf-2.0:RS.AN",
+    ],
+    "endpoint.quarantine.restore_requested": [
+        "iso27001-2022:A.5.26",
+        "iso27001-2022:A.5.30",
+        "iso27001-2022:A.8.13",
+        "soc2-2017:CC7.4",
+        "soc2-2017:CC7.5",
+        "nist-csf-2.0:RS.MI",
+        "nist-csf-2.0:RC.RP",
+    ],
+    "endpoint.quarantine.restore_approved": [
+        "iso27001-2022:A.5.16",
+        "iso27001-2022:A.5.18",
+        "iso27001-2022:A.5.30",
+        "iso27001-2022:A.8.13",
+        "soc2-2017:CC6.3",
+        "soc2-2017:CC7.4",
+        "nist-csf-2.0:RS.MI",
+        "nist-csf-2.0:RC.RP",
+    ],
+    "endpoint.quarantine.restore_denied": [
+        "iso27001-2022:A.5.16",
+        "iso27001-2022:A.5.26",
+        "soc2-2017:CC7.4",
+        "nist-csf-2.0:RS.AN",
+    ],
     "policy.promote": ["iso27001-2022:A.5.12", "iso27001-2022:A.8.12", "soc2-2017:CC6.1", "gdpr:Art. 32"],
     "policy.simulate": ["iso27001-2022:A.8.12", "soc2-2017:CC6.1"],
     "policy_v2.create": ["iso27001-2022:A.5.12", "soc2-2017:CC6.1"],
@@ -48,6 +101,20 @@ CONTROL_MAPPINGS: dict[str, list[str]] = {
     "policy_v2.effective": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
     "policy_v2.agent_fetch": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
     "security.alert": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
+    # Cross-module correlation: when a FIM event and an EDR detection
+    # touch the same file path on the same agent inside the correlation
+    # window, the engine uplifts the security_alert severity and writes
+    # a `correlation.severity_uplift` evidence event. Auditors get a
+    # concrete event-aggregation/analysis artefact (DE.AE-3, RS.AN) and
+    # a system-monitoring/integrity trail (A.5.25, A.8.16, CC7.2/CC7.3).
+    "correlation.severity_uplift": [
+        "iso27001-2022:A.5.25",
+        "iso27001-2022:A.8.16",
+        "soc2-2017:CC7.2",
+        "soc2-2017:CC7.3",
+        "nist-csf-2.0:DE.AE",
+        "nist-csf-2.0:RS.AN",
+    ],
     "attestation_created": ["iso27001-2022:A.5.35", "soc2-2017:CC2.1"],
     "review_recorded": ["iso27001-2022:A.5.35", "soc2-2017:CC2.1"],
     "impersonation.start": [

@@ -488,16 +488,63 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             run_dlp_enforcement_loop(&client, api_url, credentials, &hostname, &os, shared_policy.clone())
                 .map_err(|err| format!("dlp enforcement failed: {err}"))?;
         }
-    } else if bridge_enabled {
-        // Bridge is up but the enforcement loop isn't; block the main
-        // thread so the bridge thread stays alive. The user can stop the
-        // agent via SIGINT/Ctrl-C as usual.
-        loop {
-            thread::sleep(Duration::from_secs(60));
-        }
     }
 
-    Ok(())
+    // Keep the main thread alive and send periodic status heartbeats so the
+    // control plane's last_seen stays fresh (OFFLINE_AFTER = 15 min).
+    // This also keeps bridge/EDR threads alive when DLP enforcement is off.
+    let heartbeat_interval = Duration::from_secs(
+        std::env::var("AETHERIX_HEARTBEAT_INTERVAL_SECONDS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(60),
+    );
+    // Clone credentials once for use inside the keep-alive loop.
+    let mut keepalive_creds = credentials.clone();
+    loop {
+        thread::sleep(heartbeat_interval);
+        if let Some(ref url) = api_url {
+            let (sig, hb_nonce) = if let Some(ref mut creds) = keepalive_creds {
+                let nonce = reserve_next_nonce(creds, &credentials_path).unwrap_or(0);
+                let collected_at = Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+                let s = enrolled_signature(
+                    &creds.agent_secret,
+                    &creds.agent_id,
+                    &hostname,
+                    &os,
+                    &collected_at,
+                    &policy_version,
+                    nonce,
+                );
+                (Some((s, collected_at)), Some(nonce))
+            } else {
+                (None, None)
+            };
+            let collected_at = sig
+                .as_ref()
+                .map(|(_, t)| t.clone())
+                .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string());
+            let hb = Heartbeat {
+                agent_id: agent_id.clone(),
+                hostname: hostname.clone(),
+                os: os.clone(),
+                collected_at,
+                policy_version: policy_version.clone(),
+                agent_version: DEFAULT_AGENT_VERSION.to_string(),
+                signature: sig.map(|(s, _)| s),
+                nonce: hb_nonce,
+                signals: collect_signals(),
+                inventory: None,
+                fim_events: Vec::new(),
+                edr_events: Vec::new(),
+                cis_results: Vec::new(),
+            };
+            let endpoint = format!("{}/agent/heartbeat", url.trim_end_matches('/'));
+            if let Err(e) = client.post(&endpoint).json(&hb).send() {
+                eprintln!("aetherix-agent: status heartbeat failed: {e}");
+            }
+        }
+    }
 }
 
 fn build_bridge_state(
@@ -924,7 +971,8 @@ fn poll_and_execute_actions(
                 ack_action(context, &action.id);
             }
             "quarantine" | "kill_process" | "isolate_endpoint" | "quarantine_list"
-            | "list_quarantine" | "restore_quarantine" | "release_from_quarantine" => {
+            | "list_quarantine" | "quarantine_restore" | "restore_quarantine"
+            | "release_from_quarantine" => {
                 let event = remote_action_event(&action, active_policy, &context.credentials.agent_secret);
                 emit_remote_action_evidence(context, event);
                 ack_action(context, &action.id);
@@ -960,6 +1008,26 @@ fn remote_action_event(
 ) -> aetherix_agent::edr::EdrEvent {
     let payload = action.payload.as_ref();
     let requested_action = normalize_remote_edr_action(&action.action);
+    let remote_request_id = payload
+        .and_then(|value| value.get("request_id").or_else(|| value.get("restore_request_id")))
+        .and_then(|value| value.as_str());
+    let policy_denial_reason = payload
+        .and_then(|value| {
+            value
+                .get("policy_denial_reason")
+                .or_else(|| value.get("denial_reason"))
+        })
+        .and_then(|value| value.as_str());
+    let rate_limit_state = payload
+        .and_then(|value| value.get("rate_limit_state").or_else(|| value.get("rate_limited")));
+    let approval_state = payload
+        .and_then(|value| {
+            value
+                .get("approval_state")
+                .or_else(|| value.get("approval_status"))
+        })
+        .and_then(|value| value.as_str())
+        .or_else(|| action.approval_required.then_some("required"));
     let mut event = aetherix_agent::edr::EdrEvent::new(
         aetherix_agent::edr::EdrDetectionKind::ResponseAction,
         payload
@@ -974,6 +1042,7 @@ fn remote_action_event(
         .clone()
         .unwrap_or_else(|| active_policy.evidence_controls.clone());
     event.tags.push("remote_response_action".to_string());
+    event.tags.push(format!("remote_action:{}", action.action));
     event.matched_indicator = Some(action.id.clone());
     event.process_pid = payload
         .and_then(|value| value.get("target_pid"))
@@ -1002,6 +1071,21 @@ fn remote_action_event(
             "remote action {:?} denied: current policy has not promoted matching detector action",
             requested_action
         ));
+        evidence
+            .decision_trace
+            .push(format!("action_queue_id={}", action.id));
+        if let Some(remote_request_id) = remote_request_id {
+            evidence
+                .decision_trace
+                .push(format!("remote_request_id={remote_request_id}"));
+        }
+        append_remote_restore_context(
+            &mut evidence,
+            &requested_action,
+            approval_state,
+            policy_denial_reason,
+            rate_limit_state,
+        );
         event.response = Some(evidence);
         return event;
     }
@@ -1028,12 +1112,46 @@ fn remote_action_event(
             quarantine_secret.as_bytes(),
         );
         evidence.status = aetherix_agent::edr::ResponseStatus::Failed;
+        evidence
+            .decision_trace
+            .push(format!("action_queue_id={}", action.id));
+        if let Some(remote_request_id) = remote_request_id {
+            evidence
+                .decision_trace
+                .push(format!("remote_request_id={remote_request_id}"));
+        }
+        append_remote_restore_context(
+            &mut evidence,
+            &requested_action,
+            approval_state,
+            policy_denial_reason,
+            rate_limit_state,
+        );
         event.action = requested_action;
         event.response = Some(evidence);
         return event;
     }
 
-    let evidence = edr_response::apply_to_event_with_secret(&mut event, quarantine_secret.as_bytes());
+    let mut evidence =
+        edr_response::apply_to_event_with_secret(&mut event, quarantine_secret.as_bytes());
+    evidence
+        .decision_trace
+        .push(format!("action_queue_id={}", action.id));
+    if let Some(remote_request_id) = remote_request_id {
+        evidence
+            .decision_trace
+            .push(format!("remote_request_id={remote_request_id}"));
+    }
+    append_remote_restore_context(
+        &mut evidence,
+        &requested_action,
+        approval_state,
+        policy_denial_reason,
+        rate_limit_state,
+    );
+    evidence.decision_trace.push(
+        "remote response evidence emitted via heartbeat response_action event".to_string(),
+    );
     if matches!(evidence.status, aetherix_agent::edr::ResponseStatus::Failed) {
         eprintln!(
             "aetherix-agent: remote action {} failed: {}",
@@ -1041,7 +1159,42 @@ fn remote_action_event(
             evidence.error.clone().unwrap_or_else(|| "unknown error".to_string())
         );
     }
+    event.response = Some(evidence);
     event
+}
+
+fn append_remote_restore_context(
+    evidence: &mut aetherix_agent::edr::ResponseEvidence,
+    requested_action: &aetherix_agent::edr::EdrAction,
+    approval_state: Option<&str>,
+    policy_denial_reason: Option<&str>,
+    rate_limit_state: Option<&serde_json::Value>,
+) {
+    if !matches!(
+        requested_action,
+        aetherix_agent::edr::EdrAction::QuarantineRestore
+    ) {
+        return;
+    }
+    evidence.decision_trace.push(
+        "restore request accepted only after control-plane approval gates queue the action"
+            .to_string(),
+    );
+    if let Some(approval_state) = approval_state {
+        evidence
+            .decision_trace
+            .push(format!("restore_approval_state={approval_state}"));
+    }
+    if let Some(reason) = policy_denial_reason {
+        evidence
+            .decision_trace
+            .push(format!("restore_policy_denial_reason={reason}"));
+    }
+    if let Some(state) = rate_limit_state {
+        evidence
+            .decision_trace
+            .push(format!("restore_rate_limit_state={state}"));
+    }
 }
 
 fn requires_target_path(action: &aetherix_agent::edr::EdrAction) -> bool {
@@ -1058,7 +1211,7 @@ fn normalize_remote_edr_action(action: &str) -> aetherix_agent::edr::EdrAction {
         "kill_process" | "kill" => aetherix_agent::edr::EdrAction::Kill,
         "isolate_endpoint" | "isolate" => aetherix_agent::edr::EdrAction::Isolate,
         "quarantine_list" | "list_quarantine" => aetherix_agent::edr::EdrAction::QuarantineList,
-        "restore_quarantine" | "release_from_quarantine" => {
+        "quarantine_restore" | "restore_quarantine" | "release_from_quarantine" => {
             aetherix_agent::edr::EdrAction::QuarantineRestore
         }
         _ => aetherix_agent::edr::EdrAction::Review,

@@ -200,6 +200,21 @@ export function DetectionTable({
                     </td>
                     <td style={{ padding: "12px", textAlign: "center" }}>
                       <RiskBadge band={d.risk_band} />
+                      {d.severity_uplifted_from && (
+                        <div
+                          style={{
+                            fontSize: "9px",
+                            fontWeight: 700,
+                            color: "var(--warning)",
+                            marginTop: "3px",
+                            whiteSpace: "nowrap",
+                            letterSpacing: "0.02em",
+                          }}
+                          title={`Severity uplifted from ${d.severity_uplifted_from} due to correlation`}
+                        >
+                          ↑ UPLIFTED
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: "12px", textAlign: "center", color: "var(--ink)", fontWeight: 500 }}>
                       {d.confidence}%

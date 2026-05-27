@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.db import connection
@@ -94,6 +95,8 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
     # Compliance Evidence mapping for new FIM events
     if heartbeat.fim_events and tenant["customer_id"]:
         from app.services.compliance import _emit_compliance_event, controls_for_event
+        from app.services import correlation as correlation_service
+
         controls = controls_for_event("agent.fim_event")
         for event in heartbeat.fim_events:
             _emit_compliance_event(
@@ -104,6 +107,34 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                 payload=event.model_dump(mode="json"),
                 evidence_controls=controls,
             )
+            # Persist FIM event + run reverse correlation (FIM → EDR):
+            # if an EDR security_alert already exists for this file path
+            # on this agent inside the window, uplift it.
+            try:
+                observed_at = datetime.fromisoformat(event.timestamp)
+            except Exception:
+                observed_at = datetime.now(UTC)
+            if observed_at.tzinfo is None:
+                observed_at = observed_at.replace(tzinfo=UTC)
+            with connection() as conn, conn.cursor() as cur:
+                fim_id, _ = correlation_service.persist_fim_event(
+                    cur,
+                    customer_id=tenant["customer_id"],
+                    agent_id=heartbeat.agent_id,
+                    event_type=event.event_type,
+                    file_path=event.file_path,
+                    sha256_hash=event.sha256_hash,
+                    observed_at=observed_at,
+                )
+                correlation_service.correlate_new_fim_event(
+                    cur,
+                    fim_event_id=fim_id,
+                    customer_id=tenant["customer_id"],
+                    agent_id=heartbeat.agent_id,
+                    file_path=event.file_path,
+                    sha256_hash=event.sha256_hash,
+                    observed_at=observed_at,
+                )
 
     # Compliance Evidence mapping for new EDR events
     if heartbeat.edr_events and tenant["customer_id"]:
@@ -113,6 +144,7 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
         from app.services import policy_v2 as policy_v2_service
 
         controls = controls_for_event("agent.edr_event")
+        response_action_controls = controls_for_event("agent.response_action")
 
         # Look up the effective `edr` policy module for this customer
         # exactly once per heartbeat. The module may contain a
@@ -131,14 +163,23 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
         edr_responses = dict(edr_module.get("responses") or {})
 
         for event in heartbeat.edr_events:
+            # Response-action events (remote quarantine/list/restore/kill/
+            # isolate) carry their own compliance dimension: incident
+            # response, recovery, and integrity of the response action
+            # itself. Tag them with a richer control set so auditor
+            # exports capture the recovery trail, not just detection.
+            is_response_action = event.kind == "response_action"
+            event_action_key = "agent.response_action" if is_response_action else "agent.edr_event"
+            event_controls = response_action_controls if is_response_action else controls
+
             # Emit compliance event
             _emit_compliance_event(
                 customer_id=tenant["customer_id"],
-                action="agent.edr_event",
+                action=event_action_key,
                 resource=f"process:{event.process_path or event.file_path or 'unknown'}",
                 actor=f"agent:{heartbeat.agent_id}",
                 payload=event.model_dump(mode="json"),
-                evidence_controls=controls,
+                evidence_controls=event_controls,
             )
 
             # Map category, recommended_action, and severity
@@ -216,27 +257,139 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
 
             # Insert alert into security_alerts
             with connection() as conn, conn.cursor() as cur:
+                # Cross-module correlation (EDR → FIM): if a recent FIM
+                # event on this agent touched the same file_path, uplift
+                # the severity, decorate the payload, and record edges.
+                # We run this *before* the insert so the row lands at
+                # its uplifted severity in a single round-trip.
+                from app.services import correlation as correlation_service
+
+                file_path_for_corr = event.file_path or event.process_path
+                severity_for_insert = severity
+                evidence_for_insert = event_controls
+                payload_for_insert = payload_dict
+                severity_uplifted_from: str | None = None
+                planned_links: list = []
+                if file_path_for_corr and not is_response_action:
+                    (
+                        severity_for_insert,
+                        payload_for_insert,
+                        evidence_for_insert,
+                        planned_links,
+                    ) = correlation_service.correlate_new_edr_alert(
+                        cur,
+                        alert_id=alert_id,
+                        customer_id=tenant["customer_id"],
+                        agent_id=heartbeat.agent_id,
+                        file_path=file_path_for_corr,
+                        severity=severity,
+                        payload=payload_dict,
+                        evidence_controls=list(event_controls),
+                        created_at=created_at,
+                    )
+                    if severity_for_insert != severity:
+                        severity_uplifted_from = severity
+
                 cur.execute(
                     """
                     insert into security_alerts (
-                        id, customer_id, agent_id, category, severity, confidence, recommended_action, ai_summary, payload, status, created_at, evidence_controls
-                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb)
+                        id, customer_id, agent_id, category, severity, confidence, recommended_action, ai_summary, payload, status, created_at, evidence_controls, severity_uplifted_from
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s)
                     """,
                     (
                         alert_id,
                         tenant["customer_id"],
                         heartbeat.agent_id,
                         category,
-                        severity,
+                        severity_for_insert,
                         95,
                         recommended_action,
                         ai_summary,
-                        json.dumps(payload_dict),
+                        json.dumps(payload_for_insert),
                         "new",
                         created_at,
-                        json.dumps(controls),
+                        json.dumps(evidence_for_insert),
+                        severity_uplifted_from,
                     ),
                 )
+
+                if planned_links:
+                    correlation_service.record_planned_links(
+                        cur,
+                        customer_id=tenant["customer_id"],
+                        security_alert_id=alert_id,
+                        planned_links=planned_links,
+                        created_at=created_at,
+                    )
+
+                # Remote response actions carry the originating
+                # module_actions.id in `matched_indicator` (agent sets this
+                # in agent/src/main.rs::remote_action_event). Use it to
+                # backfill the module_actions row's `result` + status so
+                # the console can render the executed/failed badge even
+                # when the agent didn't post a body to /agent/actions/ack.
+                if is_response_action:
+                    action_id_hint = event.matched_indicator
+                    response_payload = payload_dict.get("response")
+                    if action_id_hint and isinstance(response_payload, dict):
+                        try:
+                            action_uuid = uuid.UUID(action_id_hint)
+                        except (TypeError, ValueError):
+                            action_uuid = None
+                        if action_uuid is not None:
+                            new_status = (
+                                "failed"
+                                if response_payload.get("status") == "failed"
+                                else "completed"
+                            )
+                            cur.execute(
+                                """
+                                update module_actions
+                                   set status = %s,
+                                       processed_by = coalesce(processed_by, %s),
+                                       processed_at = coalesce(processed_at, %s),
+                                       result = coalesce(result, %s::jsonb)
+                                 where id = %s and endpoint_id = %s
+                                 returning customer_id, action
+                                """,
+                                (
+                                    new_status,
+                                    heartbeat.agent_id,
+                                    created_at,
+                                    json.dumps(response_payload),
+                                    action_uuid,
+                                    heartbeat.agent_id,
+                                ),
+                            )
+                            updated = cur.fetchone()
+                            # If this was a quarantine_list response, also
+                            # refresh the endpoint inventory snapshot.
+                            if (
+                                updated is not None
+                                and updated["action"] in {"quarantine_list", "list_quarantine"}
+                            ):
+                                items = response_payload.get("quarantine_items") or []
+                                if isinstance(items, list):
+                                    cur.execute(
+                                        """
+                                        insert into endpoint_quarantine_inventory(
+                                            endpoint_id, customer_id, items, source_action_id, refreshed_at
+                                        )
+                                        values (%s, %s, %s::jsonb, %s, %s)
+                                        on conflict (endpoint_id) do update set
+                                            customer_id = excluded.customer_id,
+                                            items = excluded.items,
+                                            source_action_id = excluded.source_action_id,
+                                            refreshed_at = excluded.refreshed_at
+                                        """,
+                                        (
+                                            heartbeat.agent_id,
+                                            updated["customer_id"] or tenant["customer_id"],
+                                            json.dumps(items),
+                                            action_uuid,
+                                            created_at,
+                                        ),
+                                    )
 
     # Compliance Evidence mapping for CIS Benchmarking
     if heartbeat.cis_results and tenant["customer_id"]:
@@ -307,6 +460,75 @@ def create_dlp_alert(request: DlpScanRequest, response: DlpScanResponse, policy:
         )
 
     return alert
+
+
+def persist_dlp_event(
+    *,
+    customer_id: UUID,
+    endpoint_id: str | None = None,
+    source: str,
+    action: str,
+    entity_types: list[str] | None = None,
+    risk_band: str | None = None,
+    sha256_hash: str | None = None,
+) -> uuid.UUID | None:
+    """Persist a DLP scan event to the dlp_events table for correlation.
+
+    Returns the ``dlp_event.id`` if the event was inserted and DLP↔EDR
+    correlation was attempted, or ``None`` if the customer context is
+    missing.
+    """
+    from app.db import connection
+    from app.services import correlation as correlation_service
+
+    import hashlib
+
+    if not customer_id:
+        return None
+
+    event_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    preview_hash = hashlib.sha256(f"{customer_id}|{source}|{now.isoformat()}".encode()).hexdigest()[:16]
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into dlp_events (
+                id, customer_id, endpoint_id, source, action,
+                entity_types, risk_band, sha256_hash,
+                request_preview_hash, observed_at, created_at
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event_id,
+                customer_id,
+                endpoint_id,
+                source,
+                action,
+                json.dumps(entity_types or []),
+                risk_band,
+                sha256_hash,
+                preview_hash,
+                now,
+                now,
+            ),
+        )
+
+        # DLP → EDR correlation: if this DLP event carries a file hash,
+        # check for existing EDR alerts on the same sha256.
+        if sha256_hash:
+            try:
+                correlation_service.correlate_new_dlp_event(
+                    cur,
+                    dlp_event_id=event_id,
+                    customer_id=customer_id,
+                    agent_id=endpoint_id,
+                    sha256_hash=sha256_hash,
+                    observed_at=now,
+                )
+            except Exception:
+                pass
+
+    return event_id
 
 
 def list_alerts() -> list[Alert]:

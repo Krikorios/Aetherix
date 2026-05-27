@@ -370,6 +370,9 @@ export function PolicyPage() {
   const [promotionOpen, setPromotionOpen] = useState(false);
   const [operatorApproved, setOperatorApproved] = useState(false);
   const [operatorJustification, setOperatorJustification] = useState("");
+
+  // Note: New policy creation now uses the dedicated PolicyEditorPage route.
+  // The old SideSheet approach has been superseded by the cleaner dedicated page.
   const [filterCompany, setFilterCompany] = useState("");
   const [selectedPolicyIds, setSelectedPolicyIds] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -747,18 +750,15 @@ export function PolicyPage() {
   const destructiveCount = simulation?.summary.modules_with_destructive_actions ?? 0;
   const selectedCount = selectedPolicyIds.size;
   const allVisibleSelected = visiblePolicies.length > 0 && visiblePolicies.every((policy) => selectedPolicyIds.has(policy.id));
-  const showPolicyBuilder = false;
+  // Note: New policy creation has been moved to the dedicated PolicyEditorPage route.
+  // The old monolithic editor code below is being phased out.
 
+  // "Add Policy" now opens the dedicated PolicyEditorPage (clean route-based experience).
   function openNewPolicy() {
-    const nextDraft = defaultDraft();
-    nextDraft.name = `Default policy (${policies.length + 1})`;
-    setDetailMode("new");
-    setSelectedPolicy(null);
-    setSelectedPolicyId(null);
-    setSimulation(null);
-    setDraft(nextDraft);
-    setPolicySection("details");
-    setViewMode("detail");
+    const event = new CustomEvent("aetherix:navigate", { 
+      detail: "policyEditor" 
+    });
+    window.dispatchEvent(event);
   }
 
   function openExistingPolicy(policyId: string) {
@@ -1935,7 +1935,10 @@ export function PolicyPage() {
     );
   }
 
-  if (viewMode === "detail") {
+  // OLD DETAIL VIEW (being phased out for creation)
+  // "Add Policy" now uses the dedicated PolicyEditorPage route for a clean experience.
+  // This block is temporarily kept only for editing *existing* policies during the transition.
+  if (viewMode === "detail" && detailMode === "existing") {
     return (
       <>
       <div className="policyDetailPage">
@@ -2644,7 +2647,15 @@ export function PolicyPage() {
             <span>Build, simulate, promote, and assign tenant-scoped security policies.</span>
           </div>
           <div className="policyCatalogActions" aria-label="Policy actions">
-            <button className="btn btnPrimary" type="button" onClick={openNewPolicy}>
+            <button 
+              className="btn btnPrimary" 
+              type="button" 
+              onClick={() => {
+                // Navigate to dedicated Policy Editor page for a clean, powerful creation experience
+                const event = new CustomEvent("aetherix:navigate", { detail: "policyEditor" });
+                window.dispatchEvent(event);
+              }}
+            >
               <Plus size={14} /> Add policy
             </button>
             <button className="btn" type="button" onClick={() => void loadPolicies()} disabled={isLoading}>
@@ -2780,22 +2791,12 @@ export function PolicyPage() {
         </section>
       </div>
 
-      {showPolicyBuilder ? <>
-
-      <section className="panel policyV2EditorPanel">
-        <div className="panelHeader">
-          <div>
-            <h2>Policy editor</h2>
-            <span>Module-by-module editing with entitlement checks and simulation gates</span>
-          </div>
-          <div className="policyV2Actions">
-            <button className="btnPrimary" type="button" disabled={isWorking} onClick={() => setDraft(defaultDraft())}>
-              <Plus size={16} /> New template
-            </button>
-          </div>
-        </div>
-
-        <form onSubmit={createDraft} className="policyEditorForm">
+      {/* 
+        OLD POLICY V2 EDITOR BLOCK REMOVED.
+        This logic has been migrated to the new dedicated PolicyEditorPage.tsx 
+        for a cleaner "Add Policy" experience via /policies/new (or equivalent navigation).
+        The old monolithic detail view + duplicate editor caused the UI corruption.
+      */}
           <div className="policyEditorGrid">
             <label>
               Policy name
@@ -3250,6 +3251,129 @@ export function PolicyPage() {
           ) : (
             <p style={{ color: "var(--text-muted)" }}>Please trigger a policy simulation first to generate release evidence.</p>
           )}
+        </div>
+      </SideSheet>
+
+      {/* 
+        Old new-policy creation SideSheet removed.
+        "Add Policy" now uses the dedicated PolicyEditorPage (clean route-based experience).
+      */}
+              <label>
+                Parent policy
+                <select
+                  value={draft.lineage.parent_policy_id ?? ""}
+                  onChange={(event) => setDraft((current) => ({
+                    ...current,
+                    lineage: { ...current.lineage, parent_policy_id: event.target.value || null },
+                  }))}
+                >
+                  <option value="">None</option>
+                  {policies.map((policy) => (
+                    <option key={policy.id} value={policy.id}>{policy.name} (v{policy.latest_version})</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Inheritance mode
+                <select
+                  value={draft.lineage.inheritance_mode}
+                  onChange={(event) => setDraft((current) => ({
+                    ...current,
+                    lineage: { ...current.lineage, inheritance_mode: event.target.value as PolicyDocumentV2Input["lineage"]["inheritance_mode"] },
+                  }))}
+                >
+                  <option value="inherit_with_overrides">Inherit with overrides</option>
+                  <option value="replace">Replace</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="policyAccordionList" style={{ marginTop: "24px" }}>
+              {MODULES.map((module) => {
+                const open = openModules.has(module.key);
+                const locked = isLocked(module.key);
+                const reason = lockedReason(module);
+                const payload = draft.modules[module.key] ?? {};
+                return (
+                  <article key={module.key} className="policyModuleCard">
+                    <button type="button" className="policyModuleHead" onClick={() => toggleModuleOpen(module.key)}>
+                      <span>
+                        <strong>{module.title}</strong>
+                        <small>{module.key}</small>
+                      </span>
+                      <span className="policyModuleHeadRight">
+                        {locked ? <em className="lockBadge">Locked</em> : null}
+                        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="policyModuleBody">
+                        {locked && (
+                          <div className="policyModuleLockedCallout">
+                            <strong>Module Locked: {reason}</strong>
+                            <p>This module is disabled by your current subscription.</p>
+                          </div>
+                        )}
+                        <div className="policyModuleFields" style={{ opacity: locked ? 0.5 : 1 }}>
+                          {module.fields.map((field) => {
+                            const value = payload[field.key];
+                            if (field.type === "boolean") {
+                              return (
+                                <label key={field.key} className="toggleRow">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(value)}
+                                    disabled={locked && field.key !== "enabled"}
+                                    onChange={(event) => setModuleField(module.key, field.key, event.target.checked)}
+                                  />
+                                  {field.label}
+                                </label>
+                              );
+                            }
+                            if (field.type === "select") {
+                              return (
+                                <label key={field.key}>
+                                  {field.label}
+                                  <select
+                                    value={String(value ?? field.options?.[0] ?? "")}
+                                    disabled={locked}
+                                    onChange={(event) => setModuleField(module.key, field.key, event.target.value)}
+                                  >
+                                    {field.options?.map((option) => (
+                                      <option key={option} value={option}>{option}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              );
+                            }
+                            return (
+                              <label key={field.key}>
+                                {field.label}
+                                <input
+                                  value={String(value ?? "")}
+                                  disabled={locked}
+                                  onChange={(event) => setModuleField(module.key, field.key, event.target.value)}
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: "32px", display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              {/* Old button reference removed during cleanup */}
+                Cancel
+              </button>
+              <button type="submit" className="btnPrimary" disabled={isWorking}>
+                {isWorking ? "Creating..." : "Create Policy"}
+              </button>
+            </div>
+          </form>
         </div>
       </SideSheet>
     </>

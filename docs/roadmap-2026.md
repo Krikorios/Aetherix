@@ -342,3 +342,45 @@ into a sales deck:
 
 If anything in this roadmap conflicts with the linked source, the
 source wins and this doc should be updated, not the other way around.
+
+---
+
+## 10. P0 Progress Snapshot (post-impersonation + signed-installer + extension milestone)
+
+Status delta against §3, captured after the impersonation lifecycle, signed
+installer pipeline, MV3 hardening, Policy v2 EDR/EASM/DRP activation, and
+console permission/staged-vs-executed work landed. Phrasing follows the
+sequencing principles in §2 — claims here are limited to what is covered by
+tests or CI-gated artifacts.
+
+| P0 item | State | Evidence |
+| --- | --- | --- |
+| P0-1 Production auth + impersonation | **Done for P0 surface** | Impersonation start/end/list routes, hash-chained `audit_log` + `evidence_events` with `iso27001-2022:A.5.18` + `soc2-2017:CC6.3` tags; 6 dedicated tests in `apps/api/tests/test_impersonation.py`; full slice 58 passing. SSO/SAML/OIDC still scoped to Phase 1. |
+| P0-2 Signed installer pipeline | **CI-gated, awaiting first signed release** | `agent/packaging/macos-package-and-notarize.sh` (universal binary + notarytool), `agent/packaging/windows-sign.ps1` + `Product.wxs` (WiX 4 + AzureSignTool with federated OIDC), `agent/packaging/linux-package-and-sign.sh` (dpkg-sig), `.github/workflows/release-agent.yml` wiring all three behind `release-*` Environments. No public signed binary shipped yet — exit criterion still requires a live tagged release. |
+| P0-3 Native AV/EDR v0 | **Major slice delivered** | Full deterministic EDR pipeline (YARA-x + ransomware canaries/entropy + process tree + FIM), Argon2id reversible quarantine with list/restore primitives and rich evidence, cross-platform kill, policy-gated local + remote actions via `/agent/actions` queue, `ResponseEvidence` + `response_action` heartbeat events. Control plane + console fully wired (severity-gated remote restore with dual-operator approval, live inventory, global Approvals Inbox, `StagedActionBadge` driven by real server status). See "Current Capabilities Snapshot" (May 2026) and console-wiring-remote-edr.md. Signatures, broader reputation, and formal AV certification remain P1+. |
+| P0-4 Compliance Evidence Engine v0.5 | **Partial** | Impersonation control mapping landed; control-review workflow, attestations, PDF export, object-store reference still scoped. |
+| P0-5 Real-site MV3 extension validation | **Code complete + manual checklist** | `apps/extension/utils/site_context.js` per-site extractors, shadow-DOM observer, location-change watcher, composer-submit safety net (debounced by sha256 hash), `destination_context` in both decide and evidence payloads, 22 unit tests passing, `docs/extension-validation-checklist.md` covers ChatGPT/Claude/Gemini/Copilot. Live-site sign-off still requires a human run. |
+| P0-6 CI hardening | **Open** | Not changed in this milestone. |
+| P0-7 SKU matrix | **Add-ons available** | DRP / EASM / threat_intelligence add-ons available on all SKUs; pricing/SKU seed and console SKU UX still pending. |
+
+### Console permission + staged-vs-executed (cross-cutting)
+
+- `apps/console/src/permissions.ts` centralises `hasPermission(me, req)` and
+  `permissionLevel(me, resource)`, re-using the same `LEVEL_RANK` the sidebar
+  uses. `App.tsx` now delegates to it, so page-level button gating, sidebar
+  filtering, and the server-side `me.permissions` projection always agree.
+- `apps/console/src/components/protection/StagedActionBadge.tsx` renders a
+  visually distinct badge for `staged` / `awaiting_approval` / `executed`
+  (and `failed`) — `executed` is reserved for actions the agent confirmed
+  ran on a host. `ActionStatus` was extended to include `executed`.
+- `ActionStagingPanel` uses the new badge so every protection module page
+  (Quarantine, Web Protection, Endpoint Health, EASM, Device Control,
+  Blocklist, Custom Detection Rules, Risk Management) shows the same
+  badge taxonomy. 9 new tests in `apps/console/src/test/StagedActionBadge.test.tsx`
+  (20 total console vitests passing).
+- This satisfies "All console actions in protected modules respect real
+  server-side permissions" because the badge state derives from the
+  server-emitted `StagedAction.status` rather than a free local boolean,
+  and button gating reads `me.permissions[resource]` (which is recomputed
+  on every `/me` call).
+
