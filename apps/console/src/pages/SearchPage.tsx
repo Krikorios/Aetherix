@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { Search, Bell, Shield, Ban, TriangleAlert, LoaderCircle, Terminal } from "lucide-react";
+import { Search, Bell, Ban, TriangleAlert, LoaderCircle, Terminal } from "lucide-react";
 import { apiGet, type Alert, type MeResponse } from "../api";
-import { ErrorBanner, SeverityBadge, PageHeader } from "../components";
+import { ConsolePage, ErrorBanner, SeverityBadge, PageHeader } from "../components";
 import { timeAgo } from "../utils";
 
 type SearchEntity = "alerts" | "incidents" | "endpoints" | "blocklist";
@@ -195,7 +195,7 @@ export function SearchPage({ me }: { me: MeResponse }) {
   const allTypes: SearchEntity[] = ["alerts", "incidents", "endpoints", "blocklist"];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
+    <ConsolePage>
       <PageHeader
         eyebrow="Incident Response"
         title="Search"
@@ -204,23 +204,11 @@ export function SearchPage({ me }: { me: MeResponse }) {
 
       {error && <ErrorBanner message={error} />}
 
-      {/* Search bar */}
-      <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
-        <div style={{ flex: 1, position: "relative" }}>
-          <Search
-            size={16}
-            style={{
-              position: "absolute",
-              left: "12px",
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "var(--muted)",
-              pointerEvents: "none",
-            }}
-          />
+      <div className="searchBar">
+        <div className="searchInputWrap">
+          <Search size={16} className="searchInputIcon" />
           <input
-            className="input"
-            style={{ paddingLeft: "36px", height: "44px", fontSize: "14px" }}
+            className="searchInput"
             placeholder="Search by hostname, IP, indicator, alert title…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -234,8 +222,7 @@ export function SearchPage({ me }: { me: MeResponse }) {
         </button>
       </div>
 
-      {/* Entity type filters */}
-      <div className="filterBar" style={{ marginBottom: "20px" }}>
+      <div className="filterBar">
         <span className="filterLabel">Search in</span>
         {allTypes.map((t) => (
           <button
@@ -248,43 +235,30 @@ export function SearchPage({ me }: { me: MeResponse }) {
         ))}
       </div>
 
-      {/* Results */}
       {isSearching && (
-        <div style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
-          <LoaderCircle size={24} className="spin" style={{ marginBottom: "8px" }} />
-          <div style={{ fontSize: "13px" }}>Searching…</div>
+        <div className="searchLoading">
+          <LoaderCircle size={24} className="spin" />
+          <div className="searchLoadingText">Searching…</div>
         </div>
       )}
 
       {!isSearching && hasSearched && results.length === 0 && (
-        <div className="panel" style={{ padding: "40px", textAlign: "center", color: "var(--muted)" }}>
-          <Search size={32} style={{ marginBottom: "12px", opacity: 0.4 }} />
-          <p style={{ margin: 0, fontSize: "14px" }}>No results found for "{query}"</p>
-          <p style={{ margin: "6px 0 0", fontSize: "12px" }}>Try different keywords or broaden your search scope</p>
+        <div className="panel searchEmptyPanel">
+          <Search size={32} className="searchEmptyIcon" />
+          <p className="searchEmptyText">No results found for "{query}"</p>
+          <p className="searchEmptyHint">Try different keywords or broaden your search scope</p>
         </div>
       )}
 
       {!isSearching && results.length > 0 && (
-        <div style={{ marginBottom: "8px", fontSize: "12px", color: "var(--muted)" }}>
+        <div className="searchResultCount">
           {results.length} result{results.length !== 1 ? "s" : ""} for "{query}"
         </div>
       )}
 
       {!isSearching && results.length > 0 && (
-        <div className="panel" style={{ display: "grid", gap: 0 }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "24px 1fr 120px 110px 90px",
-              gap: "12px",
-              padding: "10px 14px",
-              fontSize: "11px",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              color: "var(--muted)",
-              borderBottom: "1px solid var(--line)",
-            }}
-          >
+        <div className="panel searchResultGrid">
+          <div className="searchResultHead">
             <span />
             <span>Result</span>
             <span>Type</span>
@@ -295,25 +269,10 @@ export function SearchPage({ me }: { me: MeResponse }) {
           {results.map((r) => (
             <button
               key={`${r.type}-${r.id}`}
+              className="searchResultRow"
               onClick={() => navigateTo(r.url)}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "24px 1fr 120px 110px 90px",
-                gap: "12px",
-                alignItems: "center",
-                padding: "12px 14px",
-                border: "none",
-                borderBottom: "1px solid var(--line)",
-                background: "transparent",
-                cursor: "pointer",
-                textAlign: "left",
-                width: "100%",
-                minHeight: "52px",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(15,90,110,0.04)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
-              <span style={{ color: "var(--muted)", display: "flex" }}>
+              <span className="searchResultIcon">
                 {r.type === "alerts" && <Bell size={14} />}
                 {r.type === "incidents" && <TriangleAlert size={14} />}
                 {r.type === "endpoints" && <Terminal size={14} />}
@@ -321,13 +280,11 @@ export function SearchPage({ me }: { me: MeResponse }) {
               </span>
 
               <div>
-                <div style={{ fontSize: "13px", fontWeight: 500, lineHeight: 1.3 }}>{r.title}</div>
-                <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.subtitle}
-                </div>
+                <div className="searchResultTitle">{r.title}</div>
+                <div className="searchResultSub">{r.subtitle}</div>
               </div>
 
-              <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+              <span className="searchResultMeta">
                 {ENTITY_LABELS[r.type]}
               </span>
 
@@ -335,17 +292,17 @@ export function SearchPage({ me }: { me: MeResponse }) {
                 {r.severity ? (
                   <SeverityBadge severity={r.severity === "critical" ? "high" : r.severity as "low" | "medium" | "high"} />
                 ) : (
-                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>—</span>
+                  <span className="searchResultDash">&mdash;</span>
                 )}
               </span>
 
-              <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+              <span className="searchResultMeta">
                 {timeAgo(r.timestamp)}
               </span>
             </button>
           ))}
         </div>
       )}
-    </div>
+    </ConsolePage>
   );
 }

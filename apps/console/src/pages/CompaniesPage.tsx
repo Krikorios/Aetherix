@@ -1,6 +1,5 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  AlertCircle,
   Building2,
   Check,
   ChevronDown,
@@ -26,8 +25,6 @@ import {
   apiPost,
   apiPut,
   apiDelete,
-  getAccountId,
-  setAccountId,
   type AiProvider,
   type AiProbeResult,
   type BulkActionResult,
@@ -46,6 +43,7 @@ import {
   type Subscription,
 } from "../api";
 import {
+  ConfirmModal,
   EmptyState,
   ErrorBanner,
   LoadingRow,
@@ -330,8 +328,6 @@ function loadVisibleColumns(): ColumnId[] {
 
 export function CompaniesPage() {
   const [me, setMe] = useState<MeResponse | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [accountInput, setAccountInput] = useState(getAccountId() ?? "");
 
   const [rows, setRows] = useState<CompanyRow[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -353,6 +349,8 @@ export function CompaniesPage() {
   const [offset, setOffset] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkStatusModal, setBulkStatusModal] = useState<"active" | "suspended" | "archived" | null>(null);
+  const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -401,14 +399,17 @@ export function CompaniesPage() {
     );
   }
 
-  async function applyBulkStatus(status: "active" | "suspended" | "archived") {
+  async function executeBulkStatus() {
+    if (!bulkStatusModal) return;
+    const status = bulkStatusModal;
     const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    const label =
-      status === "suspended" ? "Suspend" : status === "archived" ? "Archive" : "Activate";
-    if (!window.confirm(`${label} ${ids.length} ${ids.length === 1 ? "company" : "companies"}?`)) {
+    if (ids.length === 0) {
+      setBulkStatusModal(null);
       return;
     }
+    const label =
+      status === "suspended" ? "Suspend" : status === "archived" ? "Archive" : "Activate";
+    
     setBulkBusy(true);
     setShowMoreMenu(false);
     try {
@@ -425,17 +426,14 @@ export function CompaniesPage() {
       setError(err instanceof Error ? err.message : "Bulk status update failed");
     } finally {
       setBulkBusy(false);
+      setBulkStatusModal(null);
     }
   }
 
-  async function applyBulkDelete() {
+  async function executeBulkDelete() {
     const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    if (
-      !window.confirm(
-        `Permanently delete ${ids.length} ${ids.length === 1 ? "company" : "companies"}? This removes all of their agents, policies, alerts, and licensing. This cannot be undone.`,
-      )
-    ) {
+    if (ids.length === 0) {
+      setBulkDeleteModal(false);
       return;
     }
     setBulkBusy(true);
@@ -454,6 +452,7 @@ export function CompaniesPage() {
       setError(err instanceof Error ? err.message : "Bulk delete failed");
     } finally {
       setBulkBusy(false);
+      setBulkDeleteModal(false);
     }
   }
 
@@ -491,22 +490,15 @@ export function CompaniesPage() {
   }, [filterQuery, filterStatus, pageSize]);
 
   const loadMe = useCallback(async () => {
-    if (!getAccountId()) {
-      setMe(null);
-      setAuthError("Sign in by pasting an account ID — temporary dev auth until SSO lands.");
-      setIsLoading(false);
-      return;
-    }
     try {
       const next = await apiGet<MeResponse>("/me");
       if (!mountedRef.current) return;
       setMe(next);
-      setAuthError(null);
       await load();
     } catch (err) {
       if (!mountedRef.current) return;
       setMe(null);
-      setAuthError(err instanceof Error ? err.message : "Auth failed");
+      setError(err instanceof Error ? err.message : "Auth failed");
       setIsLoading(false);
     }
   }, [load]);
@@ -519,56 +511,15 @@ export function CompaniesPage() {
     };
   }, [loadMe]);
 
-  function handleSignIn(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = accountInput.trim();
-    if (!trimmed) return;
-    setAccountId(trimmed);
-    void loadMe();
-  }
-
-  function handleSignOut() {
-    setAccountId(null);
-    setAccountInput("");
-    setMe(null);
-    setRows([]);
-    setAuthError("Signed out.");
-  }
-
   if (!me) {
     return (
       <>
         <PageHeader
           eyebrow="MSP tenant foundation"
           title="Companies + Licensing"
-          subtitle="Sign in with an account ID to load tenant-scoped data."
+          subtitle="Sign in to load tenant-scoped data."
         />
-        {authError ? <ErrorBanner message={authError} /> : null}
-        <section className="panel" style={{ maxWidth: 520 }}>
-          <div className="panelHeader">
-            <div>
-              <h2>Dev sign-in</h2>
-              <span>Paste a platform owner / partner / company account UUID.</span>
-            </div>
-            <Key size={18} />
-          </div>
-          <form className="formStack" onSubmit={handleSignIn}>
-            <div className="formRow">
-              <label htmlFor="accountId">Account ID</label>
-              <input
-                id="accountId"
-                placeholder="00000000-0000-0000-0000-000000000000"
-                value={accountInput}
-                onChange={(event) => setAccountInput(event.target.value)}
-              />
-            </div>
-            <div className="formActions">
-              <button type="submit" className="btnPrimary" disabled={!accountInput.trim()}>
-                Sign in
-              </button>
-            </div>
-          </form>
-        </section>
+        {error ? <ErrorBanner message={error} /> : null}
       </>
     );
   }
@@ -609,9 +560,6 @@ export function CompaniesPage() {
                 <Plus size={16} /> Add company
               </button>
             ) : null}
-            <button type="button" className="btnGhost" onClick={handleSignOut}>
-              Sign out
-            </button>
           </div>
         </div>
 
@@ -622,7 +570,7 @@ export function CompaniesPage() {
                 <button
                   type="button"
                   className="btnDanger"
-                  onClick={() => void applyBulkDelete()}
+                  onClick={() => setBulkDeleteModal(true)}
                   disabled={selectedIds.size === 0 || bulkBusy}
                   title="Permanently delete selected companies and all of their data"
                 >
@@ -639,13 +587,13 @@ export function CompaniesPage() {
                   </button>
                   {showMoreMenu ? (
                     <div className="moreActionsMenu" role="menu">
-                      <button type="button" onClick={() => void applyBulkStatus("active")}>
+                      <button type="button" onClick={() => setBulkStatusModal("active")}>
                         Activate selected
                       </button>
-                      <button type="button" onClick={() => void applyBulkStatus("suspended")}>
+                      <button type="button" onClick={() => setBulkStatusModal("suspended")}>
                         Suspend selected
                       </button>
-                      <button type="button" onClick={() => void applyBulkStatus("archived")}>
+                      <button type="button" onClick={() => setBulkStatusModal("archived")}>
                         Archive selected
                       </button>
                     </div>
@@ -789,6 +737,29 @@ export function CompaniesPage() {
           </div>
         </div>
       </section>
+
+      <ConfirmModal
+        open={bulkStatusModal !== null}
+        title={bulkStatusModal === "suspended" ? "Suspend Companies" : bulkStatusModal === "archived" ? "Archive Companies" : "Activate Companies"}
+        message={`Are you sure you want to ${bulkStatusModal === "suspended" ? "suspend" : bulkStatusModal === "archived" ? "archive" : "activate"} ${selectedIds.size} ${selectedIds.size === 1 ? "company" : "companies"}?`}
+        confirmLabel={bulkStatusModal === "suspended" ? "Suspend" : bulkStatusModal === "archived" ? "Archive" : "Activate"}
+        isDanger={bulkStatusModal !== "active"}
+        isBusy={bulkBusy}
+        onConfirm={() => void executeBulkStatus()}
+        onCancel={() => setBulkStatusModal(null)}
+      />
+
+      <ConfirmModal
+        open={bulkDeleteModal}
+        title="Permanently Delete Companies"
+        message={`You are about to delete ${selectedIds.size} ${selectedIds.size === 1 ? "company" : "companies"}. This removes all of their agents, policies, alerts, and licensing. This cannot be undone.`}
+        confirmLabel="Delete"
+        isDanger
+        isBusy={bulkBusy}
+        requireReason
+        onConfirm={(reason) => void executeBulkDelete()}
+        onCancel={() => setBulkDeleteModal(false)}
+      />
 
       <SideSheet open={showSettings} onClose={() => setShowSettings(false)} title="Table settings">
         <div className="settingsDrawer">
@@ -1445,6 +1416,7 @@ function AiTab({
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [isProbing, setIsProbing] = useState(false);
   const [probe, setProbe] = useState<AiProbeResult | null>(null);
@@ -1544,11 +1516,8 @@ function AiTab({
     }
   }
 
-  async function remove() {
+  async function executeRemove() {
     if (!canManage || !settings) return;
-    if (!window.confirm("Remove AI settings for this company? Tenant calls will fall back to platform defaults.")) {
-      return;
-    }
     setIsDeleting(true);
     setSuccess(null);
     try {
@@ -1562,6 +1531,7 @@ function AiTab({
       onError(err instanceof Error ? err.message : "Failed to clear AI settings");
     } finally {
       setIsDeleting(false);
+      setShowDeleteModal(false);
     }
   }
 
@@ -1758,14 +1728,26 @@ function AiTab({
           </button>
         ) : null}
         {settings ? (
-          <button
-            type="button"
-            className="btnGhost"
-            onClick={remove}
-            disabled={disabledForm || isDeleting}
-          >
-            {isDeleting ? "Removing…" : "Reset to platform default"}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btnGhost"
+              onClick={() => setShowDeleteModal(true)}
+              disabled={disabledForm || isDeleting}
+            >
+              {isDeleting ? "Removing…" : "Reset to platform default"}
+            </button>
+            <ConfirmModal
+              open={showDeleteModal}
+              title="Reset AI Settings"
+              message="Remove AI settings for this company? Tenant calls will fall back to platform defaults."
+              confirmLabel="Reset"
+              isDanger
+              isBusy={isDeleting}
+              onConfirm={() => void executeRemove()}
+              onCancel={() => setShowDeleteModal(false)}
+            />
+          </>
         ) : null}
         {!canManage ? (
           <span className="muted">Read-only — companies:manage required to change AI settings.</span>

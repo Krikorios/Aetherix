@@ -207,3 +207,111 @@ test("bridgeStatus reports disconnected when native and HTTP are unavailable", a
   assert.deepEqual(await bridge.bridgeStatus(), { connected: false, mode: null });
   await assert.rejects(() => bridge.getPolicy(), /agent bridge unavailable/);
 });
+
+// ── site_context destination extraction ───────────────────────────────
+//
+// site_context.js reads from `window.location` and `document`. We can't run
+// it inside Node without polyfilling those globals; the polyfill below is
+// minimal but exercises every extractor branch the live-site checklist
+// depends on.
+
+function withDom({ hostname, pathname, pickerText }, fn) {
+  const prevLoc = globalThis.location;
+  const prevDoc = globalThis.document;
+  const prevWin = globalThis.window;
+  const prevHistory = globalThis.history;
+  const prevNF = globalThis.NodeFilter;
+  globalThis.location = { hostname, pathname, href: `https://${hostname}${pathname}` };
+  globalThis.NodeFilter = { SHOW_ELEMENT: 1 };
+  globalThis.document = {
+    querySelector() {
+      if (!pickerText) return null;
+      return { textContent: pickerText };
+    },
+    createTreeWalker() { return { nextNode() { return null; } }; },
+    documentElement: { },
+  };
+  globalThis.window = {
+    addEventListener() {},
+    dispatchEvent() {},
+  };
+  globalThis.history = { pushState() {}, replaceState() {} };
+  try {
+    return fn();
+  } finally {
+    globalThis.location = prevLoc;
+    globalThis.document = prevDoc;
+    globalThis.window = prevWin;
+    globalThis.history = prevHistory;
+    globalThis.NodeFilter = prevNF;
+  }
+}
+
+test("site_context extracts ChatGPT conversation_id and model", async () => {
+  const mod = await import(`../utils/site_context.js?ctx-cgpt-${Date.now()}`);
+  const ctx = withDom(
+    {
+      hostname: "chatgpt.com",
+      pathname: "/c/0123abcd-4567-89ef-0123-456789abcdef",
+      pickerText: "GPT-4o",
+    },
+    () => mod.getDestinationContext(),
+  );
+  assert.equal(ctx.site, "chatgpt");
+  assert.equal(ctx.conversation_id, "0123abcd-4567-89ef-0123-456789abcdef");
+  assert.equal(ctx.route, "conversation");
+  assert.equal(ctx.model, "GPT-4o");
+});
+
+test("site_context extracts Claude conversation_id", async () => {
+  const mod = await import(`../utils/site_context.js?ctx-claude-${Date.now()}`);
+  const ctx = withDom(
+    {
+      hostname: "claude.ai",
+      pathname: "/chat/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      pickerText: "Claude Sonnet 4",
+    },
+    () => mod.getDestinationContext(),
+  );
+  assert.equal(ctx.site, "claude");
+  assert.equal(ctx.conversation_id, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+  assert.equal(ctx.route, "conversation");
+  assert.equal(ctx.model, "Claude Sonnet 4");
+});
+
+test("site_context extracts Gemini conversation_id from /app/<id>", async () => {
+  const mod = await import(`../utils/site_context.js?ctx-gem-${Date.now()}`);
+  const ctx = withDom(
+    {
+      hostname: "gemini.google.com",
+      pathname: "/app/abc123def",
+      pickerText: "2.5 Pro",
+    },
+    () => mod.getDestinationContext(),
+  );
+  assert.equal(ctx.site, "gemini");
+  assert.equal(ctx.conversation_id, "abc123def");
+  assert.equal(ctx.route, "conversation");
+  assert.equal(ctx.model, "2.5 Pro");
+});
+
+test("site_context falls back to home route when path has no id", async () => {
+  const mod = await import(`../utils/site_context.js?ctx-home-${Date.now()}`);
+  const ctx = withDom(
+    { hostname: "copilot.microsoft.com", pathname: "/", pickerText: "GPT-4" },
+    () => mod.getDestinationContext(),
+  );
+  assert.equal(ctx.site, "copilot");
+  assert.equal(ctx.conversation_id, null);
+  assert.equal(ctx.route, "home");
+  assert.equal(ctx.model, "GPT-4");
+});
+
+test("site_context returns null for unknown hostnames", async () => {
+  const mod = await import(`../utils/site_context.js?ctx-unknown-${Date.now()}`);
+  const ctx = withDom(
+    { hostname: "example.com", pathname: "/", pickerText: null },
+    () => mod.getDestinationContext(),
+  );
+  assert.equal(ctx, null);
+});

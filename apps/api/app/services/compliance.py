@@ -10,7 +10,8 @@ import hashlib
 import hmac
 import json
 import os
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -35,6 +36,9 @@ CONTROL_MAPPINGS: dict[str, list[str]] = {
     ],
     "alert.ack": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:RS.AN"],
     "agent.heartbeat": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
+    "agent.fim_event": ["iso27001-2022:A.8.12", "soc2-2017:CC7.1", "nist-csf-2.0:PR.PS"],
+    "agent.edr_event": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
+    "agent.cis_check": ["iso27001-2022:A.8.8", "soc2-2017:CC7.1", "nist-csf-2.0:PR.PS"],
     "policy.promote": ["iso27001-2022:A.5.12", "iso27001-2022:A.8.12", "soc2-2017:CC6.1", "gdpr:Art. 32"],
     "policy.simulate": ["iso27001-2022:A.8.12", "soc2-2017:CC6.1"],
     "policy_v2.create": ["iso27001-2022:A.5.12", "soc2-2017:CC6.1"],
@@ -44,11 +48,33 @@ CONTROL_MAPPINGS: dict[str, list[str]] = {
     "policy_v2.effective": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
     "policy_v2.agent_fetch": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
     "security.alert": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
+    "attestation_created": ["iso27001-2022:A.5.35", "soc2-2017:CC2.1"],
+    "review_recorded": ["iso27001-2022:A.5.35", "soc2-2017:CC2.1"],
+    "impersonation.start": [
+        "iso27001-2022:A.5.16",
+        "iso27001-2022:A.5.18",
+        "soc2-2017:CC6.3",
+        "nist-csf-2.0:PR.AA",
+    ],
+    "impersonation.end": [
+        "iso27001-2022:A.5.16",
+        "iso27001-2022:A.5.18",
+        "soc2-2017:CC6.3",
+        "nist-csf-2.0:PR.AA",
+    ],
 }
 
 
 class ComplianceExportError(ValueError):
     """Raised when a compliance export cannot be generated."""
+
+
+class ComplianceServiceError(ValueError):
+    """Raised when attestation or review service-layer validation fails."""
+
+
+class DuplicateAttestationError(ComplianceServiceError):
+    """Raised when an attestation already exists for the same bundle and period."""
 
 
 def controls_for_event(action: str) -> list[str]:
@@ -287,149 +313,375 @@ def _iso(value: Any) -> str:
     return str(value)
 
 
-def list_reviews(customer_id: UUID, framework: str) -> list[dict[str, Any]]:
+def list_review_items(customer_id: UUID, framework: str, source_table: str) -> list[dict[str, Any]]:
+    _ensure_supported_framework(framework)
+    if source_table != "evidence_events":
+        return []
+
+    prefix = f"{framework}:"
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select id, customer_id, framework, control_id, status, reviewed_by, notes, reviewed_at
-            from compliance_reviews
-            where customer_id = %s and framework = %s
-            order by reviewed_at desc
+            with evidence as (
+                select
+                    e.id::text as source_id,
+                    e.created_at as evidence_created_at,
+                    concat(e.action, ' on ', e.resource) as evidence_summary,
+                    replace(control.value, %s, '') as control_id
+                from evidence_events e
+                cross join lateral jsonb_array_elements_text(e.evidence_controls) as control(value)
+                where e.scope->>'customer_id' = %s
+                                    and e.action not in ('attestation_created', 'review_recorded')
+                  and control.value like %s
+            )
+            select
+                evidence.source_id,
+                evidence.evidence_created_at,
+                evidence.evidence_summary,
+                evidence.control_id,
+                review.id,
+                review.customer_id,
+                review.source_table,
+                review.framework,
+                review.reviewed_by_account_id,
+                review.reviewed_by_role,
+                review.reviewed_by_name,
+                review.decision,
+                review.note,
+                review.reviewed_at
+            from evidence
+            left join lateral (
+                select *
+                from compliance_reviews r
+                where r.customer_id = %s
+                  and r.source_table = 'evidence_events'
+                  and r.source_id = evidence.source_id
+                  and r.framework = %s
+                  and r.control_id = evidence.control_id
+                order by r.reviewed_at desc
+                limit 1
+            ) review on true
+            order by evidence.evidence_created_at desc, evidence.control_id
             """,
-            (customer_id, framework),
+            (prefix, str(customer_id), f"{prefix}%", customer_id, framework),
         )
-        return [dict(row) for row in cur.fetchall()]
+        rows = cur.fetchall()
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        latest_review = None
+        if row["id"] is not None:
+            latest_review = {
+                "id": row["id"],
+                "customer_id": row["customer_id"],
+                "source_table": "evidence_events",
+                "source_id": row["source_id"],
+                "framework": row["framework"],
+                "control_id": row["control_id"],
+                "reviewed_by_account_id": row["reviewed_by_account_id"],
+                "reviewed_by_role": row["reviewed_by_role"],
+                "reviewed_by_name": row["reviewed_by_name"],
+                "decision": row["decision"],
+                "note": row["note"],
+                "reviewed_at": row["reviewed_at"],
+            }
+        items.append(
+            {
+                "source_table": "evidence_events",
+                "source_id": row["source_id"],
+                "framework": framework,
+                "control_id": row["control_id"],
+                "evidence_summary": row["evidence_summary"],
+                "evidence_created_at": row["evidence_created_at"],
+                "review_status": "completed" if latest_review else "pending",
+                "latest_review": latest_review,
+            }
+        )
+    return items
 
 
-def create_or_update_review(
+def create_review(
+    *,
     customer_id: UUID,
+    source_table: str,
+    source_id: str,
     framework: str,
     control_id: str,
-    status: str,
-    reviewed_by: str,
-    notes: str | None,
+    decision: str,
+    note: str | None,
+    reviewed_by_account_id: UUID | None,
+    reviewed_by_role: str,
+    reviewed_by_name: str,
 ) -> dict[str, Any]:
-    import uuid
-    from datetime import datetime, UTC
+    _ensure_supported_framework(framework)
+    _ensure_evidence_source(customer_id, source_table, source_id, framework, control_id)
+
     review_id = uuid.uuid4()
     reviewed_at = datetime.now(UTC)
 
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select id from compliance_reviews
-            where customer_id = %s and framework = %s and control_id = %s
+            insert into compliance_reviews (
+                id, customer_id, source_table, source_id, framework, control_id,
+                reviewed_by_account_id, reviewed_by_role, reviewed_by_name,
+                decision, note, reviewed_at
+            ) values (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
             """,
-            (customer_id, framework, control_id),
+            (
+                review_id,
+                customer_id,
+                source_table,
+                source_id,
+                framework,
+                control_id,
+                reviewed_by_account_id,
+                reviewed_by_role,
+                reviewed_by_name,
+                decision,
+                note,
+                reviewed_at,
+            ),
         )
-        existing = cur.fetchone()
-        if existing:
-            cur.execute(
-                """
-                update compliance_reviews
-                set status = %s, reviewed_by = %s, notes = %s, reviewed_at = %s
-                where id = %s
-                """,
-                (status, reviewed_by, notes, reviewed_at, existing["id"]),
-            )
-            review_id = existing["id"]
-        else:
-            cur.execute(
-                """
-                insert into compliance_reviews (id, customer_id, framework, control_id, status, reviewed_by, notes, reviewed_at)
-                values (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (review_id, customer_id, framework, control_id, status, reviewed_by, notes, reviewed_at),
-            )
 
-    return {
+    record = {
         "id": review_id,
         "customer_id": customer_id,
+        "source_table": source_table,
+        "source_id": source_id,
         "framework": framework,
         "control_id": control_id,
-        "status": status,
-        "reviewed_by": reviewed_by,
-        "notes": notes,
+        "reviewed_by_account_id": reviewed_by_account_id,
+        "reviewed_by_role": reviewed_by_role,
+        "reviewed_by_name": reviewed_by_name,
+        "decision": decision,
+        "note": note,
         "reviewed_at": reviewed_at,
     }
+    _emit_compliance_event(
+        customer_id=customer_id,
+        action="review_recorded",
+        resource=f"{source_table}:{source_id}",
+        actor=reviewed_by_name,
+        payload={"review_id": str(review_id), "framework": framework, "control_id": control_id, "decision": decision},
+        evidence_controls=[f"{framework}:{control_id}"],
+    )
+    return record
 
 
-def list_attestations(customer_id: UUID, framework: str) -> list[dict[str, Any]]:
+def list_attestations(customer_id: UUID, framework: str, period_end: date | None = None) -> list[dict[str, Any]]:
+    _ensure_supported_framework(framework)
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            select id, customer_id, framework, attested_by, notes, bundle_hash, status, attested_at
+            select
+                id, customer_id, framework, period_start, period_end,
+                attested_by_account_id, attested_role, attested_name,
+                bundle_sha256, signature, signature_algo, statement, created_at
             from compliance_attestations
             where customer_id = %s and framework = %s
-            order by attested_at desc
+              and (%s::date is null or period_end = %s::date)
+            order by created_at desc
             """,
-            (customer_id, framework),
+            (customer_id, framework, period_end, period_end),
         )
-        return [dict(row) for row in cur.fetchall()]
+        rows = [dict(row) for row in cur.fetchall()]
+    count = _evidence_summary_count(customer_id, framework)
+    return [{**row, "evidence_summary_count": count} for row in rows]
 
 
 def create_attestation(
+    *,
     customer_id: UUID,
     framework: str,
-    notes: str | None,
-    attested_by: str,
+    period_start: date,
+    period_end: date,
+    attested_by_account_id: UUID | None,
+    attested_role: str,
+    attested_name: str,
+    statement: str,
+    bundle_sha256: str,
+    signature: str,
+    signature_algo: str,
 ) -> dict[str, Any]:
-    import uuid
-    import hashlib
-    import json
-    from datetime import datetime, UTC
-    
-    bundle = export_bundle(customer_id, framework)
-    bundle_hash = hashlib.sha256(
-        json.dumps(bundle, sort_keys=True, separators=(",", ":"), default=str).encode()
-    ).hexdigest()
+    _ensure_supported_framework(framework)
+    if period_end < period_start:
+        raise ComplianceServiceError("period_end must be on or after period_start")
+    if not _bundle_exists(customer_id, framework, bundle_sha256):
+        raise ComplianceServiceError("bundle_sha256 does not reference a known evidence bundle")
 
     attestation_id = uuid.uuid4()
-    attested_at = datetime.now(UTC)
+    created_at = datetime.now(UTC)
 
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            insert into compliance_attestations (id, customer_id, framework, attested_by, notes, bundle_hash, status, attested_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            select id from compliance_attestations
+            where customer_id = %s
+              and framework = %s
+              and period_start = %s
+              and period_end = %s
+              and bundle_sha256 = %s
+            limit 1
             """,
-            (attestation_id, customer_id, framework, attested_by, notes, bundle_hash, "active", attested_at),
+            (customer_id, framework, period_start, period_end, bundle_sha256),
         )
+        if cur.fetchone() is not None:
+            raise DuplicateAttestationError("attestation already exists for this framework, period, and bundle")
 
-        vault_id = uuid.uuid4()
-        vault_provider = "Azure Immutable Blob Storage (WORM Policy)"
-        reference_uri = f"https://aetherix-compliance-vault.blob.core.windows.net/evidence/{customer_id}/{framework}-{attestation_id}.json"
-        
         cur.execute(
             """
-            insert into compliance_vault_references (id, customer_id, framework, vault_provider, reference_uri, bundle_hash, status, exported_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            insert into compliance_attestations (
+                id, customer_id, framework, period_start, period_end,
+                attested_by_account_id, attested_role, attested_name,
+                bundle_sha256, signature, signature_algo, statement, created_at
+            ) values (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
             """,
-            (vault_id, customer_id, framework, vault_provider, reference_uri, bundle_hash, "sealed", attested_at),
+            (
+                attestation_id,
+                customer_id,
+                framework,
+                period_start,
+                period_end,
+                attested_by_account_id,
+                attested_role,
+                attested_name,
+                bundle_sha256,
+                signature,
+                signature_algo,
+                statement,
+                created_at,
+            ),
         )
 
-    from app.services import audit
-    audit.record(
-        action="compliance.attest",
-        resource=f"framework:{framework}",
-        actor=attested_by,
-        after={
-            "attestation_id": str(attestation_id),
-            "bundle_hash": bundle_hash,
-            "evidence_count": len(bundle.get("evidence", [])),
-        },
-    )
-
-    return {
+    count = _evidence_summary_count(customer_id, framework)
+    record = {
         "id": attestation_id,
         "customer_id": customer_id,
         "framework": framework,
-        "attested_by": attested_by,
-        "notes": notes,
-        "bundle_hash": bundle_hash,
-        "status": "active",
-        "attested_at": attested_at,
+        "period_start": period_start,
+        "period_end": period_end,
+        "attested_by_account_id": attested_by_account_id,
+        "attested_role": attested_role,
+        "attested_name": attested_name,
+        "bundle_sha256": bundle_sha256,
+        "signature": signature,
+        "signature_algo": signature_algo,
+        "statement": statement,
+        "created_at": created_at,
+        "evidence_summary_count": count,
     }
+    _emit_compliance_event(
+        customer_id=customer_id,
+        action="attestation_created",
+        resource=f"compliance_attestations:{attestation_id}",
+        actor=attested_name,
+        payload={
+            "attestation_id": str(attestation_id),
+            "framework": framework,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "bundle_sha256": bundle_sha256,
+            "evidence_summary_count": count,
+        },
+        evidence_controls=controls_for_event("attestation_created"),
+    )
+    return record
+
+
+def _ensure_supported_framework(framework: str) -> None:
+    if framework not in SUPPORTED_FRAMEWORKS:
+        raise ComplianceServiceError(f"Unsupported compliance framework: {framework}")
+
+
+def _bundle_exists(customer_id: UUID, framework: str, bundle_sha256: str) -> bool:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select 1
+            from compliance_vault_references
+            where customer_id = %s and framework = %s and sha256 = %s
+            limit 1
+            """,
+            (customer_id, framework, bundle_sha256),
+        )
+        return cur.fetchone() is not None
+
+
+def _ensure_evidence_source(customer_id: UUID, source_table: str, source_id: str, framework: str, control_id: str) -> None:
+    full_control_id = f"{framework}:{control_id}"
+    if source_table != "evidence_events":
+        raise ComplianceServiceError("source_table is not supported for MVP review ingestion")
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select 1
+            from evidence_events
+            where id::text = %s
+              and scope->>'customer_id' = %s
+              and evidence_controls ? %s
+            limit 1
+            """,
+            (source_id, str(customer_id), full_control_id),
+        )
+        if cur.fetchone() is None:
+            raise ComplianceServiceError("review source does not exist for this tenant, framework, and control")
+
+
+def _evidence_summary_count(customer_id: UUID, framework: str) -> int:
+    prefix = f"{framework}:"
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(*) as n
+            from evidence_events e
+            where e.scope->>'customer_id' = %s
+              and exists (
+                  select 1
+                  from jsonb_array_elements_text(e.evidence_controls) as control(value)
+                  where control.value like %s
+              )
+            """,
+            (str(customer_id), f"{prefix}%"),
+        )
+        row = cur.fetchone()
+    return int(row["n"])
+
+
+def _emit_compliance_event(
+    *,
+    customer_id: UUID,
+    action: str,
+    resource: str,
+    actor: str,
+    payload: dict[str, Any],
+    evidence_controls: list[str],
+) -> None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into evidence_events (
+                id, action, resource, actor, scope, payload,
+                evidence_controls, created_at
+            ) values (
+                %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s
+            )
+            """,
+            (
+                uuid.uuid4(),
+                action,
+                resource,
+                actor,
+                json.dumps({"customer_id": str(customer_id)}),
+                json.dumps(payload),
+                json.dumps(evidence_controls),
+                datetime.now(UTC),
+            ),
+        )
 
 
 def list_vault_references(customer_id: UUID, framework: str) -> list[dict[str, Any]]:

@@ -84,10 +84,10 @@ def test_provider_catalog_seeded():
     assert {"disabled", "aetherix-hosted", "openai", "azure-openai", "anthropic", "ollama"}.issubset(slugs)
 
 
-def test_providers_route_requires_auth():
+def test_providers_route_requires_auth(auth_headers):
     deny = client.get("/ai/providers")
     assert deny.status_code in (401, 403)
-    allow = client.get("/ai/providers", headers={"X-Aetherix-Account": _platform_owner_id()})
+    allow = client.get("/ai/providers", headers=auth_headers(_platform_owner_id()))
     assert allow.status_code == 200
     assert any(p["slug"] == "openai" for p in allow.json())
 
@@ -265,13 +265,13 @@ def test_resolver_returns_none_for_unknown_customer():
 # --- API endpoint round-trip ----------------------------------------------
 
 
-def test_company_ai_endpoints_round_trip():
+def test_company_ai_endpoints_round_trip(auth_headers):
     owner_id = _platform_owner_id()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
     _grant_byo_tier(customer_id, owner_id, "ai-byo-route")
 
-    headers = {"X-Aetherix-Account": owner_id}
+    headers = auth_headers(owner_id)
 
     empty = client.get(f"/companies/{customer_id}/ai", headers=headers)
     assert empty.status_code == 200
@@ -303,7 +303,7 @@ def test_company_ai_endpoints_round_trip():
     assert after.json() is None
 
 
-def test_company_ai_requires_manage_to_update():
+def test_company_ai_requires_manage_to_update(auth_headers):
     owner_id = _platform_owner_id()  # noqa: F841 - ensure default policies/roles exist
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -318,7 +318,7 @@ def test_company_ai_requires_manage_to_update():
     )
     deny = client.put(
         f"/companies/{customer_id}/ai",
-        headers={"X-Aetherix-Account": str(viewer.id)},
+        headers=auth_headers(str(viewer.id)),
         json={
             "provider_slug": "disabled",
             "model": "none",
@@ -596,7 +596,7 @@ def test_test_settings_probes_provider(monkeypatch):
     assert seen["headers"]["Authorization"] == "Bearer sk-probe-9999"
 
 
-def test_test_settings_route_requires_manage(monkeypatch):
+def test_test_settings_route_requires_manage(monkeypatch, auth_headers):
     owner_id = _platform_owner_id()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -619,7 +619,7 @@ def test_test_settings_route_requires_manage(monkeypatch):
 
     ok = client.post(
         f"/companies/{customer_id}/ai/test",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert ok.status_code == 200, ok.text
     body = ok.json()
@@ -637,7 +637,7 @@ def test_test_settings_route_requires_manage(monkeypatch):
     )
     deny = client.post(
         f"/companies/{customer_id}/ai/test",
-        headers={"X-Aetherix-Account": str(viewer.id)},
+        headers=auth_headers(str(viewer.id)),
     )
     assert deny.status_code == 403
 

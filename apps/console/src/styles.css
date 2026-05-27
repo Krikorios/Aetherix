@@ -1,16 +1,58 @@
 @import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&family=Newsreader:opsz,wght@6..72,700&display=swap");
 
 :root {
-  color: #0b1220;
-  background: #f4f6fa;
-  font-family: "Instrument Sans", sans-serif;
-  --ink: #0b1220;
-  --muted: #5b6573;
+  /* Font families */
+  --font-ui: Inter, "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: Inter, "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Backgrounds */
+  --bg-app: #f5f7fb;
+  --bg-base: #f5f7fb;
+  --bg-layer: #eef3f8;
   --panel: #ffffff;
-  --line: #dde3ec;
-  --accent: #0f5a6e;
+  --panel-muted: #f8fafc;
+
+  /* Text */
+  --ink: #0f172a;
+  --fg: #0f172a;
+  --text-primary: #0f172a;
+  --muted: #64748b;
+  --text-muted: #64748b;
+
+  /* Lines / borders */
+  --line: #dbe3ef;
+
+  /* Brand / accent */
+  --primary: #1d4ed8;
+  --primary-dark: #1e40af;
+  --accent: #1d4ed8;
+  --brand-primary: #1d4ed8;
+
+  /* Semantic status */
+  --success: #047857;
+  --healthy: #047857;
   --warning: #b45309;
-  --healthy: #1f6b3a;
+  --danger: #b91c1c;
+
+  /* Border radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 10px 24px rgba(15, 23, 42, 0.08);
+  --shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.07);
+  --shadow-raised: 0 22px 48px rgba(15, 23, 42, 0.14);
+
+  /* Z-index tiers */
+  --z-base: 1;
+  --z-sticky: 20;
+  --z-dropdown: 30;
+  --z-overlay: 60;
+  --z-modal: 80;
+  --z-toast: 100;
 }
 
 * {
@@ -236,41 +278,130 @@ button {
 .policyCatalogPage {
   min-height: 100vh;
   margin: 0;
-  padding: 26px 18px 24px;
-  background: #111;
-  color: #d9d9d9;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
   font-size: 13px;
 }
 
 .policyCatalogTopbar {
-  min-height: 36px;
+  min-height: 0;
   display: flex;
-  align-items: start;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 18px;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
 }
 
-.policyCatalogTopbar h1 {
+.policyCatalogTitleGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.policyCatalogTitleGroup p,
+.policyCatalogTitleGroup h1 {
   margin: 0;
+}
+
+.policyCatalogTitleGroup p,
+.policyCatalogTitleGroup span {
+  color: var(--muted);
+}
+
+.policyCatalogTitleGroup p {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.policyCatalogTitleGroup h1 {
   font-family: "Newsreader", serif;
-  font-size: 24px;
-  line-height: 1;
+  font-size: clamp(32px, 4vw, 52px);
+  line-height: 0.96;
   font-weight: 700;
   letter-spacing: 0;
 }
 
-.policyCatalogUtility {
+.policyCatalogTitleGroup span {
+  font-size: 13px;
+}
+
+.policyCatalogActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.policyCatalogPanel {
+  margin-top: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.policyCatalogToolbar {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.policySelectionHint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.policyBulkActions {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 0 0 7px 7px;
-  background: #1f2a35;
-  color: #f2f4f6;
+  flex-wrap: wrap;
 }
 
-.policyCatalogUtility button,
+.policyToolbarButton {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.policyToolbarButton.primary {
+  color: var(--primary);
+}
+
+.policyToolbarButton:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.policyToolbarButton.danger:not(:disabled) {
+  border-color: rgba(185, 28, 28, 0.24);
+  color: var(--danger);
+}
+
+.policyToolbarButton svg {
+  flex: 0 0 auto;
+}
+
 .policyColumnsButton {
   border: 0;
   background: transparent;
@@ -279,58 +410,14 @@ button {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-}
-
-.policyCatalogPanel {
-  margin-top: 16px;
-  border-top: 1px solid #4c4c4c;
-  border-bottom: 1px solid #4c4c4c;
-}
-
-.policyCatalogToolbar {
-  min-height: 48px;
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  border-bottom: 1px solid #4c4c4c;
-}
-
-.policyToolbarButton {
-  min-height: 32px;
-  border: 0;
-  background: transparent;
-  color: #8d8d8d;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 0;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.policyToolbarButton.primary {
-  color: #1fa4e5;
-}
-
-.policyToolbarButton:disabled {
-  color: #6f6f6f;
-  cursor: not-allowed;
-}
-
-.policyToolbarButton svg {
-  flex: 0 0 auto;
-}
-
-.policyColumnsButton {
   margin-left: auto;
   padding: 6px 12px;
-  color: #58a5dc;
+  color: var(--primary);
 }
 
 .policyCatalogGrid {
   display: grid;
-  grid-template-columns: 34px minmax(240px, 1.5fr) minmax(180px, 0.85fr) minmax(170px, 0.95fr) minmax(190px, 0.9fr);
+  grid-template-columns: 34px minmax(240px, 1.5fr) minmax(150px, 0.7fr) minmax(170px, 0.95fr) minmax(190px, 0.9fr);
   gap: 10px;
   align-items: center;
 }
@@ -341,8 +428,8 @@ button {
 
 .policyCatalogHead {
   min-height: 68px;
-  border-bottom: 1px solid #4c4c4c;
-  color: #c8c8c8;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -361,10 +448,10 @@ button {
 .policyCatalogHead select {
   width: 100%;
   min-height: 32px;
-  border: 1px solid #3d3d3d;
-  border-radius: 3px;
-  background: #111;
-  color: #e6e6e6;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
   padding: 0 9px;
   font: inherit;
 }
@@ -378,26 +465,28 @@ button {
 .policyCheckCell input {
   width: 15px;
   height: 15px;
-  accent-color: #1fa4e5;
+  accent-color: var(--primary);
 }
 
 .policyCatalogRows {
-  min-height: 556px;
+  min-height: 320px;
 }
 
 .policyCatalogRow {
-  min-height: 27px;
-  color: #d7d7d7;
-  background: #111;
-  font-size: 11px;
+  min-height: 44px;
+  color: var(--ink);
+  background: var(--panel);
+  font-size: 12px;
+  padding: 0 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .policyCatalogRow:nth-child(even) {
-  background: #202020;
+  background: rgba(11, 107, 87, 0.02);
 }
 
 .policyCatalogRow.selected {
-  outline: 1px solid rgba(31, 164, 229, 0.7);
+  outline: 1px solid var(--primary);
   outline-offset: -1px;
 }
 
@@ -406,7 +495,7 @@ button {
   max-width: 100%;
   border: 0;
   background: transparent;
-  color: #14a8ee;
+  color: var(--primary);
   padding: 0;
   font: inherit;
   font-weight: 700;
@@ -430,8 +519,8 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  border-top: 1px solid #4c4c4c;
-  color: #d7d7d7;
+  border-top: 1px solid var(--line);
+  color: var(--ink);
   font-size: 11px;
 }
 
@@ -446,16 +535,16 @@ button {
 .policyPager input,
 .policyPager select {
   min-height: 28px;
-  border: 1px solid #333;
-  border-radius: 3px;
-  background: #171717;
-  color: #d7d7d7;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
   font: inherit;
 }
 
 .policyPager button {
   border-color: transparent;
-  color: #1fa4e5;
+  color: var(--primary);
   background: transparent;
 }
 
@@ -476,7 +565,7 @@ button {
 .policyCatalogPage .emptyState,
 .policyCatalogPage .loadingRow {
   border-top: 0;
-  color: #9a9a9a;
+  color: var(--muted);
   padding: 16px 0 0 44px;
 }
 
@@ -490,14 +579,14 @@ button {
   margin: 0;
   display: grid;
   grid-template-columns: 282px minmax(0, 1fr);
-  background: #081018;
-  color: #e6edf3;
+  background: var(--panel);
+  color: var(--ink);
   font-size: 13px;
 }
 
 .policyDetailSidebar {
-  background: #1b2028;
-  border-right: 1px solid #323945;
+  background: var(--bg-app);
+  border-right: 1px solid var(--line);
   overflow: auto;
   padding: 0 16px 18px;
 }
@@ -509,17 +598,17 @@ button {
 .policyDetailSearch input {
   width: 100%;
   min-height: 32px;
-  border: 1px solid #46505e;
-  border-radius: 2px;
-  background: #0f151c;
-  color: #f2f6fa;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
   padding: 0 10px;
   font: inherit;
   font-size: 11px;
 }
 
 .policyDetailSidebar section {
-  border-top: 1px solid #3b434d;
+  border-top: 1px solid var(--line);
   padding: 14px 0 10px;
 }
 
@@ -551,12 +640,12 @@ button {
 }
 
 .policyDetailSidebar h2 .policySidebarGroupToggle:hover {
-  color: #ffffff;
+  color: var(--primary);
 }
 
 .policySidebarGroupToggle svg {
   margin-left: auto;
-  color: #9fc7ff;
+  color: var(--primary);
   flex: 0 0 auto;
 }
 
@@ -565,7 +654,7 @@ button {
   min-height: 36px;
   border: 0;
   background: transparent;
-  color: #edf2f7;
+  color: var(--muted);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -579,11 +668,11 @@ button {
 }
 
 .policyDetailSidebar button.active {
-  color: #ffffff;
+  color: var(--primary);
 }
 
 .policyDetailSidebar button span {
-  color: #9fc7ff;
+  color: var(--primary);
   font-size: 10px;
   font-weight: 700;
   text-decoration: underline;
@@ -593,7 +682,7 @@ button {
 .policySidebarParent {
   min-height: 36px;
   border-radius: 4px;
-  color: #edf2f7;
+  color: var(--muted);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -603,7 +692,8 @@ button {
 
 .policySidebarParent:hover,
 .policySidebarParent.active {
-  background: #252b35;
+  background: var(--accent);
+  color: var(--ink);
 }
 
 .policySidebarParent > button:first-child {
@@ -622,7 +712,7 @@ button {
   height: 34px;
   min-height: 34px;
   padding: 0;
-  color: #9fc7ff;
+  color: var(--primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -642,24 +732,24 @@ button {
 .policySidebarChildren button {
   min-height: 30px;
   padding: 0 0 0 14px;
-  color: #c5ced8;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 600;
-  border-left: 1px solid #3a4350;
+  border-left: 1px solid var(--line);
 }
 
 .policySidebarChildren button:hover,
 .policySidebarChildren button.active {
-  color: #ffffff;
-  background: #252b35;
-  border-left-color: #9fc7ff;
+  color: var(--primary);
+  background: var(--accent);
+  border-left-color: var(--primary);
 }
 
 .policyDetailWorkspace {
   min-width: 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  background: #081018;
+  background: var(--panel);
 }
 
 .policyDetailHeader {
@@ -671,10 +761,36 @@ button {
   padding: 48px 18px 0 30px;
 }
 
+.policyDetailTitleGroup {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.policyDetailTitleGroup h1,
+.policyDetailTitleGroup p {
+  margin: 0;
+}
+
+.policyDetailTitleGroup h1 {
+  font-family: "Newsreader", serif;
+  font-size: clamp(28px, 3.5vw, 42px);
+  line-height: 1;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.policyDetailTitleGroup p {
+  max-width: 660px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .policyDetailHeader a,
 .policyDetailCrumbs button,
 .policyDetailCrumbs strong {
-  color: #e6edf3;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 700;
 }
@@ -695,7 +811,7 @@ button {
 }
 
 .policyDetailContent {
-  padding: 0 30px 40px;
+  padding: 18px 30px 40px;
   max-width: 650px;
 }
 
@@ -710,7 +826,7 @@ button {
 .policyDetailSection h1,
 .policyDetailSection h2 {
   margin: 0 0 10px;
-  color: #e6edf3;
+  color: var(--ink);
   font-size: 18px;
   line-height: 1.2;
   font-weight: 600;
@@ -719,7 +835,7 @@ button {
 
 .policyDetailSection p {
   margin: 0 0 18px;
-  color: #b6c0cc;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.55;
   font-weight: 400;
@@ -736,7 +852,7 @@ button {
   align-items: center;
   gap: 12px;
   margin-bottom: 8px;
-  color: #e6edf3;
+  color: var(--ink);
   font-weight: 700;
 }
 
@@ -747,10 +863,10 @@ button {
 .policyDetailField input,
 .policyDetailField select {
   min-height: 28px;
-  border: 1px solid #4b5967;
-  border-radius: 3px;
-  background: #111820;
-  color: #e6edf3;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
   padding: 0 10px;
   font: inherit;
   font-size: 11px;
@@ -761,7 +877,7 @@ button {
   align-items: center;
   gap: 8px;
   margin-left: 0;
-  color: #e6edf3;
+  color: var(--ink);
   font-weight: 700;
 }
 
@@ -790,9 +906,9 @@ button {
 .policyHistoryBlock dd {
   min-height: 28px;
   margin: 0;
-  border-radius: 3px;
-  background: #222a32;
-  color: #dce3ea;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--ink);
   display: flex;
   align-items: center;
   padding: 0 10px;
@@ -802,7 +918,7 @@ button {
 
 .policyDetailFooter {
   min-height: 44px;
-  border-top: 1px solid #1c2731;
+  border-top: 1px solid var(--line);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -812,7 +928,7 @@ button {
 .policySaveButton,
 .policyCancelButton {
   min-height: 28px;
-  border-radius: 18px;
+  border-radius: 8px;
   padding: 0 22px;
   color: #fff;
   font-size: 12px;
@@ -823,7 +939,7 @@ button {
 
 .policySaveButton {
   border: 0;
-  background: #2f72ff;
+  background: linear-gradient(112deg, var(--primary), var(--primary-dark));
 }
 
 .policySaveButton:disabled {
@@ -832,8 +948,9 @@ button {
 }
 
 .policyCancelButton {
-  border: 1px solid #c8d2de;
+  border: 1px solid var(--line);
   background: transparent;
+  color: var(--ink);
 }
 
 .policyInheritanceBlock {
@@ -843,7 +960,7 @@ button {
 .policyInheritanceBlock > strong {
   display: block;
   margin: 28px 0 16px;
-  color: #a7b1bd;
+  color: var(--muted);
   font-size: 11px;
   text-transform: uppercase;
 }
@@ -854,10 +971,10 @@ button {
 
 .policyInheritanceActions button {
   min-height: 26px;
-  border: 1px solid #c24857;
-  border-radius: 16px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
   background: transparent;
-  color: #ff6d7b;
+  color: var(--danger);
   padding: 0 20px;
   font-size: 12px;
   font-weight: 800;
@@ -876,10 +993,10 @@ button {
 .policyInheritanceBuilder select,
 .policyEditorGrid.compact select {
   min-height: 26px;
-  border: 1px solid #536879;
-  border-radius: 3px;
-  background: #111820;
-  color: #e6edf3;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
   padding: 0 10px;
   font: inherit;
   font-size: 11px;
@@ -892,17 +1009,17 @@ button {
 .policyInheritanceBuilder button {
   min-height: 26px;
   border: 0;
-  border-radius: 3px;
-  background: #174b98;
-  color: #8dbdff;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--primary);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
 }
 
 .policyInheritanceTable {
-  border-bottom: 1px solid #39434f;
-  color: #b8c2ce;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -2088,6 +2205,37 @@ meter {
   color: var(--muted);
 }
 
+.emptyStateCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  background: var(--panel);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+}
+
+.emptyStateIconWrap {
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.emptyStateTitle {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.emptyStateMessage {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+  max-width: 320px;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2586,7 +2734,7 @@ meter {
 .formRow input,
 .formRow select,
 .formRow textarea {
-  min-height: 40px;
+  min-height: 38px;
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2594,7 +2742,15 @@ meter {
   background: #fffef9;
   color: var(--ink);
   font: inherit;
-  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.formRow input:focus,
+.formRow select:focus,
+.formRow textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .formRow textarea {
@@ -3450,8 +3606,44 @@ meter {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0 10px;
-  min-height: 42px;
+  min-height: 38px;
   background: #fffef9;
+  transition: all 0.2s;
+}
+
+.searchBox:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.accountToolbar select,
+.policyControls select,
+.permissionEditor select {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffef9;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  padding: 0 10px;
+  transition: all 0.2s;
+}
+
+.accountToolbar select:focus,
+.policyControls select:focus,
+.permissionEditor select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.searchBox input {
+  border: 0;
+  padding: 0;
+  min-height: 36px;
+  background: transparent;
+  outline: none;
 }
 
 .searchBox svg {
@@ -3491,12 +3683,17 @@ meter {
   width: 100%;
   border: 0;
   border-bottom: 1px solid var(--line);
-  background: transparent;
+  background: var(--panel);
   color: var(--ink);
   text-align: left;
-  min-height: 64px;
-  padding: 12px 0;
+  padding: 8px 12px;
   cursor: pointer;
+  transition: all 0.2s;
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+.accountRow:hover {
+  background: rgba(92, 196, 155, 0.08);
 }
 
 .accountRow:last-child {
@@ -3579,7 +3776,7 @@ meter {
   display: grid;
   place-items: center;
   padding: 24px;
-  z-index: 20;
+  z-index: var(--z-sticky);
 }
 
 .accountModal {
@@ -3668,6 +3865,17 @@ meter {
   .accountTablePanel,
   .companyTablePanel {
     overflow-x: auto;
+  }
+  .dataTable th:first-child,
+  .dataTable td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: var(--z-base);
+    background: var(--panel);
+  }
+  .dataTable th:first-child {
+    z-index: 3;
+    background: linear-gradient(105deg, rgba(11, 107, 87, 0.05), rgba(11, 107, 87, 0.09));
   }
 
   .hierarchyStrip {
@@ -3920,7 +4128,7 @@ meter {
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-  z-index: 10;
+  z-index: var(--z-dropdown);
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -3965,15 +4173,23 @@ meter {
 }
 .dataTable tbody td {
   padding: 12px;
-  border-top: 1px solid var(--line);
   vertical-align: middle;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dataTable tbody tr { cursor: pointer; }
-.dataTable tbody tr:hover { background: rgba(15, 90, 110, 0.04); }
-.dataTable tbody tr.selected { background: rgba(15, 90, 110, 0.08); }
+.dataTable tbody tr {
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  transition: all 0.2s;
+}
+.dataTable tbody tr:hover {
+  background: rgba(92, 196, 155, 0.08);
+}
+.dataTable tbody tr.selected {
+  background: rgba(92, 196, 155, 0.12);
+}
 .dataTable th.checkboxCell,
 .dataTable td.checkboxCell {
   width: 40px;
@@ -3981,6 +4197,203 @@ meter {
   text-align: center;
 }
 .dataTableWrap.compact .dataTable tbody td { padding: 6px 12px; }
+
+.networkPage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+  padding: 24px;
+}
+
+.networkHeader,
+.networkActionBar,
+.networkFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.networkHeader h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.networkHeader p,
+.networkActionBar span,
+.networkFooter {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.networkHeader p { margin: 4px 0 0; }
+
+.networkShell {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  min-height: 620px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.networkTreePanel {
+  border-right: 1px solid var(--line);
+  background: rgba(15, 90, 110, 0.03);
+  padding: 12px;
+  overflow: auto;
+}
+
+.networkTreeToolbar,
+.networkTreeRootItem,
+.networkTreeCustomer,
+.networkTreeEndpoint,
+.networkNameCell,
+.networkIssue,
+.networkActionControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.networkTreeToolbar {
+  justify-content: space-between;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.networkSearch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
+.networkSearch input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.networkTreeRootItem {
+  padding: 8px 6px;
+  font-weight: 700;
+}
+
+.networkTreeGroup { margin-top: 4px; }
+
+.networkTreeCustomer,
+.networkTreeEndpoint {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 7px 6px;
+  cursor: pointer;
+}
+
+.networkTreeCustomer.selected,
+.networkTreeEndpoint.selected,
+.networkTreeCustomer:hover,
+.networkTreeEndpoint:hover {
+  background: rgba(92, 196, 155, 0.12);
+}
+
+.networkTreeCustomer span:nth-of-type(2),
+.networkTreeEndpoint span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.networkTreeCustomer small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.networkTreeTwisty {
+  display: inline-flex;
+  align-items: center;
+}
+
+.networkTreeChildren {
+  margin-left: 24px;
+  border-left: 1px solid var(--line);
+  padding-left: 8px;
+}
+
+.networkTreeEmpty {
+  display: block;
+  padding: 7px 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.networkMainPanel {
+  min-width: 0;
+  padding: 14px;
+}
+
+.networkActionBar { margin-bottom: 12px; }
+
+.networkActionBar > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.networkActionControls select {
+  height: 34px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: inherit;
+  padding: 0 10px;
+}
+
+.networkTable { min-width: 980px; }
+
+.networkNameCell,
+.networkIssue { white-space: nowrap; }
+
+.networkIssue { color: var(--warning); }
+
+.networkEmptyCell {
+  text-align: center;
+  color: var(--muted);
+  padding: 32px !important;
+}
+
+.networkFooter {
+  justify-content: flex-start;
+  padding-top: 10px;
+}
+
+.installTextButton.danger { color: var(--danger); }
+
+.spinIcon { animation: spin 0.8s linear infinite; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 960px) {
+  .networkPage { padding: 16px; }
+  .networkShell { grid-template-columns: 1fr; }
+  .networkTreePanel { border-right: 0; border-bottom: 1px solid var(--line); }
+  .networkActionBar { align-items: stretch; flex-direction: column; }
+  .networkActionControls { align-items: stretch; flex-direction: column; }
+}
 
 .tablePager {
   display: flex;
@@ -4074,7 +4487,7 @@ meter {
   background: rgba(11, 18, 32, 0.4);
   display: flex;
   justify-content: flex-end;
-  z-index: 60;
+  z-index: var(--z-overlay);
 }
 .sideSheet {
   background: var(--panel);
@@ -4103,24 +4516,29 @@ meter {
 .tabBar {
   display: flex;
   gap: 4px;
-  border-bottom: 1px solid var(--line);
+  border: 1px solid var(--line);
+  background: rgba(251, 252, 247, 0.95);
+  border-radius: 8px;
+  padding: 4px;
   margin-bottom: 16px;
 }
 .tabBtn {
   background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 8px 14px;
+  border-radius: 6px;
+  padding: 6px 12px;
   color: var(--muted);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  margin-bottom: -1px;
 }
-.tabBtn:hover { color: var(--ink); }
+.tabBtn:hover {
+  color: var(--ink);
+  background: rgba(11, 107, 87, 0.04);
+}
 .tabBtn.active {
   color: var(--accent);
-  border-bottom-color: var(--accent);
+  background: rgba(11, 107, 87, 0.08);
 }
 .tabPanel { display: flex; flex-direction: column; gap: 16px; }
 
@@ -5034,83 +5452,17 @@ meter {
   }
 }
 
-/* --- Unified UI consistency pass ---------------------------------------- */
 
-:root {
-  --font-ui: "Instrument Sans", sans-serif;
-  --font-display: "Newsreader", serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --bg-base: #edf3f8;
-  --bg-layer: #f7fafc;
-  --ink: #142132;
-  --fg: #142132;
-  --muted: #5d6d80;
-  --panel: rgba(255, 255, 255, 0.92);
-  --line: #d4dfeb;
-  --accent: #0f5a6e;
-  --warning: #b45a1e;
-  --healthy: #1f7a42;
-  --shadow-soft: 0 16px 34px rgba(15, 33, 50, 0.09);
-  --shadow-raised: 0 24px 48px rgba(15, 33, 50, 0.13);
-}
-
-html,
-body {
-  font-family: var(--font-ui);
-  background:
-    radial-gradient(900px 540px at 8% -12%, rgba(15, 90, 110, 0.14), transparent 62%),
-    radial-gradient(860px 620px at 108% 112%, rgba(15, 90, 110, 0.1), transparent 64%),
-    linear-gradient(165deg, var(--bg-layer), var(--bg-base) 52%, #e9f0f7);
-  color: var(--ink);
-}
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: var(--font-display);
-}
-
-.shell {
-  background:
-    radial-gradient(720px 420px at 0% 0%, rgba(15, 90, 110, 0.08), transparent 60%),
-    radial-gradient(820px 560px at 100% 100%, rgba(15, 90, 110, 0.06), transparent 62%),
-    linear-gradient(164deg, rgba(247, 250, 252, 0.94), rgba(237, 243, 248, 0.92));
-}
-
-.workspace {
-  padding-top: 34px;
-  padding-bottom: 34px;
-}
-
-.pageHeader {
-  gap: 10px;
-  padding-bottom: 24px;
-}
-
-.pageHeader h1,
-.hero h1 {
-  line-height: 1.02;
-  letter-spacing: -0.016em;
-}
-
-.rail {
-  background: linear-gradient(180deg, rgba(247, 250, 252, 0.97), rgba(241, 246, 251, 0.96));
-  border-right-color: var(--line);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.65);
-}
 
 .rail button {
   background: rgba(255, 255, 255, 0.75);
-  border-color: rgba(138, 159, 182, 0.3);
+  border-color: rgba(138, 159, 182, 0.15);
   color: var(--muted);
 }
 
 .rail button:hover {
-  background: rgba(15, 90, 110, 0.08);
-  border-color: rgba(15, 90, 110, 0.38);
+  background: rgba(11, 107, 87, 0.06);
+  border-color: rgba(11, 107, 87, 0.3);
   color: var(--ink);
 }
 
@@ -5119,10 +5471,10 @@ h6 {
 }
 
 .navGroupItems button.active {
-  background: linear-gradient(112deg, #0f5a6e, #2b7892);
-  border-color: #1d6f88;
+  background: linear-gradient(112deg, var(--primary), var(--primary-dark));
+  border-color: var(--primary-dark);
   color: #ffffff;
-  box-shadow: 0 10px 20px rgba(15, 90, 110, 0.22);
+  box-shadow: 0 8px 16px rgba(11, 107, 87, 0.2);
 }
 
 .railAuthPanel,
@@ -5148,7 +5500,7 @@ h6 {
 .policySupportBlock {
   background: var(--panel);
   border-color: var(--line);
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--shadow-sm);
   backdrop-filter: blur(7px);
 }
 
@@ -5157,7 +5509,7 @@ h6 {
 .companyGridHead,
 .dataTable thead th,
 .alertsTableHead {
-  background: linear-gradient(105deg, rgba(15, 90, 110, 0.09), rgba(15, 90, 110, 0.13));
+  background: linear-gradient(105deg, rgba(11, 107, 87, 0.05), rgba(11, 107, 87, 0.09));
 }
 
 .panelHeader h2,
@@ -5198,8 +5550,8 @@ h6 {
 .btnAck,
 .loginSubmit,
 .policySaveButton {
-  background: linear-gradient(112deg, #0f5a6e, #2f7f99);
-  border: 1px solid rgba(15, 90, 110, 0.36);
+  background: linear-gradient(112deg, var(--primary), var(--primary-dark));
+  border: 1px solid var(--primary-dark);
   color: #ffffff;
   font-weight: 700;
 }
@@ -5396,6 +5748,95 @@ h6 {
   gap: 20px;
 }
 
+.addOnIconBox {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  background: rgba(var(--accent-rgb), 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.addOnEyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.addOnTitle {
+  margin: 0 0 10px 0;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.addOnDescription {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.addOnFeatures {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.addOnFeatureRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.addOnFeatureIcon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.addOnCta {
+  background: rgba(var(--accent-rgb), 0.06);
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+  border-radius: 10px;
+  padding: 16px 20px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+}
+
+.addOnCtaIcon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.addOnCtaText {
+  flex: 1;
+}
+
+.addOnCtaTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.addOnCtaSub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.addOnCtaBtn {
+  flex-shrink: 0;
+}
+
 @media (max-width: 720px) {
   .consolePage {
     padding: 18px;
@@ -5460,12 +5901,12 @@ h6 {
 .companyGridRow:hover,
 .alertRow:hover,
 .policyCatalogRow:hover {
-  background: rgba(15, 90, 110, 0.08);
+  background: rgba(92, 196, 155, 0.08);
 }
 
 .dataTable tbody tr.selected,
 .policyV2Row.active {
-  background: rgba(15, 90, 110, 0.12);
+  background: rgba(92, 196, 155, 0.12);
 }
 
 .loginShell {
@@ -5648,7 +6089,7 @@ h6 {
 .policyDetailSearch {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: calc(var(--z-base) + 1);
   padding: 20px 0 14px;
   background: inherit;
 }
@@ -5676,7 +6117,7 @@ h6 {
 }
 
 .policyDetailHeader {
-  min-height: 62px;
+  min-height: 0;
   align-items: center;
   padding: 20px 24px 0;
   margin-bottom: 0;
@@ -5858,7 +6299,7 @@ h6 {
   position: absolute;
   top: 33px;
   left: -16px;
-  z-index: 20;
+  z-index: var(--z-sticky);
   width: min(610px, calc(100vw - 260px));
   min-height: 260px;
   border: 1px solid #1684ff;
@@ -6069,7 +6510,7 @@ h6 {
   position: fixed;
   right: 18px;
   bottom: 18px;
-  z-index: 15;
+  z-index: calc(var(--z-sticky) - 5);
   width: min(560px, calc(100vw - 36px));
   border: 1px solid var(--install-line);
   background: #0d1720;
@@ -6106,7 +6547,7 @@ h6 {
 .installCreateOverlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-overlay);
   background: rgba(8, 15, 22, 0.98);
   color: var(--install-text);
 }
@@ -6265,6 +6706,485 @@ h6 {
   min-height: 28px;
   color: var(--install-text);
   text-transform: capitalize;
+}
+
+/* --- System notices ------------------------------------------------------ */
+.systemBannerStack {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.systemBanner {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px 7px 24px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e1304;
+  background: #f28a1b;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+}
+
+.systemBanner.info { background: #3b82f6; color: #eff6ff; }
+.systemBanner.critical { background: #c9372c; color: #fff5f5; }
+
+.systemBanner span {
+  min-width: 0;
+  flex: 1;
+}
+
+.systemBanner a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.systemBanner button {
+  width: 28px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ownerBannerPanel {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ownerBannerPanel h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.ownerBannerPanel label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ownerBannerGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ownerBannerList {
+  display: grid;
+  gap: 8px;
+}
+
+.ownerBannerList article {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+}
+
+.ownerBannerList article.inactive {
+  opacity: 0.58;
+}
+
+.ownerBannerList strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ownerBannerList span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ownerBannerList button {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* --- Device Control policy editor --------------------------------------- */
+.devicePolicyPage {
+  --device-bg: #0c1219;
+  --device-rail: #1a2028;
+  --device-line: #202a35;
+  --device-text: #d8dde4;
+  --device-muted: #75808e;
+  --device-link: #4f8dc2;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  background: var(--device-bg);
+  color: var(--device-text);
+  font-family: var(--font-ui);
+}
+
+.devicePolicyRail {
+  background: var(--device-rail);
+  border-right: 1px solid #111821;
+  padding: 36px 0 64px;
+  overflow: auto;
+}
+
+.deviceSearch {
+  height: 20px;
+  margin: 0 10px 16px;
+  border: 1px solid #354150;
+  border-radius: 2px;
+  color: #b5bfca;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 7px;
+  font-size: 9px;
+  font-style: italic;
+}
+
+.devicePolicyRail p {
+  margin: 13px 10px 8px;
+  color: #7f8996;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.devicePolicyRail button {
+  width: 100%;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: #e0e5eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.devicePolicyRail button span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #8da0b5;
+  font-size: 9px;
+}
+
+.devicePolicyRail button.expanded,
+.devicePolicyRail button.sub.active {
+  background: #343b46;
+}
+
+.devicePolicyRail button.sub {
+  padding-left: 24px;
+  background: #202731;
+}
+
+.devicePolicyContent {
+  position: relative;
+  min-width: 0;
+  padding: 46px 32px 84px;
+}
+
+.deviceBreadcrumb {
+  color: #d3d9e0;
+  font-size: 11px;
+  text-decoration: underline;
+  margin-bottom: 28px;
+}
+
+.deviceHelp {
+  position: absolute;
+  top: 56px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #d3d9e0;
+  font-size: 10px;
+  text-decoration: underline;
+}
+
+.devicePolicyHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.devicePolicyHeader h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.deviceSwitch input {
+  position: absolute;
+  opacity: 0;
+}
+
+.deviceSwitch span {
+  width: 22px;
+  height: 12px;
+  border-radius: 999px;
+  background: #737b86;
+  display: block;
+  position: relative;
+}
+
+.deviceSwitch span::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #aeb6c0;
+  top: 1px;
+  left: 1px;
+}
+
+.deviceSwitch input:checked + span {
+  background: #1463b8;
+}
+
+.deviceSwitch input:checked + span::after {
+  left: 11px;
+  background: #e8f2ff;
+}
+
+.devicePolicySubtitle {
+  margin: 11px 0 22px 4px;
+  color: var(--device-muted);
+  font-size: 10px;
+}
+
+.deviceRulesTable,
+.deviceExclusionTable {
+  width: min(100%, 770px);
+  color: var(--device-muted);
+  font-size: 11px;
+}
+
+.deviceRulesTable .head,
+.deviceRulesTable label {
+  min-height: 21px;
+  display: grid;
+  grid-template-columns: 260px 260px 160px;
+  align-items: center;
+  border-bottom: 1px solid #151e28;
+}
+
+.deviceRulesTable .head {
+  color: #8c97a5;
+  font-weight: 600;
+}
+
+.deviceRulesTable label span:first-child,
+.deviceExclusionTable label span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deviceRulesTable input,
+.deviceExclusionTable input[type="checkbox"] {
+  width: 12px;
+  height: 12px;
+  accent-color: #1677d2;
+}
+
+.deviceRulesTable select,
+.deviceFilters input,
+.deviceFilters select {
+  height: 22px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #8e98a6;
+  font-size: 11px;
+}
+
+.deviceRulesTable label:hover,
+.deviceRulesTable label.selected {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.deviceActionBar {
+  margin: 30px 0 16px 12px;
+  display: flex;
+  gap: 12px;
+}
+
+.deviceActionBar button,
+.deviceEmpty button {
+  height: 23px;
+  border-radius: 999px;
+  border: 1px solid #1f5d97;
+  background: transparent;
+  color: #5fa3dc;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.deviceActionBar button.danger {
+  border-color: #7b333e;
+  color: #9e4957;
+}
+
+.deviceActionBar button:disabled,
+.deviceEmpty button:disabled,
+.devicePolicyFooter button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.deviceFilters {
+  display: grid;
+  grid-template-columns: 156px 156px 156px 156px auto;
+  gap: 10px;
+  margin: 0 0 8px 12px;
+}
+
+.deviceFilters input,
+.deviceFilters select {
+  border: 1px solid #2a3542;
+  border-radius: 2px;
+  padding: 0 8px;
+  background: #101821;
+}
+
+.deviceFilters button {
+  border: 0;
+  background: transparent;
+  color: #446b93;
+  font-size: 10px;
+}
+
+.deviceExclusionTable {
+  width: min(100%, 930px);
+  margin-left: 12px;
+}
+
+.deviceExclusionTable .head,
+.deviceExclusionTable label {
+  min-height: 24px;
+  display: grid;
+  grid-template-columns: 30px 220px 220px 220px 160px;
+  align-items: center;
+  border-top: 1px solid #151e28;
+}
+
+.deviceEmpty {
+  min-height: 104px;
+  border-top: 1px solid #151e28;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.deviceEmpty strong {
+  color: #6f7782;
+  font-size: 11px;
+}
+
+.deviceEmpty span {
+  font-size: 11px;
+}
+
+.devicePolicyFooter {
+  position: fixed;
+  left: 184px;
+  right: 0;
+  bottom: 0;
+  height: 36px;
+  border-top: 1px solid #17212c;
+  background: #0c1219;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 34px 0 25px;
+}
+
+.devicePolicyFooter button {
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid #9aa4af;
+  background: transparent;
+  color: #e0e6ec;
+  padding: 0 15px;
+  font-size: 11px;
+}
+
+.devicePolicyFooter button.save {
+  border-color: #1774db;
+  background: #1774db;
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .devicePolicyPage {
+    grid-template-columns: 1fr;
+  }
+
+  .devicePolicyRail {
+    display: none;
+  }
+
+  .devicePolicyContent {
+    padding: 36px 16px 84px;
+  }
+
+  .deviceHelp {
+    position: static;
+    margin-bottom: 18px;
+  }
+
+  .deviceRulesTable .head,
+  .deviceRulesTable label,
+  .deviceFilters,
+  .deviceExclusionTable .head,
+  .deviceExclusionTable label {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 8px 0;
+  }
+
+  .devicePolicyFooter {
+    left: 0;
+  }
+
+  .ownerBannerGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .installRolesPanel p {
@@ -6452,4 +7372,2689 @@ h6 {
   .policyDetailFooter {
     padding: 8px 16px 14px;
   }
+}
+
+/* Platform Permissions & Role Matrix styles */
+.matrixPanel {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.matrixPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.matrixTableWrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.matrixTable {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+.matrixTable th,
+.matrixTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.matrixTable th {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background-color: rgba(244, 246, 250, 0.5);
+}
+
+.matrixTable tbody tr:hover {
+  background-color: rgba(11, 107, 87, 0.02);
+}
+
+.matrixScope {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Status pills overrides for permissions mapping */
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  min-width: 60px;
+}
+
+.status-manage {
+  background-color: rgba(5, 150, 105, 0.1);
+  color: #047857;
+}
+
+.status-edit {
+  background-color: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+}
+
+.status-view {
+  background-color: rgba(11, 107, 87, 0.1);
+  color: var(--primary);
+}
+
+.status-none {
+  background-color: var(--line);
+  color: var(--text-muted);
+}
+
+/* Mobile responsive card layouts */
+.matrixMobileCards {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.matrixCard {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.matrixCardHead {
+  background: rgba(244, 246, 250, 0.6);
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.matrixCardScope {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.matrixCardBody {
+  padding: 8px 12px;
+}
+
+.matrixCardRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.05);
+}
+
+.matrixCardRow:last-child {
+  border-bottom: none;
+}
+
+.matrixCardRowLabel {
+  font-size: 12px;
+  text-transform: capitalize;
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .matrixTableWrapper {
+    display: none;
+  }
+  .matrixMobileCards {
+    display: flex;
+  }
+}
+
+html,
+body {
+  background:
+    radial-gradient(900px 560px at 0% -12%, rgba(29, 78, 216, 0.08), transparent 62%),
+    linear-gradient(180deg, #f8fafc 0%, var(--bg-app) 46%, #eef3f8 100%);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+* {
+  min-width: 0;
+}
+
+img,
+svg {
+  flex-shrink: 0;
+}
+
+p,
+span,
+strong,
+small,
+em,
+b,
+li,
+dt,
+dd,
+label,
+button,
+td,
+th,
+code,
+pre,
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+p,
+small,
+li,
+dd,
+.panelHeader span,
+.pageHeader span,
+.hero span,
+.moduleHeaderSubtitle,
+.statValue,
+.metric strong,
+.kvRow strong,
+.dataTable td,
+.matrixTable td,
+.companyGridRow > *,
+.companyTableRow > *,
+.accountRow > *,
+.alertRow > *,
+.behaviorDetectionRow > *,
+.policyV2Row > *,
+.productTableRow > *,
+.installTableRow > span,
+.deviceRulesTable label > *,
+.deviceExclusionTable label > * {
+  overflow-wrap: anywhere;
+}
+
+button,
+.badge,
+.sevBadge,
+.statusPill,
+.filterChip,
+.platformTab,
+.btnPrimary,
+.btnSecondary,
+.btnGhost,
+.btnDanger,
+.btnAck,
+.policySaveButton,
+.policyCancelButton {
+  white-space: normal;
+}
+
+.shell {
+  background:
+    radial-gradient(820px 520px at 0% 0%, rgba(29, 78, 216, 0.06), transparent 62%),
+    linear-gradient(180deg, #f8fafc 0%, var(--bg-app) 100%);
+}
+
+.workspace {
+  width: min(1440px, calc(100vw - 284px));
+  padding: 32px;
+}
+
+.shell.railCollapsed .workspace {
+  width: min(1440px, calc(100vw - 72px));
+}
+
+.rail {
+  background: #0f172a;
+  border-right: 1px solid #1e293b;
+  box-shadow: 10px 0 30px rgba(15, 23, 42, 0.08);
+}
+
+.brandMark strong,
+.railAuthPanel strong,
+.railAuthPanel code {
+  color: #f8fafc;
+}
+
+.brandMark span,
+.navGroupToggle,
+.navGroupItems button:not(.active) span,
+.railAuthPanel span,
+.railAuthPanel em {
+  color: #94a3b8 !important;
+}
+
+.rail button {
+  min-height: 38px;
+  border-color: transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #cbd5e1;
+}
+
+.rail button:hover {
+  background: rgba(148, 163, 184, 0.13);
+  border-color: rgba(148, 163, 184, 0.18);
+  color: #ffffff;
+}
+
+.navGroupItems button.active,
+.rail button.active {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: rgba(96, 165, 250, 0.44);
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(29, 78, 216, 0.28);
+}
+
+.railLogo,
+.navGroupToggle:hover,
+.licenseBase b,
+.flowSteps svg,
+.roadmapSteps strong,
+.companyTableRow svg,
+.moduleHeaderIcon,
+.docItem.current .docVersion,
+.policyToolbarButton.primary,
+.policyColumnsButton,
+.linkLike {
+  color: #60a5fa !important;
+}
+
+.railAuthPanel {
+  background: rgba(15, 23, 42, 0.7);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+.railAuthPanel code {
+  background: rgba(96, 165, 250, 0.14);
+  border: 1px solid rgba(96, 165, 250, 0.18);
+}
+
+.pageHeader,
+.hero,
+.moduleHeader {
+  max-width: 1120px;
+}
+
+.pageHeader p,
+.hero p,
+.moduleHeaderEyebrow,
+.sectionKicker,
+.statLabel,
+.filterLabel,
+.settingsLabel {
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.pageHeader h1,
+.hero h1,
+.moduleHeaderTitleRow h1 {
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.metric,
+.panel,
+.statCard,
+.policyCard,
+.promoteSection,
+.docItem,
+.finding,
+.assessment,
+.artifactCard,
+.licenseBase,
+.addonList article,
+.flowSteps article,
+.roadmapSteps article,
+.hierarchyStrip article,
+.companyGrid,
+.dataTableWrap,
+.dataToolbar,
+.tablePager,
+.sideSheet,
+.loginCard,
+.accountModal,
+.rolePanel,
+.roleListRow,
+.installerRow,
+.simStat,
+.columnList,
+.moreActionsMenu,
+.policyModuleCard,
+.policyDetailSection,
+.policyCatalogPanel,
+.matrixCard,
+.productTable,
+.ownerBannerList article {
+  border-color: var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.panel,
+.statCard,
+.metric,
+.policyCard,
+.docItem,
+.artifactCard,
+.behaviorStatusCard {
+  box-shadow: var(--shadow-soft);
+}
+
+.panelHeader {
+  min-width: 0;
+}
+
+.panelHeader > div,
+.alertRowTitle > div,
+.moduleHeaderTitleBlock > div,
+.statCard > div,
+.metric > div,
+.docItem > div,
+.customerRow > div,
+.cellCompany,
+.behaviorProcessCell,
+.policyModuleHead span,
+.roleListRow > div,
+.installerRow > div,
+.productTableRow > div {
+  min-width: 0;
+}
+
+.panelHeader h2,
+.panel h2,
+.panel h3,
+.statValue,
+.metric strong,
+.policyDetailSection h1,
+.policyDetailSection h2 {
+  color: var(--ink);
+}
+
+.panelHeader span,
+.muted,
+.dimText,
+.alertMeta,
+.entityChip,
+.policyDetailSection p,
+.contextBlock p,
+.timelineItem span,
+.timelineItem small,
+.queueItem span,
+.licenseBase span,
+.addonList span,
+.companyTableRow span,
+.roadmapList,
+.matrixScope,
+.matrixCardScope {
+  color: var(--muted);
+}
+
+input,
+select,
+textarea,
+.searchBox,
+.searchField,
+.loginInput,
+.installCodeBlock,
+.tokenValue,
+.commandLine,
+.codeBlock {
+  border-color: var(--line) !important;
+  border-radius: var(--radius-sm);
+}
+
+input,
+select,
+textarea,
+.searchBox,
+.searchField,
+.loginInput,
+.formRow input,
+.formRow select,
+.formRow textarea,
+.scanner select,
+.scanner textarea,
+.newRuleRow select,
+.newRuleRow input,
+.policyEditorGrid select,
+.policyEditorGrid input,
+.policyModuleFields select,
+.policyModuleFields input,
+.policyAssignBody select,
+.policyAssignBody input,
+.stageField select,
+.accountToolbar select,
+.policyControls select,
+.permissionEditor select,
+.dataToolbar select,
+.dataToolbar input,
+.pagerControls select {
+  background: #ffffff !important;
+  color: var(--ink) !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus,
+.searchBox:focus-within,
+.searchField:focus-within,
+.loginInput:focus-within {
+  outline: none;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16) !important;
+}
+
+.btnPrimary,
+.btnAck,
+.loginSubmit,
+.policySaveButton,
+.installPrimary,
+.devicePolicyFooter button.save,
+.filterChip.active,
+.platformTab.active,
+.addonChip.on,
+.alert button {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.2);
+}
+
+.btnSecondary,
+.btnGhost,
+.btnDanger,
+.iconBtn,
+.filterChip,
+.tabBtn,
+.platformTab,
+.policyCancelButton,
+.policyDangerButton,
+.policyToolbarButton,
+.installTextButton,
+.installDanger,
+.deviceActionBar button {
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+
+.btnSecondary,
+.btnGhost,
+.filterChip,
+.tabBtn,
+.platformTab,
+.policyCancelButton {
+  background: #ffffff !important;
+  border-color: var(--line) !important;
+  color: var(--ink) !important;
+}
+
+.btnSecondary:hover,
+.btnGhost:hover,
+.filterChip:hover,
+.tabBtn:hover,
+.platformTab:hover,
+.iconBtn:hover {
+  background: #f1f5f9 !important;
+  color: var(--ink) !important;
+}
+
+.badge,
+.sevBadge,
+.statusPill,
+.entityChip,
+.signals li,
+.placeholderDepends li,
+.hashList em,
+.networkList span,
+.mitreList span,
+.exclusionList span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.badge,
+.sevBadge,
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+}
+
+.badge.band-low,
+.sevBadge.low,
+.status-active,
+.status-invited,
+.status-manage {
+  background: rgba(4, 120, 87, 0.1);
+  border-color: rgba(4, 120, 87, 0.24);
+  color: #047857;
+}
+
+.badge.band-medium,
+.sevBadge.medium,
+.status-suspended,
+.status-edit,
+.status-trial {
+  background: rgba(180, 83, 9, 0.1);
+  border-color: rgba(180, 83, 9, 0.24);
+  color: #b45309;
+}
+
+.badge.band-high,
+.badge.band-critical,
+.sevBadge.high,
+.status-expired,
+.status-locked,
+.btnDanger {
+  background: rgba(185, 28, 28, 0.09);
+  border-color: rgba(185, 28, 28, 0.22);
+  color: #b91c1c;
+}
+
+.dataToolbar,
+.tablePager,
+.companyGridHead,
+.dataTable thead th,
+.alertsTableHead,
+.productTableHead,
+.matrixTable th,
+.matrixCardHead,
+.policyCatalogHead,
+.policyCatalogToolbar,
+.accountTableHead,
+.companyTableHead {
+  background: linear-gradient(180deg, #f8fafc, #eef3f8) !important;
+}
+
+.dataTable tbody td,
+.matrixTable th,
+.matrixTable td {
+  min-width: 0;
+  white-space: normal;
+}
+
+.dataTable tbody tr,
+.companyGridRow,
+.accountRow,
+.alertRow,
+.policyCatalogRow,
+.behaviorDetectionRow,
+.productTableRow {
+  background: var(--panel);
+}
+
+.dataTable tbody tr:hover,
+.companyGridRow:hover,
+.accountRow:hover,
+.alertRow:hover,
+.policyCatalogRow:hover,
+.behaviorDetectionRow:hover,
+.behaviorDetectionRow.selected,
+.productTableRow:hover,
+.matrixTable tbody tr:hover {
+  background: #f8fafc !important;
+}
+
+.alertRow,
+.alertsTableHead,
+.behaviorDetectionRow,
+.behaviorTableHead,
+.companyTableHead,
+.companyTableRow,
+.accountTableHead,
+.accountRow,
+.productTableHead,
+.productTableRow,
+.policyV2TableHead,
+.policyV2Row,
+.policyCatalogGrid,
+.policyAssignmentTable > div,
+.policyMatrixTable > div {
+  min-width: 0;
+}
+
+.alertRowTitle strong,
+.alertRowTitle p,
+.behaviorProcessCell strong,
+.behaviorProcessCell small,
+.companyGridRow strong,
+.companyGridRow em,
+.productTableRow strong,
+.productTableRow em,
+.accountRow span,
+.companyTableRow span,
+.policyNameLink,
+.policyCatalogRow span,
+.policyCatalogRow time,
+.hashList code,
+.installDownloadColumn a span,
+.installDownloadColumn a small,
+.installTableHead > span,
+.installTableHead label,
+.installTableRow > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panelWorkspace,
+.behaviorLayout,
+.behaviorBottomGrid,
+.grid,
+.landingGrid,
+.companyFoundationGrid,
+.architectureGrid,
+.enrollmentGrid {
+  min-width: 0;
+}
+
+.panelWorkspace > *,
+.grid > *,
+.landingGrid > *,
+.companyFoundationGrid > *,
+.architectureGrid > *,
+.enrollmentGrid > *,
+.behaviorLayout > *,
+.behaviorBottomGrid > * {
+  min-width: 0;
+}
+
+.policyCatalogPage,
+.policyDetailPage,
+.policyDetailWorkspace,
+.policyCatalogRow {
+  background: transparent;
+}
+
+.policyDetailSidebar,
+.policyDetailSearch {
+  background: #f8fafc;
+}
+
+.policyDetailSection,
+.policyEngineBlock,
+.policyAgentBlock,
+.policyInheritanceBlock,
+.policyHistoryBlock,
+.policySupportBlock {
+  color: var(--ink);
+}
+
+.policyAccordionList.dark .policyModuleCard,
+.policyEngineBlock .policyV2Actions .btnGhost,
+.policyInlineField select,
+.policyInlineField input,
+.policyCommunicationBuilder select,
+.policyCommunicationBuilder input,
+.policyUpdateLocation input,
+.policyScanProfiles button,
+.policyAssignmentTable > div,
+.processNode,
+.simulationStats span,
+.queueItem,
+.timelineItem {
+  background: #ffffff !important;
+  border-color: var(--line) !important;
+  color: var(--ink) !important;
+}
+
+.policyAccordionList.dark .policyModuleHead,
+.policyAgentBlock h2,
+.policyCheckboxRow,
+.policyRadioRow,
+.policySwitchTitle,
+.policyMatrixTable,
+.policyScanProfiles small {
+  color: var(--ink) !important;
+}
+
+.policyAccordionList.dark .policyModuleHead small,
+.policyAgentBlock p,
+.policyEngineHeader p,
+.policySimulationInline p,
+.policyInlineField,
+.policySwitchRow,
+.policyWarningCallout,
+.policyInfoCallout,
+.policyIndentedOptions,
+.policyAssignmentTable {
+  color: var(--muted) !important;
+}
+
+.policySwitch.on,
+.switch input:checked + span {
+  background: #2563eb;
+}
+
+.policySwitch.on::after {
+  background: #ffffff;
+}
+
+.installPackagesPage,
+.workspace.policyWorkspace:has(.installPackagesPage),
+.devicePolicyPage {
+  background: #0f172a;
+}
+
+.installPackagesPage,
+.devicePolicyPage {
+  color: #e2e8f0;
+}
+
+.loginShell {
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(29, 78, 216, 0.16), transparent 60%),
+    linear-gradient(160deg, #f8fafc 0%, #eef3f8 100%);
+}
+
+@media (max-width: 1180px) {
+  .workspace,
+  .shell.railCollapsed .workspace {
+    width: 100%;
+    padding: 28px 22px;
+  }
+}
+
+@media (max-width: 820px) {
+  .rail {
+    background: #0f172a;
+  }
+
+  .workspace,
+  .shell.railCollapsed .workspace {
+    width: 100%;
+    padding: 22px 16px;
+  }
+
+  .panelHeader,
+  .behaviorHeaderRow,
+  .moduleHeaderTop,
+  .policyEngineHeader,
+  .installHeader {
+    display: grid;
+  }
+
+  .pageHeader h1,
+  .hero h1 {
+    font-size: clamp(32px, 11vw, 48px);
+  }
+}
+
+/* --- Installers page enterprise theme ------------------------------------ */
+
+.workspace.policyWorkspace:has(.installPackagesPage) {
+  background: var(--bg-app);
+}
+
+.installPackagesPage {
+  --install-bg: transparent;
+  --install-panel: #ffffff;
+  --install-panel-2: #f8fafc;
+  --install-line: var(--line);
+  --install-line-soft: #e6edf5;
+  --install-text: var(--ink);
+  --install-muted: var(--muted);
+  --install-blue: var(--primary);
+  --install-red: var(--danger);
+  min-height: 100vh;
+  background:
+    radial-gradient(760px 420px at 0% -12%, rgba(29, 78, 216, 0.08), transparent 62%),
+    linear-gradient(180deg, #f8fafc 0%, var(--bg-app) 100%);
+  color: var(--ink);
+  padding: 30px 32px 44px;
+  font-size: 13px;
+}
+
+.installUtilityBar {
+  top: 18px;
+  right: 22px;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+}
+
+.installUtilityBar button,
+.installIconButton {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--muted);
+  box-shadow: var(--shadow-sm);
+}
+
+.installIconButton.active,
+.installIconButton:hover,
+.installUtilityBar button:hover {
+  border-color: rgba(29, 78, 216, 0.34);
+  background: rgba(29, 78, 216, 0.08);
+  color: var(--primary);
+}
+
+.installHeader {
+  min-height: 74px;
+  align-items: center;
+  padding: 0 132px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.installHeader h1,
+.installCreatePanel h2,
+.installDownloadColumn h2,
+.installCreateGeneral h3,
+.installRolesPanel h3 {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.installHeader h1 {
+  font-size: clamp(28px, 3vw, 42px);
+}
+
+.installHeader > div {
+  margin-top: 0;
+  align-items: center;
+}
+
+.installTinyButton {
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--muted);
+  padding: 0 12px;
+  text-transform: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.installTinyButton:hover {
+  color: var(--primary);
+  border-color: rgba(29, 78, 216, 0.34);
+}
+
+.installToolbar {
+  min-height: 62px;
+  gap: 10px;
+  border-bottom: 0;
+  padding: 16px 0;
+  flex-wrap: wrap;
+}
+
+.installPrimary,
+.installTextButton,
+.installDanger {
+  height: 38px;
+  border-radius: 999px;
+  padding: 0 16px;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 13px;
+}
+
+.installTextButton {
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.installTextButton:hover:not(:disabled) {
+  border-color: rgba(29, 78, 216, 0.34);
+  background: rgba(29, 78, 216, 0.08);
+  color: var(--primary);
+}
+
+.installDanger {
+  border-color: rgba(185, 28, 28, 0.24);
+  background: #ffffff;
+  color: var(--danger);
+}
+
+.installFilters {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(210px, 1.15fr) minmax(180px, 0.9fr) minmax(220px, 1.1fr) minmax(150px, 0.72fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin: 0 0 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--shadow-soft);
+}
+
+.installFilters label {
+  min-width: 0;
+  height: auto;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 8px;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.installFilters label span {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.installFilters input,
+.installFilters select {
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0 11px;
+}
+
+.installFilters input {
+  grid-column: 1;
+}
+
+.installFilters select {
+  grid-column: 1 / -1;
+  color-scheme: light;
+}
+
+.installFilters label svg {
+  grid-column: 2;
+  color: var(--muted);
+}
+
+.installFilters button {
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--primary);
+  padding: 0 14px;
+  text-align: center;
+  text-transform: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.installFilters button:hover {
+  background: rgba(29, 78, 216, 0.08);
+  border-color: rgba(29, 78, 216, 0.34);
+}
+
+.installTable {
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+  box-shadow: var(--shadow-soft);
+}
+
+.installTableHead,
+.installTableRow {
+  grid-template-columns: minmax(240px, 1.4fr) minmax(100px, 0.55fr) minmax(120px, 0.65fr) minmax(220px, 1.15fr) minmax(190px, 0.95fr);
+  min-width: 860px;
+}
+
+.installTableHead {
+  min-height: 42px;
+  background: linear-gradient(180deg, #f8fafc, #eef3f8);
+  color: var(--muted);
+}
+
+.installTableRow {
+  min-height: 48px;
+  color: var(--ink);
+}
+
+.installTableRow:hover,
+.installTableRow.selected {
+  background: rgba(29, 78, 216, 0.07);
+}
+
+.installTableRow strong {
+  color: var(--primary);
+}
+
+.installDownloadMenu {
+  top: 46px;
+  width: min(620px, calc(100vw - 340px));
+  border: 1px solid rgba(29, 78, 216, 0.24);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+  box-shadow: var(--shadow-raised);
+}
+
+.installFlyoutSearch {
+  height: 38px;
+  border-color: var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.installFlyoutSearch input {
+  color: var(--ink);
+}
+
+.installDownloadColumn {
+  border-right-color: var(--line);
+}
+
+.installDownloadColumn a {
+  color: var(--ink);
+}
+
+.installDownloadColumn a:hover {
+  color: var(--primary);
+}
+
+.installDownloadColumn a small {
+  color: var(--muted);
+}
+
+.installCreateOverlay {
+  background: rgba(15, 23, 42, 0.54);
+  backdrop-filter: blur(5px);
+  color: var(--ink);
+}
+
+.installCreatePanel {
+  width: min(1080px, calc(100vw - 40px));
+  height: min(820px, calc(100vh - 40px));
+  margin: 20px auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: var(--shadow-raised);
+}
+
+.installCreatePanel > header,
+.installCreatePanel > footer {
+  border-color: var(--line);
+  background: #f8fafc;
+}
+
+.installCreateContent {
+  max-width: none;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+}
+
+.installCreateGeneral h4,
+.installMatrixHead {
+  color: var(--muted);
+}
+
+.installCreateGeneral label {
+  color: var(--ink);
+}
+
+.installCreateGeneral input,
+.installCreateGeneral select,
+.installCreatePanel input,
+.installCreatePanel select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--ink);
+  color-scheme: light;
+}
+
+.installModuleMatrix label,
+.installRolesPanel label,
+.installRolesPanel p {
+  color: var(--muted);
+}
+
+.installModuleMatrix label.enabled,
+.installRolesPanel label:has(input:checked) {
+  color: var(--ink);
+}
+
+.installMatrixHead,
+.installRolesPanel {
+  border-color: var(--line);
+}
+
+.installSave,
+.installCancel {
+  height: 34px;
+  border-radius: 999px;
+  padding: 0 16px;
+  text-transform: none;
+}
+
+.installSave:not(:disabled) {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+}
+
+.installCancel {
+  background: #ffffff;
+  color: var(--ink);
+}
+
+@media (max-width: 1180px) {
+  .installFilters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .installFilters button {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 820px) {
+  .installPackagesPage {
+    padding: 22px 16px 34px;
+  }
+
+  .installUtilityBar {
+    position: static;
+    justify-content: flex-end;
+    margin-bottom: 14px;
+  }
+
+  .installHeader {
+    padding-right: 0;
+    gap: 14px;
+  }
+
+  .installHeader > div,
+  .installToolbar {
+    width: 100%;
+  }
+
+  .installPrimary,
+  .installTextButton,
+  .installDanger {
+    justify-content: center;
+  }
+
+  .installFilters {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .installFilters button {
+    width: 100%;
+  }
+
+  .installDownloadMenu {
+    width: min(520px, calc(100vw - 32px));
+  }
+
+  .installCreatePanel {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    border-radius: 0;
+  }
+}
+
+/* --- Cross-page enterprise unification ----------------------------------- */
+
+.consolePage,
+.panelWorkspace,
+.scanner,
+.dashboard,
+.alertsPanel,
+.policyCatalogPage,
+.policyDetailPage,
+.accountModal,
+.sideSheetBody,
+.tabPanel,
+.settingsDrawer {
+  color: var(--ink);
+}
+
+.consolePage,
+.panelWorkspace {
+  min-height: calc(100vh - 64px);
+}
+
+.consolePage > div[style*="padding: 40px"],
+.panelWorkspace > div[style*="padding: 40px"] {
+  padding: 32px !important;
+}
+
+
+
+.panelWorkspace .panel,
+.consolePage .panel,
+.scanner .panel,
+.alertsPanel.panel,
+.accountModal,
+.sideSheet,
+.companyGrid,
+.dataTableWrap,
+.matrixPanel,
+.productTable,
+.permissionMatrix,
+.rolePanel,
+.ownerBannerPanel,
+.addOnPanel,
+.placeholderPanel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-soft);
+}
+
+.panelWorkspace .panel,
+.consolePage .panel,
+.accountModal,
+.sideSheet,
+.addOnPanel,
+.placeholderPanel {
+  overflow: hidden;
+}
+
+.panelWorkspace .panelHeader,
+.consolePage .panelHeader,
+.accountModal header,
+.sideSheetHead,
+.matrixPanelHeader,
+.productHead {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+}
+
+.panelWorkspace .panelHeader h2,
+.consolePage .panelHeader h2,
+.accountModal h2,
+.sideSheetHead h2,
+.matrixPanelHeader strong,
+.productHead,
+.addOnPanel h2,
+.placeholderPanel h2,
+.policyCatalogTopbar h1,
+.policyDetailHeader strong {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.panelWorkspace .panelHeader span,
+.consolePage .panelHeader span,
+.accountModal header span,
+.sideSheetHead span,
+.addOnPanel p,
+.placeholderPanel span,
+.placeholderDepends > span,
+.emptyState,
+.loadingRow,
+.policyGateHint,
+.stageHint {
+  color: var(--muted);
+}
+
+.metric,
+.statCard,
+.behaviorStatusCard,
+.licenseBase,
+.simulationCard,
+.tokenBox,
+.deliveryChoice,
+.platformCheck,
+.artifactCard,
+.processNode,
+.simulationStats span,
+.queueItem,
+.timelineItem,
+.contextBlock,
+.policyAssignPreview,
+.addonGrid,
+.matrixCard,
+.ownerBannerList article,
+.newRuleRow,
+.ruleRow,
+.docItem,
+.promoteSection,
+.finding,
+.assessment,
+.flowSteps article,
+.roadmapSteps article,
+.hierarchyStrip article {
+  border-color: var(--line) !important;
+  background: #ffffff !important;
+  color: var(--ink);
+}
+
+.metric,
+.statCard,
+.behaviorStatusCard,
+.artifactCard,
+.docItem,
+.finding,
+.assessment,
+.simulationCard,
+.tokenBox,
+.deliveryChoice,
+.platformCheck,
+.matrixCard {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.metric span,
+.statLabel,
+.behaviorStatusCard span,
+.artifactActions span,
+.compactMeta span,
+.customerRow p,
+.licenseBase span,
+.addonList span,
+.flowSteps span,
+.architectureList span,
+.roadmapSteps span,
+.hierarchyStrip p,
+.processNode span,
+.simulationCard ul,
+.queueItem span,
+.timelineItem span,
+.timelineItem small,
+.contextBlock p,
+.deliveryOption small,
+.tokenMeta,
+.installHint,
+.policyLockReason,
+.moduleHeaderEyebrow,
+.pageHeader p,
+.pageHeader span,
+.hero p,
+.hero span {
+  color: var(--muted) !important;
+}
+
+.metric strong,
+.statValue,
+.behaviorStatusCard strong,
+.artifactCard strong,
+.customerRow strong,
+.licenseBase strong,
+.flowSteps strong,
+.roadmapSteps strong,
+.hierarchyStrip strong,
+.processNode code,
+.queueItem strong,
+.timelineItem strong,
+.moduleHeaderTitleRow h1,
+.pageHeader h1,
+.hero h1 {
+  color: var(--ink) !important;
+}
+
+.panelWorkspace svg,
+.consolePage svg,
+.moduleHeaderIcon svg,
+.statIcon svg,
+.licensePanel .panelHeader svg,
+.artifactCard header svg,
+.customerRow svg,
+.flowSteps svg,
+.scanner .panelHeader svg,
+.loginLogo {
+  color: currentColor;
+}
+
+.moduleHeaderIcon,
+.statIcon,
+.licensePanel .panelHeader svg,
+.artifactCard header svg,
+.customerRow svg,
+.flowSteps svg,
+.scanner .panelHeader svg,
+.docItem.current .docVersion,
+.tokenBox h4,
+.simulationCard header,
+.copyChip:hover,
+.platformCheck.active,
+.policyToolbarButton.primary,
+.policyColumnsButton,
+.policySidebarToggle,
+.policyDetailSidebar button.active,
+.policyDetailSidebar button.active span,
+.policyDetailCrumbs button {
+  color: var(--primary) !important;
+}
+
+.dataToolbar,
+.tablePager,
+.filterBar,
+.accountToolbar,
+.policyControls,
+.platformStrip,
+.policyCatalogToolbar,
+.policyCatalogFooter {
+  border-radius: var(--radius-md);
+}
+
+.filterBar,
+.accountToolbar,
+.policyControls,
+.platformStrip {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: var(--shadow-sm);
+}
+
+.dataTableWrap,
+.companyGrid,
+.productTable,
+.permissionMatrix,
+.matrixTableWrapper,
+.accountTablePanel,
+.companyTablePanel,
+.policyCatalogPanel,
+.alertsPanel,
+.policyAssignmentTable,
+.policyMatrixTable {
+  overflow: auto;
+}
+
+.dataTable,
+.matrixTable,
+.productTable,
+.permissionMatrix,
+.companyGrid,
+.policyCatalogPanel,
+.policyAssignmentTable,
+.policyMatrixTable,
+.alertsPanel,
+.accountTablePanel,
+.companyTablePanel {
+  border-color: var(--line) !important;
+}
+
+.dataTable thead th,
+.matrixTable th,
+.companyGridHead,
+.accountTableHead,
+.companyTableHead,
+.productTableHead,
+.permissionMatrixHead,
+.policyCatalogHead,
+.policyV2TableHead,
+.behaviorTableHead,
+.alertsTableHead {
+  background: linear-gradient(180deg, #f8fafc, #eef3f8) !important;
+  color: var(--muted) !important;
+  border-color: var(--line) !important;
+}
+
+.dataTable tbody tr,
+.companyGridRow,
+.accountRow,
+.companyTableRow,
+.productTableRow,
+.permissionMatrixRow,
+.policyCatalogRow,
+.policyV2Row,
+.behaviorDetectionRow,
+.alertRow,
+.matrixTable tbody tr {
+  background: #ffffff !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+.dataTable tbody tr:hover,
+.companyGridRow:hover,
+.accountRow:hover,
+.companyTableRow:hover,
+.productTableRow:hover,
+.permissionMatrixRow:hover,
+.policyCatalogRow:hover,
+.policyV2Row:hover,
+.policyV2Row.active,
+.behaviorDetectionRow:hover,
+.behaviorDetectionRow.selected,
+.alertRow:hover,
+.matrixTable tbody tr:hover {
+  background: rgba(29, 78, 216, 0.06) !important;
+}
+
+.btn,
+.btnPrimary,
+.btnSecondary,
+.btnGhost,
+.btnDanger,
+.btnAck,
+.btnIcon,
+.iconBtn,
+.filterChip,
+.tabBtn,
+.platformTab,
+.policyToolbarButton,
+.policyColumnsButton,
+.policyDangerButton,
+.policySaveButton,
+.policyCancelButton,
+.linkLike,
+.copyChip,
+.addonChip,
+.installCopyBtn,
+.moreActionsMenu button,
+.ownerBannerList button {
+  min-width: 0;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.btn,
+.btnSecondary,
+.btnGhost,
+.btnIcon,
+.iconBtn,
+.filterChip,
+.tabBtn,
+.platformTab,
+.policyToolbarButton,
+.policyColumnsButton,
+.copyChip,
+.addonChip,
+.ownerBannerList button,
+.moreActionsMenu button {
+  background: #ffffff !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink) !important;
+  border-radius: 10px !important;
+  font-weight: 600;
+}
+
+.btn:hover,
+.btnSecondary:hover,
+.btnGhost:hover,
+.btnIcon:hover,
+.iconBtn:hover,
+.filterChip:hover,
+.tabBtn:hover,
+.platformTab:hover,
+.policyToolbarButton:hover,
+.policyColumnsButton:hover,
+.copyChip:hover,
+.addonChip:hover,
+.ownerBannerList button:hover,
+.moreActionsMenu button:hover {
+  background: rgba(29, 78, 216, 0.08) !important;
+  border-color: rgba(29, 78, 216, 0.28) !important;
+  color: var(--primary) !important;
+}
+
+.btnPrimary,
+.btn.btnPrimary,
+.btnAck,
+.policySaveButton,
+.loginSubmit,
+.filterChip.active,
+.tabBtn.active,
+.platformTab.active,
+.addonChip.on,
+.policyAssignTypeSwitch button.active,
+.platformCheck.active span {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+  border-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.2);
+}
+
+.btnDanger,
+.policyDangerButton,
+.policyInheritanceActions button,
+.policyDangerButton:hover,
+.btnDanger:hover {
+  background: rgba(185, 28, 28, 0.08) !important;
+  border: 1px solid rgba(185, 28, 28, 0.24) !important;
+  color: var(--danger) !important;
+}
+
+.banner,
+.successBanner,
+.loginError,
+.policyInfoCallout,
+.policyWarningCallout,
+.systemBanner,
+.tokenBox,
+.simulationCard {
+  border-radius: var(--radius-md);
+}
+
+.banner,
+.loginError,
+.policyWarningCallout {
+  background: rgba(180, 83, 9, 0.09) !important;
+  border-color: rgba(180, 83, 9, 0.24) !important;
+  color: var(--warning) !important;
+}
+
+.successBanner,
+.policyInfoCallout,
+.simulationCard,
+.tokenBox {
+  background: rgba(29, 78, 216, 0.07) !important;
+  border-color: rgba(29, 78, 216, 0.22) !important;
+}
+
+.badge,
+.statusPill,
+.sevBadge,
+.entityChip,
+.signals li,
+.placeholderDepends li,
+.copyChip,
+.lockBadge,
+.hashList em,
+.networkList span,
+.mitreList span,
+.exclusionList span,
+.policySimulationSummary span,
+.pillSubtle {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 999px;
+}
+
+.statusPill.perm-view,
+.status-view,
+.badge.band-low,
+.sevBadge.low,
+.status-active,
+.status-invited {
+  background: rgba(29, 78, 216, 0.09) !important;
+  border-color: rgba(29, 78, 216, 0.22) !important;
+  color: var(--primary) !important;
+}
+
+.statusPill.perm-edit,
+.status-edit,
+.badge.band-medium,
+.sevBadge.medium,
+.status-suspended,
+.status-trial {
+  background: rgba(180, 83, 9, 0.09) !important;
+  border-color: rgba(180, 83, 9, 0.22) !important;
+  color: var(--warning) !important;
+}
+
+.statusPill.perm-manage,
+.status-manage,
+.rep-trusted,
+.healthy,
+.score-low {
+  background: rgba(4, 120, 87, 0.09) !important;
+  border-color: rgba(4, 120, 87, 0.22) !important;
+  color: var(--success) !important;
+}
+
+.badge.band-high,
+.badge.band-critical,
+.sevBadge.high,
+.status-expired,
+.status-locked,
+.rep-malicious,
+.rep-suspicious,
+.score-high,
+.score-critical,
+.offline {
+  background: rgba(185, 28, 28, 0.08) !important;
+  border-color: rgba(185, 28, 28, 0.22) !important;
+  color: var(--danger) !important;
+}
+
+.formRow input,
+.formRow select,
+.formRow textarea,
+.loginInput,
+.loginInput input,
+.scanner select,
+.scanner textarea,
+.searchBox,
+.searchField,
+.accountToolbar select,
+.policyControls select,
+.permissionEditor select,
+.dataToolbar select,
+.dataToolbar input,
+.pagerControls select,
+.newRuleRow select,
+.newRuleRow input,
+.policyV2Actions select,
+.policyEditorGrid select,
+.policyEditorGrid input,
+.policyModuleFields select,
+.policyModuleFields input,
+.policyAssignBody select,
+.policyAssignBody input,
+.stageField select,
+.deliveryChoice,
+.platformCheck,
+.policyCatalogHead input,
+.policyCatalogHead select,
+.policyDetailSearch input,
+.policyDetailField input,
+.policyDetailField select,
+.policyInheritanceBuilder select,
+.policyInlineField select,
+.policyInlineField input,
+.policyCommunicationBuilder select,
+.policyCommunicationBuilder input,
+.policyUpdateLocation input,
+.deviceFilters input,
+.deviceFilters select,
+.deviceRulesTable select {
+  background: #ffffff !important;
+  border-color: var(--line) !important;
+  color: var(--ink) !important;
+  border-radius: 10px !important;
+}
+
+.formRow input:focus,
+.formRow select:focus,
+.formRow textarea:focus,
+.scanner select:focus,
+.scanner textarea:focus,
+.searchBox:focus-within,
+.searchField:focus-within,
+.accountToolbar select:focus,
+.policyControls select:focus,
+.permissionEditor select:focus,
+.dataToolbar select:focus,
+.dataToolbar input:focus,
+.policyEditorGrid select:focus,
+.policyEditorGrid input:focus,
+.policyModuleFields select:focus,
+.policyModuleFields input:focus,
+.stageField select:focus {
+  outline: none;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16) !important;
+}
+
+.loginCard {
+  border-radius: 22px;
+  box-shadow: var(--shadow-raised);
+}
+
+.loginHeader h1,
+.loginField > span,
+.loginFooter code {
+  color: var(--ink);
+}
+
+.loginFooter p,
+.loginField,
+.loginHeader p {
+  color: var(--muted);
+}
+
+.totpSetup,
+.totpQr,
+.totpSecretValue {
+  background: #ffffff !important;
+  border-color: var(--line) !important;
+}
+
+.policyWorkspace .policyCatalogPage,
+.policyWorkspace .policyDetailPage,
+.policyWorkspace .policyDetailWorkspace {
+  background: var(--bg-app);
+}
+
+.policyDetailSidebar,
+.devicePolicyRail {
+  background: #0f172a !important;
+  color: #e2e8f0 !important;
+  border-color: #1e293b !important;
+}
+
+.policyDetailSidebar h2,
+.policyDetailSidebar button,
+.policySidebarParent,
+.devicePolicyRail p,
+.devicePolicyRail button,
+.deviceSearch {
+  color: #cbd5e1 !important;
+}
+
+.policySidebarParent:hover,
+.policySidebarParent.active,
+.policySidebarChildren button:hover,
+.policySidebarChildren button.active,
+.devicePolicyRail button.expanded,
+.devicePolicyRail button.sub.active {
+  background: rgba(37, 99, 235, 0.18) !important;
+  color: #ffffff !important;
+}
+
+.devicePolicyPage,
+.workspace.policyWorkspace:has(.devicePolicyPage) {
+  background: var(--bg-app) !important;
+  color: var(--ink) !important;
+}
+
+.devicePolicyContent {
+  background: var(--bg-app);
+  color: var(--ink);
+}
+
+.devicePolicyHeader h1,
+.deviceBreadcrumb,
+.deviceHelp,
+.deviceRulesTable,
+.deviceExclusionTable,
+.devicePolicySubtitle {
+  color: var(--ink) !important;
+}
+
+.deviceRulesTable .head,
+.deviceRulesTable label,
+.deviceExclusionTable .head,
+.deviceExclusionTable label,
+.deviceEmpty,
+.devicePolicyFooter {
+  border-color: var(--line) !important;
+}
+
+.deviceRulesTable label:hover,
+.deviceRulesTable label.selected {
+  background: rgba(29, 78, 216, 0.06) !important;
+}
+
+.devicePolicyFooter {
+  background: #ffffff !important;
+}
+
+.devicePolicyFooter button:not(.save),
+.deviceActionBar button,
+.deviceEmpty button {
+  background: #ffffff !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+
+.addOnPanel {
+  padding: 34px;
+}
+
+.addOnPanel svg {
+  color: var(--primary);
+}
+
+.placeholderPanel,
+.addOnPanel {
+  max-width: 860px;
+}
+
+.codeBlock,
+.installCodeBlock,
+.tokenValue,
+.commandLine,
+.totpSecretValue,
+.railAuthPanel code,
+.compactMeta code,
+.kvList dd,
+.copyChip code,
+.installLinkTray code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+@media (max-width: 1180px) {
+  .panelWorkspace {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .panelWorkspace > .panel {
+    width: 100% !important;
+    flex-basis: auto !important;
+  }
+
+  .accountToolbar,
+  .filterBar,
+  .policyControls,
+  .platformStrip {
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 820px) {
+  .consolePage,
+  .panelWorkspace > div[style*="padding: 40px"],
+  .consolePage > div[style*="padding: 40px"] {
+    padding: 18px !important;
+  }
+
+  .panelWorkspace .panel,
+  .consolePage .panel,
+  .accountModal,
+  .sideSheet,
+  .addOnPanel {
+    border-radius: var(--radius-md);
+  }
+
+  .accountModal,
+  .sideSheet {
+    width: 100% !important;
+  }
+
+  .formActions,
+  .panelActions,
+  .moduleHeaderActions,
+  .policyV2Actions,
+  .policyEditorActions,
+  .policyAssignActions,
+  .settingsActions,
+  .totpActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .btn,
+  .btnPrimary,
+  .btnSecondary,
+  .btnGhost,
+  .btnDanger,
+  .btnAck {
+    justify-content: center;
+  }
+}
+
+
+
+.workspace table {
+  color: var(--ink);
+}
+
+.workspace table th {
+  background: linear-gradient(180deg, #f8fafc, #eef3f8) !important;
+  color: var(--muted) !important;
+  border-color: var(--line) !important;
+}
+
+.workspace table td,
+.workspace table tr {
+  border-color: var(--line) !important;
+}
+
+.workspace table tbody tr:hover {
+  background: rgba(29, 78, 216, 0.06) !important;
+}
+
+.workspace span[style*="PLANNED"],
+.workspace span[style*="rgba(100,116,139,0.15)"] {
+  border: 1px solid var(--line) !important;
+  border-radius: 999px !important;
+  background: #f8fafc !important;
+  color: var(--muted) !important;
+  padding: 4px 10px !important;
+}
+
+.workspace div[style*="gridTemplateColumns: repeat(auto-fill, minmax(300px"] .panel {
+  min-height: 220px;
+}
+
+.workspace div[style*="position: fixed"][style*="rgba(0,0,0,0.55)"],
+.workspace div[style*="position: fixed"][style*="rgba(0, 0, 0, 0.55)"] {
+  background: rgba(15, 23, 42, 0.54) !important;
+  backdrop-filter: blur(5px);
+}
+
+.workspace .input,
+.ownerBannerPanel textarea,
+.ownerBannerPanel input,
+.ownerBannerPanel select {
+  min-height: 40px;
+  width: 100%;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  color: var(--ink) !important;
+  padding: 0 11px;
+  font: inherit;
+}
+
+.ownerBannerPanel textarea,
+.workspace textarea.input {
+  min-height: 92px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+
+.workspace .input:focus,
+.ownerBannerPanel textarea:focus,
+.ownerBannerPanel input:focus,
+.ownerBannerPanel select:focus {
+  outline: none;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16) !important;
+}
+
+.ownerBannerGrid {
+  gap: 14px;
+}
+
+.ownerBannerList article {
+  background: #f8fafc !important;
+}
+
+.ownerBannerList button {
+  white-space: nowrap;
+}
+
+.workspace div[style*="previewBranding.primary_color"],
+.workspace div[style*="background: previewBranding.primary_color"] {
+  box-shadow: var(--shadow-soft);
+}
+
+.workspace div[style*="display: grid"][style*="repeat(auto-fit"],
+.workspace div[style*="display: grid"][style*="repeat(auto-fill"],
+.workspace section[style*="display: grid"][style*="repeat(auto-fit"],
+.workspace section[style*="display: grid"][style*="repeat(auto-fill"] {
+  min-width: 0;
+}
+
+.workspace div[style*="display: flex"][style*="gap: 16px"][style*="flexWrap"],
+.workspace section[style*="display: flex"][style*="gap: 16px"][style*="flexWrap"] {
+  gap: 18px !important;
+}
+
+@media (max-width: 980px) {
+  .workspace > div[style*="display: flex"][style*="flex-direction: column"] div[style*="gridTemplateColumns: \"1fr 1fr\""],
+  .workspace > div[style*="display: flex"][style*="flex-direction: column"] div[style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .workspace div[style*="minWidth: \"320px\""],
+  .workspace div[style*="min-width: 320px"],
+  .workspace div[style*="minWidth: \"300px\""],
+  .workspace div[style*="min-width: 300px"] {
+    min-width: 0 !important;
+  }
+}
+
+/* --- Network page enterprise polish -------------------------------------- */
+
+.networkPage {
+  min-height: calc(100vh - 64px);
+  padding: 0;
+  gap: 18px;
+  color: var(--ink);
+}
+
+.networkHeader {
+  min-height: 70px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.networkHeader h1 {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: clamp(30px, 3vw, 44px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.networkHeader p {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.networkShell {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  min-height: 680px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.networkTreePanel {
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, #f8fafc, #eef3f8);
+  padding: 16px;
+}
+
+.networkTreeToolbar {
+  min-height: 34px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+}
+
+.networkTreeToolbar svg,
+.networkTreeRootItem svg,
+.networkTreeCustomer svg,
+.networkTreeEndpoint svg,
+.networkNameCell svg {
+  color: var(--primary);
+}
+
+.networkSearch {
+  min-height: 42px;
+  margin-bottom: 16px;
+  border-color: var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: var(--shadow-sm);
+}
+
+.networkSearch:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+
+.networkSearch input {
+  color: var(--ink);
+}
+
+.networkTreeRootItem {
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.networkTreeGroup {
+  margin-top: 8px;
+}
+
+.networkTreeCustomer,
+.networkTreeEndpoint {
+  min-height: 36px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.networkTreeCustomer.selected,
+.networkTreeEndpoint.selected,
+.networkTreeCustomer:hover,
+.networkTreeEndpoint:hover {
+  border-color: rgba(29, 78, 216, 0.22);
+  background: rgba(29, 78, 216, 0.08);
+  color: var(--primary);
+}
+
+.networkTreeCustomer small,
+.networkTreeEmpty {
+  color: var(--muted);
+}
+
+.networkTreeTwisty {
+  width: 18px;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.networkTreeChildren {
+  margin-left: 18px;
+  border-left: 1px solid #cbd5e1;
+  padding: 5px 0 5px 10px;
+}
+
+.networkMainPanel {
+  padding: 18px;
+  background: #ffffff;
+}
+
+.networkActionBar {
+  min-height: 58px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+}
+
+.networkActionBar strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.networkActionBar span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.networkActionControls {
+  flex-wrap: wrap;
+}
+
+.networkActionControls select {
+  min-width: 190px;
+  height: 38px;
+  border-color: var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.networkActionControls select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+
+.networkMainPanel .dataTableWrap {
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+
+.networkTable {
+  min-width: 1080px;
+}
+
+.networkTable thead th {
+  height: 42px;
+}
+
+.networkTable tbody td {
+  padding: 11px 12px !important;
+  vertical-align: middle;
+}
+
+.networkNameCell,
+.networkIssue {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.networkNameCell {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.networkIssue {
+  width: fit-content;
+  border: 1px solid rgba(180, 83, 9, 0.24);
+  border-radius: 999px;
+  background: rgba(180, 83, 9, 0.09);
+  color: var(--warning);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.networkEmptyCell {
+  background: #ffffff;
+  color: var(--muted);
+}
+
+.networkFooter {
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 14px 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.networkFooter .installTextButton.danger {
+  border-color: rgba(185, 28, 28, 0.24) !important;
+  color: var(--danger) !important;
+}
+
+.statusPill.ok {
+  background: rgba(4, 120, 87, 0.1) !important;
+  border-color: rgba(4, 120, 87, 0.24) !important;
+  color: var(--success) !important;
+}
+
+.statusPill.warn {
+  background: rgba(180, 83, 9, 0.1) !important;
+  border-color: rgba(180, 83, 9, 0.24) !important;
+  color: var(--warning) !important;
+}
+
+.statusPill.bad {
+  background: rgba(185, 28, 28, 0.09) !important;
+  border-color: rgba(185, 28, 28, 0.24) !important;
+  color: var(--danger) !important;
+}
+
+@media (max-width: 960px) {
+  .networkPage {
+    padding: 0;
+  }
+
+  .networkShell {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .networkTreePanel {
+    max-height: 360px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .networkActionBar,
+  .networkActionControls,
+  .networkFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .networkActionControls select,
+  .networkActionControls .installPrimary,
+  .networkFooter .installTextButton {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* --- Policies page spacing and selected-action fixes --------------------- */
+
+.workspace.policyWorkspace {
+  padding: 24px 28px 36px;
+}
+
+.policyWorkspace .policyCatalogPage {
+  min-height: auto;
+  background: transparent;
+}
+
+.policyWorkspace .policyCatalogTopbar {
+  margin-bottom: 18px;
+}
+
+.policyWorkspace .policyCatalogTitleGroup h1 {
+  font-size: clamp(30px, 3vw, 42px);
+  line-height: 1.05;
+}
+
+.policyWorkspace .policyCatalogPanel {
+  border-radius: var(--radius-lg);
+}
+
+.policyWorkspace .policyCatalogToolbar {
+  min-height: 56px;
+  gap: 12px;
+  padding: 10px 16px;
+}
+
+.policyWorkspace .policySelectionHint {
+  color: var(--muted) !important;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.policyWorkspace .policyBulkActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.policyWorkspace .policyToolbarButton {
+  min-height: 34px;
+  border: 1px solid var(--line) !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: var(--ink) !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.policyWorkspace .policyToolbarButton:hover:not(:disabled) {
+  border-color: rgba(29, 78, 216, 0.3) !important;
+  background: rgba(29, 78, 216, 0.08) !important;
+  color: var(--primary) !important;
+}
+
+.policyWorkspace .policyToolbarButton:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.policyWorkspace .policyToolbarButton.danger:not(:disabled) {
+  border-color: rgba(185, 28, 28, 0.24) !important;
+  color: var(--danger) !important;
+}
+
+.policyWorkspace .policyToolbarButton.danger:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.08) !important;
+  border-color: rgba(185, 28, 28, 0.3) !important;
+  color: var(--danger) !important;
+}
+
+.policyWorkspace .policyColumnsButton {
+  min-height: 34px;
+  width: 38px;
+  border: 1px solid var(--line) !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: var(--primary) !important;
+}
+
+.policyWorkspace .policyCatalogHead {
+  min-height: 64px;
+}
+
+@media (max-width: 820px) {
+  .workspace.policyWorkspace {
+    padding: 18px 16px 28px;
+  }
+
+  .policyWorkspace .policyCatalogActions,
+  .policyWorkspace .policyBulkActions,
+  .policyWorkspace .policyToolbarButton,
+  .policyWorkspace .policyColumnsButton {
+    width: 100%;
+  }
+
+  .policyWorkspace .policyColumnsButton {
+    margin-left: 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Search page                                                        */
+/* ------------------------------------------------------------------ */
+
+.searchBar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.searchInputWrap {
+  flex: 1;
+  position: relative;
+}
+
+.searchInputIcon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding-left: 36px;
+  height: 44px;
+  font-size: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+  box-sizing: border-box;
+}
+.searchInput:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(15, 90, 110, 0.12);
+}
+
+.searchLoading {
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.searchLoadingText {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.searchEmptyPanel {
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.searchEmptyIcon {
+  margin-bottom: 12px;
+  opacity: 0.4;
+}
+
+.searchEmptyText {
+  margin: 0;
+  font-size: 14px;
+}
+
+.searchEmptyHint {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.searchResultCount {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.searchResultGrid {
+  display: grid;
+  gap: 0;
+}
+
+.searchResultHead {
+  display: grid;
+  grid-template-columns: 24px 1fr 120px 110px 90px;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+
+.searchResultRow {
+  display: grid;
+  grid-template-columns: 24px 1fr 120px 110px 90px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  min-height: 52px;
+}
+.searchResultRow:hover {
+  background: rgba(15, 90, 110, 0.04);
+}
+
+.searchResultIcon {
+  color: var(--muted);
+  display: flex;
+}
+
+.searchResultTitle {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.searchResultSub {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchResultMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.searchResultDash {
+  font-size: 11px;
+  color: var(--muted);
 }

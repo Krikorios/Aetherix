@@ -24,7 +24,8 @@
     "storage",
     "alarms",
     "scripting",
-    "activeTab"
+    "activeTab",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://claude.ai/*",
@@ -61,7 +62,8 @@
         "utils/classify.js",
         "utils/destinations.js",
         "utils/hash.js",
-        "utils/toast.js"
+        "utils/toast.js",
+        "utils/site_context.js"
       ],
       "matches": [
         "https://claude.ai/*",

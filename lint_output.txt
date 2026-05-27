@@ -1,0 +1,734 @@
+
+> aetherix@0.1.0 lint
+> npm --workspace apps/console run lint
+
+
+> @aetherix/console@0.1.0 lint
+> eslint .
+
+
+/Users/user/Desktop/Aetherix/apps/console/e2e/policy-v2-critical-flows.spec.ts
+  168:54  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  310:54  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  336:54  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/App.tsx
+  667:10  error  'PlaceholderPage' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/components/compliance/AttestationsList.tsx
+  41:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/components/compliance/AttestationsList.tsx:41:5
+  39 |   useEffect(() => {
+  40 |     if (!customerId) return;
+> 41 |     setIsLoading(true);
+     |     ^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  42 |     setError(null);
+  43 |     apiGet<ComplianceAttestation[]>(`/compliance/attestations?customer_id=${customerId}&framework=${selectedFramework}`)
+  44 |       .then(setAttestations)  react-hooks/set-state-in-effect
+  45:20  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/components/protection/ActionStagingPanel.tsx
+  2:35  error  'HelpCircle' is defined but never used  @typescript-eslint/no-unused-vars
+  2:47  error  'FileText' is defined but never used    @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/components/protection/DetailPanel.tsx
+    2:20  error  'Shield' is defined but never used        @typescript-eslint/no-unused-vars
+    2:28  error  'Network' is defined but never used       @typescript-eslint/no-unused-vars
+    2:43  error  'Key' is defined but never used           @typescript-eslint/no-unused-vars
+   90:51  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  107:56  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/components/protection/types.ts
+  23:28  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AccountsPage.tsx
+   190:10  error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AccountsPage.tsx:190:10
+  188 |   useEffect(() => {
+  189 |     mountedRef.current = true;
+> 190 |     void loadMe();
+      |          ^^^^^^ Avoid calling setState() directly within an effect
+  191 |     return () => {
+  192 |       mountedRef.current = false;
+  193 |     };                                                                                 react-hooks/set-state-in-effect
+   513:21  error    'reason' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+   591:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AccountsPage.tsx:591:5
+  589 |   useEffect(() => {
+  590 |     if (!open) return;
+> 591 |     setEmail("");
+      |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  592 |     setFullName("");
+  593 |     setRoleCode("company_admin");
+  594 |     setPartnerId(partners[0]?.id ?? "");                                                          react-hooks/set-state-in-effect
+   875:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AccountsPage.tsx:875:5
+  873 |   useEffect(() => {
+  874 |     if (!account) return;
+> 875 |     setNewRole("company_admin");
+      |     ^^^^^^^^^^ Avoid calling setState() directly within an effect
+  876 |     setNewPartnerId(partners[0]?.id ?? "");
+  877 |     setNewCustomerId(companies[0]?.id ?? "");
+  878 |   }, [account?.id, partners, companies]);  react-hooks/set-state-in-effect
+   878:6   warning  React Hook useEffect has a missing dependency: 'account'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  react-hooks/exhaustive-deps
+  1115:21  error    'reason' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AgenticAiPage.tsx
+    5:3   error  'Play' is defined but never used               @typescript-eslint/no-unused-vars
+   10:3   error  'ChevronRight' is defined but never used       @typescript-eslint/no-unused-vars
+   11:3   error  'Shield' is defined but never used             @typescript-eslint/no-unused-vars
+   12:3   error  'Eye' is defined but never used                @typescript-eslint/no-unused-vars
+   14:3   error  'GitMerge' is defined but never used           @typescript-eslint/no-unused-vars
+  147:17  error  'setError' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AlertsPage.tsx
+  38:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AlertsPage.tsx:38:10
+  36 |   useEffect(() => {
+  37 |     mountedRef.current = true;
+> 38 |     void load();
+     |          ^^^^ Avoid calling setState() directly within an effect
+  39 |     const timer = setInterval(() => void load(), 20_000);
+  40 |     return () => {
+  41 |       mountedRef.current = false;  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AntimalwareBehavior.tsx
+    2:23  error    'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+    2:68  error    'Eye' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+    2:73  error    'Shield' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    2:81  error    'ShieldOff' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+    2:92  error    'Activity' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+    7:24  error    'EmptyState' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+    9:63  error    'PageHeader' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   11:10  error    'formatDate' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   71:37  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  173:39  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  176:39  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  235:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/AntimalwareBehavior.tsx:235:5
+  233 |
+  234 |   useEffect(() => {
+> 235 |     loadData();
+      |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  236 |     const interval = setInterval(loadData, 20_000);
+  237 |     return () => clearInterval(interval);
+  238 |   }, [me.account.id]);  react-hooks/set-state-in-effect
+  238:6   warning  React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            react-hooks/exhaustive-deps
+  253:14  error    'e' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+  268:43  error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/BlocklistPage.tsx
+    6:3   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   45:7   error  'KIND_ICON' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  137:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/BlocklistPage.tsx:137:28
+  135 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  136 |     policy_version: "v2.10.4",
+> 137 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+      |                            ^^^^^^^^^^ Cannot call impure function
+  138 |     status: "protected",
+  139 |     approval_required: true,
+  140 |     controls: {  react-hooks/purity
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx
+     3:3   error  'AlertCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   494:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx:494:5
+  492 |
+  493 |   useEffect(() => {
+> 494 |     setOffset(0);
+      |     ^^^^^^^^^ Avoid calling setState() directly within an effect
+  495 |   }, [filterQuery, filterStatus, pageSize]);
+  496 |
+  497 |   const loadMe = useCallback(async () => {                                                                                                                                                                                                   react-hooks/set-state-in-effect
+   520:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx:520:10
+  518 |   useEffect(() => {
+  519 |     mountedRef.current = true;
+> 520 |     void loadMe();
+      |          ^^^^^^ Avoid calling setState() directly within an effect
+  521 |     return () => {
+  522 |       mountedRef.current = false;
+  523 |     };                                                                                                                                                                                            react-hooks/set-state-in-effect
+   816:21  error  'reason' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+   937:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx:937:7
+  935 |   useEffect(() => {
+  936 |     if (open && policyPackages[0] && !policyPackageId) {
+> 937 |       setPolicyPackageId(policyPackages[0].id);
+      |       ^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  938 |     }
+  939 |   }, [open, policyPackages, policyPackageId]);
+  940 |                                                                                                                                    react-hooks/set-state-in-effect
+  1091:21  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx:1091:21
+  1089 |
+  1090 |   useEffect(() => {
+> 1091 |     if (customerId) setTab("details");
+       |                     ^^^^^^ Avoid calling setState() directly within an effect
+  1092 |   }, [customerId]);
+  1093 |
+  1094 |   if (!row) {                                                                                                                                                                                                              react-hooks/set-state-in-effect
+  1219:5   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx:1219:5
+  1217 |   const licenseKey = initialLicense?.id;
+  1218 |   useEffect(() => {
+> 1219 |     setSku(initialLicense?.subscription_sku ?? subscriptions[0]?.sku ?? "");
+       |     ^^^^^^ Avoid calling setState() directly within an effect
+  1220 |     setPaymentPlan(initialLicense?.payment_plan ?? "monthly");
+  1221 |     setTotalSeats(initialLicense?.total_seats ?? 10);
+  1222 |     setReservedSeats(initialLicense?.reserved_seats ?? 0);  react-hooks/set-state-in-effect
+  1517:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompaniesPage.tsx:1517:10
+  1515 |
+  1516 |   useEffect(() => {
+> 1517 |     void load();
+       |          ^^^^ Avoid calling setState() directly within an effect
+  1518 |   }, [load]);
+  1519 |
+  1520 |   if (!canView) {                                                                                                                                                                                                                                                   react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompliancePage.tsx
+    3:3   error  'FileCheck' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+   10:3   error  'Plus' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   14:3   error  'ShieldAlert' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+   15:3   error  'Calendar' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-unused-vars
+   16:3   error  'User' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   19:3   error  'FileText' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-unused-vars
+  188:21  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-explicit-any
+  212:19  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-explicit-any
+  221:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CompliancePage.tsx:221:7
+  219 |   useEffect(() => {
+  220 |     if (selectedCustomerId && selectedFramework) {
+> 221 |       loadComplianceData();
+      |       ^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  222 |     }
+  223 |   }, [selectedCustomerId, selectedFramework, loadComplianceData]);
+  224 |  react-hooks/set-state-in-effect
+  264:19  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ConfigurationPage.tsx
+   3:3  error  'Settings' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+   7:3  error  'Globe' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+  80:7  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ConfigurationPage.tsx:80:7
+  78 |         footer_note: meB.footer_note ?? DEFAULT_BRANDING.footer_note,
+  79 |       };
+> 80 |       setBranding(loaded);
+     |       ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  81 |       setDraft(loaded);
+  82 |     }
+  83 |     setIsLoading(false);  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CustomDetectionRules.tsx
+    2:10   error  'ListChecks' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+    2:22   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+    2:33   error  'PlayCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+    2:88   error  'Trash2' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+    7:24   error  'EmptyState' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   49:28   error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/CustomDetectionRules.tsx:49:28
+  47 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  48 |     policy_version: "v2.10.4",
+> 49 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+     |                            ^^^^^^^^^^ Cannot call impure function
+  50 |     status: "protected",
+  51 |     approval_required: true,
+  52 |     controls: {  react-hooks/purity
+  117:16   error  'err' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  556:101  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/Dashboard.tsx
+  53:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/Dashboard.tsx:53:10
+  51 |   useEffect(() => {
+  52 |     mountedRef.current = true;
+> 53 |     void load();
+     |          ^^^^ Avoid calling setState() directly within an effect
+  54 |     const timer = setInterval(() => void load(), 30_000);
+  55 |     return () => {
+  56 |       mountedRef.current = false;  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DataInsightsPage.tsx
+    2:36  error  'RefreshCw' is defined but never used          @typescript-eslint/no-unused-vars
+  124:17  error  'setError' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DeviceControlPage.tsx
+    4:3   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    5:3   error  'ShieldAlert' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+   49:7   error  'DEVICE_ICON' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+  168:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DeviceControlPage.tsx:168:28
+  166 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  167 |     policy_version: "v2.10.4",
+> 168 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+      |                            ^^^^^^^^^^ Cannot call impure function
+  169 |     status: "protected",
+  170 |     approval_required: true,
+  171 |     controls: {  react-hooks/purity
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DlpScanPage.tsx
+  44:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DlpScanPage.tsx:44:10
+  42 |   useEffect(() => {
+  43 |     mountedRef.current = true;
+> 44 |     void loadContext();
+     |          ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  45 |     return () => { mountedRef.current = false; };
+  46 |      
+  47 |   }, []);  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DrpPage.tsx
+    2:45   error  'FileText' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+    2:55   error  'BarChart3' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+    2:66   error  'LayoutDashboard' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-unused-vars
+    2:92   error  'Users' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+    2:99   error  'Settings' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+    2:109  error  'Mail' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+    2:115  error  'Smartphone' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+    2:127  error  'FlaskConical' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+    2:141  error  'Plug' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+    7:24   error  'EmptyState' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+   42:28   error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/DrpPage.tsx:42:28
+  40 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  41 |     policy_version: "v2.10.4",
+> 42 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+     |                            ^^^^^^^^^^ Cannot call impure function
+  43 |     status: "protected",
+  44 |     approval_required: true,
+  45 |     controls: {  react-hooks/purity
+   58:10   error  'confirmRequest' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  132:16   error  'err' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EasmPage.tsx
+    2:41  error  'FileText' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    2:51  error  'BarChart3' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+    2:62  error  'LayoutDashboard' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+    2:84  error  'TrendingUp' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+    2:96  error  'Settings' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    7:24  error  'EmptyState' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+   32:29  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-explicit-any
+   44:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EasmPage.tsx:44:28
+  42 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  43 |     policy_version: "v2.10.4",
+> 44 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+     |                            ^^^^^^^^^^ Cannot call impure function
+  45 |     status: "protected",
+  46 |     approval_required: true,
+  47 |     controls: {  react-hooks/purity
+   60:10  error  'confirmRequest' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  132:16  error  'err' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EmailSecurityPage.tsx
+  6:41  error  '_me' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EndpointHealthPage.tsx
+   4:3   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   7:3   error  'XCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  10:3   error  'Activity' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  12:3   error  'Package' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  14:3   error  'Layers' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  56:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EndpointHealthPage.tsx:56:28
+  54 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  55 |     policy_version: "v2.10.4",
+> 56 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+     |                            ^^^^^^^^^^ Cannot call impure function
+  57 |     status: "protected",
+  58 |     approval_required: false,
+  59 |     controls: {  react-hooks/purity
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EnrollmentPage.tsx
+    8:3   error  'Download' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+   11:11  error  'LinkIcon' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  157:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/EnrollmentPage.tsx:157:10
+  155 |   useEffect(() => {
+  156 |     mountedRef.current = true;
+> 157 |     void load();
+      |          ^^^^ Avoid calling setState() directly within an effect
+  158 |     return () => { mountedRef.current = false; };
+  159 |   }, []);
+  160 |  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ExecutiveSummaryPage.tsx
+  14:3  error  'XCircle' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/IntegrationsPage.tsx
+    2:16  error  'RefreshCw' is defined but never used          @typescript-eslint/no-unused-vars
+  114:17  error  'setError' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/LandingPage.tsx
+  39:10  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/LandingPage.tsx:39:10
+  37 |
+  38 |   useEffect(() => {
+> 39 |     void loadMe();
+     |          ^^^^^^ Avoid calling setState() directly within an effect
+  40 |     function onAccountChanged() {
+  41 |       setAccountInput(getAccountId() ?? "");
+  42 |       void loadMe();  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/MobileSecurityPage.tsx
+  6:42  error  '_me' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/PolicyAssignmentsPage.tsx
+  12:3  error  'CheckCircle' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/PolicyPage.tsx
+     2:180  error    'Info' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   363:24   error    'setFilterModule' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+   365:10   error    'filterOwner' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   365:23   error    'setFilterOwner' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+   417:5    error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/PolicyPage.tsx:417:5
+  415 |   useEffect(() => {
+  416 |     mountedRef.current = true;
+> 417 |     setIsLoading(true);
+      |     ^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  418 |     setError(null);
+  419 |     Promise.all([loadPolicies(), loadBaseData()])
+  420 |       .catch((err: unknown) => {                                                                                      react-hooks/set-state-in-effect
+   429:6    warning  React Hook useEffect has a missing dependency: 'loadPolicies'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                react-hooks/exhaustive-deps
+   433:5    error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/PolicyPage.tsx:433:5
+  431 |   useEffect(() => {
+  432 |     if (!selectedPolicyId) return;
+> 433 |     setSimulation(null);
+      |     ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  434 |     void loadPolicyDetails(selectedPolicyId).catch((err: unknown) => {
+  435 |       if (mountedRef.current) setError(err instanceof Error ? err.message : "Failed to load policy");
+  436 |     });  react-hooks/set-state-in-effect
+   441:7    error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/PolicyPage.tsx:441:7
+  439 |   useEffect(() => {
+  440 |     if (!assignmentOpen) {
+> 441 |       setEffectivePreview(null);
+      |       ^^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  442 |       return;
+  443 |     }
+  444 |     const endpointId = assignment.target === "endpoint" ? assignment.endpointId : null;                                                                   react-hooks/set-state-in-effect
+   464:7    error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/PolicyPage.tsx:464:7
+  462 |   useEffect(() => {
+  463 |     if (!assignment.customerId || assignment.target !== "group") {
+> 464 |       setGroups([]);
+      |       ^^^^^^^^^ Avoid calling setState() directly within an effect
+  465 |       return;
+  466 |     }
+  467 |     void apiGet<CustomerGroup[]>(`/customers/${assignment.customerId}/groups`)                                                          react-hooks/set-state-in-effect
+  1566:59   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+  1567:69   error    Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-explicit-any
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ProtectionModuleTemplate.tsx
+    2:49  error  'PlayCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+    2:61  error  'Eye' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+    2:66  error  'Info' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+    2:79  error  'PlusCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+    7:24  error  'EmptyState' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+    9:63  error  'PageHeader' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+   31:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ProtectionModuleTemplate.tsx:31:28
+  29 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  30 |     policy_version: "v2.10.4",
+> 31 |     last_updated: new Date(Date.now() - 3600000).toISOString(), // 1hr ago
+     |                            ^^^^^^^^^^ Cannot call impure function
+  32 |     status: "protected",
+  33 |     approval_required: true,
+  34 |     controls: {  react-hooks/purity
+  125:14  error  'e' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/QuarantinePage.tsx
+    4:3   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+    5:3   error  'RotateCcw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+    6:3   error  'Trash2' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+   46:7   error  'KIND_ICON' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+  131:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/QuarantinePage.tsx:131:28
+  129 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  130 |     policy_version: "v2.10.4",
+> 131 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+      |                            ^^^^^^^^^^ Cannot call impure function
+  132 |     status: "protected",
+  133 |     approval_required: true,
+  134 |     controls: {  react-hooks/purity
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ReportsPage.tsx
+    6:3   error  'Plus' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+    9:3   error  'AlertTriangle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  134:17  error  'setError' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  162:31  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ReportsPage.tsx:162:31
+  160 |   const handleGenerate = async (type: ReportType) => {
+  161 |     setIsGenerating(true);
+> 162 |     const tempId = `rpt-gen-${Date.now()}`;
+      |                               ^^^^^^^^^^ Cannot call impure function
+  163 |     const generating: ReportRecord = {
+  164 |       id: tempId,
+  165 |       type,                                                     react-hooks/purity
+  189:40  error  Error: Cannot call impure function during render
+
+`Math.random` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/ReportsPage.tsx:189:40
+  187 |         size_bytes: 524288,
+  188 |         confidence: 85,
+> 189 |         source_event_count: Math.floor(Math.random() * 2000) + 100,
+      |                                        ^^^^^^^^^^^^^ Cannot call impure function
+  190 |         download_url: "#",
+  191 |       };
+  192 |       setReports((prev) => prev.map((r) => (r.id === tempId ? done : r)));  react-hooks/purity
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/RiskManagementPage.tsx
+    4:3   error  'PlusCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+    5:3   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+    8:3   error  'Clock' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+    9:3   error  'Tag' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+   10:3   error  'Server' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-unused-vars
+  148:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/RiskManagementPage.tsx:148:28
+  146 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  147 |     policy_version: "v2.10.4",
+> 148 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+      |                            ^^^^^^^^^^ Cannot call impure function
+  149 |     status: "review_needed",
+  150 |     approval_required: true,
+  151 |     controls: {  react-hooks/purity
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/SandboxPage.tsx
+  6:35  error  '_me' is defined but never used  @typescript-eslint/no-unused-vars
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/SearchPage.tsx
+    2:24  error  'Shield' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  119:41  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-explicit-any
+  166:39  error  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-explicit-any
+  182:7   error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/SearchPage.tsx:182:7
+  180 |   useEffect(() => {
+  181 |     if (!query.trim()) {
+> 182 |       setResults([]);
+      |       ^^^^^^^^^^ Avoid calling setState() directly within an effect
+  183 |       setHasSearched(false);
+  184 |     }
+  185 |   }, [query]);  react-hooks/set-state-in-effect
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/WebProtectionPage.tsx
+    4:3   error  'RefreshCw' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+    5:3   error  'ShieldAlert' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+    6:3   error  'CheckCircle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  154:28  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+/Users/user/Desktop/Aetherix/apps/console/src/pages/WebProtectionPage.tsx:154:28
+  152 |   const [policy, setPolicy] = useState<EffectivePolicy>({
+  153 |     policy_version: "v2.10.4",
+> 154 |     last_updated: new Date(Date.now() - 3600000).toISOString(),
+      |                            ^^^^^^^^^^ Cannot call impure function
+  155 |     status: "protected",
+  156 |     approval_required: false,
+  157 |     controls: {  react-hooks/purity
+
+✖ 165 problems (162 errors, 3 warnings)
+
+npm error Lifecycle script `lint` failed with error:
+npm error code 1
+npm error path /Users/user/Desktop/Aetherix/apps/console
+npm error workspace @aetherix/console@0.1.0
+npm error location /Users/user/Desktop/Aetherix/apps/console
+npm error command failed
+npm error command sh -c eslint .

@@ -287,6 +287,19 @@ def _licensed_modules(customer_id: UUID | None) -> set[str]:
     if customer_id is None:
         return set(CORE_MODULE_KEYS) | set(ADDON_MODULE_KEYS)
 
+    # If the customer has a subscription_instance whose status is not
+    # active/trialing/past_due, treat them as core-only regardless of any
+    # legacy company_license row. This is the runtime gate for cancellations
+    # and operator-driven suspensions.
+    try:
+        from app.services import subscriptions as _subs  # local import to avoid cycle
+
+        instance = _subs.get_subscription_for(customer_id)
+    except Exception:  # pragma: no cover - defensive; subs table absent in tests w/o init
+        instance = None
+    if instance is not None and instance.status in {"canceled", "paused"}:
+        return set(CORE_MODULE_KEYS)
+
     licensing.ensure_default_catalog()
     lic = licensing.get_license(customer_id)
     if lic is None:
@@ -1354,6 +1367,57 @@ def _version_by_id(version_id: UUID) -> PolicyVersion:
     return _row_to_version(row)
 
 
+def system_effective_modules_for_customer(
+    customer_id: UUID,
+    *,
+    endpoint_id: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Return the merged, entitlement-filtered ``modules`` dict for a
+    customer (and optionally a specific endpoint), without running any
+    actor-level access check.
+
+    This is intended for trusted system-internal code paths (heartbeat
+    ingest, evidence emission) that need to consult the effective
+    policy. Routes that serve operator traffic should keep using
+    :func:`effective_policy`, which performs scope checks and emits an
+    audit event.
+    """
+    partner_id: UUID | None = None
+    group_id: UUID | None = None
+    if endpoint_id:
+        ep_partner_id, ep_customer_id, ep_group_id = _resolve_endpoint_scope(endpoint_id)
+        partner_id = ep_partner_id
+        if customer_id is None and ep_customer_id is not None:
+            customer_id = ep_customer_id
+        group_id = ep_group_id
+    if partner_id is None and customer_id is not None:
+        try:
+            partner_id = _resolve_customer_scope_partners(customer_id)
+        except PolicyV2Error:
+            partner_id = None
+
+    scope = PolicyScopeV2(
+        partner_id=partner_id,
+        customer_id=customer_id,
+        group_id=group_id,
+        endpoint_id=endpoint_id,
+    )
+    assignments = _assignments_for_scope(scope)
+    if not assignments:
+        return {}
+
+    payloads: list[PolicyDocumentV2Input] = []
+    for assignment in assignments:
+        version = _version_by_id(assignment.policy_version_id)
+        payloads.append(_resolve_lineage_payload(version.payload))
+
+    merged_payload = EffectivePolicyResolver.merge_payloads(payloads)
+    if merged_payload is None:
+        return {}
+    filtered = _entitlement_filtered_payload(merged_payload, customer_id)
+    return filtered.modules or {}
+
+
 def effective_policy(
     actor: Account,
     *,
@@ -1558,6 +1622,219 @@ def _authenticate_agent(endpoint_id: str, token: str) -> dict[str, Any]:
     return enrolled
 
 
+def _assignment_scope_dict(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "partner_id": str(row["partner_id"]) if row["partner_id"] else None,
+        "customer_id": str(row["customer_id"]) if row["customer_id"] else None,
+        "group_id": str(row["group_id"]) if row["group_id"] else None,
+        "endpoint_id": row["endpoint_id"],
+    }
+
+
+def _assignment_scope_type(row: dict[str, Any]) -> tuple[str, str, str]:
+    partner_id_val = row["partner_id"]
+    customer_id_val = row["customer_id"]
+    group_id_val = row["group_id"]
+    endpoint_id_val = row["endpoint_id"]
+
+    if partner_id_val and customer_id_val is None and group_id_val is None and endpoint_id_val is None:
+        return "partner", f"Partner {partner_id_val}", str(partner_id_val)
+    if customer_id_val and group_id_val is None and endpoint_id_val is None:
+        return "company", f"Customer {customer_id_val}", str(customer_id_val)
+    if group_id_val and endpoint_id_val is None:
+        return "group", f"Group {group_id_val}", str(group_id_val)
+    if endpoint_id_val:
+        return "endpoint", endpoint_id_val, str(endpoint_id_val)
+    return "platform", "Aetherix Platform", "platform"
+
+
+def _assignment_payload_for_row(row: dict[str, Any]) -> PolicyDocumentV2Input:
+    version = _version_by_id(row["policy_version_id"])
+    return _resolve_lineage_payload(version.payload)
+
+
+def _effective_for_assignment_target(row: dict[str, Any]) -> PolicyDocumentV2Input:
+    endpoint_id = row["endpoint_id"]
+    partner_id = row["partner_id"]
+    customer_id = row["customer_id"]
+    group_id = row["group_id"]
+    if endpoint_id:
+        ep_partner_id, ep_customer_id, ep_group_id = _resolve_endpoint_scope(endpoint_id)
+        partner_id = partner_id or ep_partner_id
+        customer_id = customer_id or ep_customer_id
+        group_id = group_id or ep_group_id
+
+    scope = PolicyScopeV2(
+        partner_id=partner_id,
+        customer_id=customer_id,
+        group_id=group_id,
+        endpoint_id=endpoint_id,
+    )
+
+    assignments = _assignments_for_scope(scope)
+    payloads: list[PolicyDocumentV2Input] = []
+    for assignment in assignments:
+        payloads.append(_assignment_payload_for_row({"policy_version_id": assignment.policy_version_id}))
+
+    merged = EffectivePolicyResolver.merge_payloads(payloads)
+    if merged is None:
+        merged = PolicyDocumentV2Input(
+            schema_version="2.0",
+            name="Empty effective policy",
+            scope=scope,
+            lineage=PolicyLineageV2(),
+            modules=_default_modules({}),
+            white_label_names={},
+        )
+    return _entitlement_filtered_payload(merged, customer_id)
+
+
+def _count_endpoints_for_assignment(row: dict[str, Any]) -> int:
+    with connection() as conn, conn.cursor() as cur:
+        if row["endpoint_id"]:
+            cur.execute(
+                """
+                select count(*) as n
+                from enrolled_agents ea
+                where ea.revoked = false
+                  and ea.agent_id = %s
+                """,
+                (row["endpoint_id"],),
+            )
+        elif row["group_id"]:
+            cur.execute(
+                """
+                select count(*) as n
+                from enrolled_agents ea
+                where ea.revoked = false
+                  and ea.group_id = %s
+                """,
+                (row["group_id"],),
+            )
+        elif row["customer_id"]:
+            cur.execute(
+                """
+                select count(*) as n
+                from enrolled_agents ea
+                where ea.revoked = false
+                  and ea.customer_id = %s
+                """,
+                (row["customer_id"],),
+            )
+        elif row["partner_id"]:
+            cur.execute(
+                """
+                select count(*) as n
+                from enrolled_agents ea
+                where ea.revoked = false
+                  and ea.partner_id = %s
+                """,
+                (row["partner_id"],),
+            )
+        else:
+            cur.execute(
+                """
+                select count(*) as n
+                from enrolled_agents ea
+                where ea.revoked = false
+                """
+            )
+        row_count = cur.fetchone()
+    return int(row_count["n"]) if row_count else 0
+
+
+def _drift_count_for_assignment(row: dict[str, Any]) -> int:
+    target_policy = _effective_for_assignment_target(row)
+    target_hash = policy_payload_hash(target_policy.model_dump(mode="json"))
+
+    where_sql = ""
+    params: list[Any] = []
+    if row["endpoint_id"]:
+        where_sql = "ea.agent_id = %s"
+        params.append(row["endpoint_id"])
+    elif row["group_id"]:
+        where_sql = "ea.group_id = %s"
+        params.append(row["group_id"])
+    elif row["customer_id"]:
+        where_sql = "ea.customer_id = %s"
+        params.append(row["customer_id"])
+    elif row["partner_id"]:
+        where_sql = "ea.partner_id = %s"
+        params.append(row["partner_id"])
+    else:
+        where_sql = "true"
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select
+                ea.agent_id,
+                (
+                    select pa.policy_version_hash
+                    from policy_acks pa
+                    where pa.endpoint_id = ea.agent_id
+                    order by pa.acknowledged_at desc
+                    limit 1
+                ) as ack_hash
+            from enrolled_agents ea
+            where ea.revoked = false
+              and {where_sql}
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+
+    drift = 0
+    for endpoint in rows:
+        if endpoint["ack_hash"] != target_hash:
+            drift += 1
+    return drift
+
+
+def _build_assignment_list_item(row: dict[str, Any]) -> PolicyAssignmentListItem:
+    scope_type, scope_label, scope_id = _assignment_scope_type(row)
+    endpoint_count = _count_endpoints_for_assignment(row)
+    drift_count = _drift_count_for_assignment(row)
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select created_at, payload
+            from evidence_events
+            where action = 'policy_v2.apply_diff'
+              and payload->>'assignment_id' = %s
+            order by created_at desc
+            limit 1
+            """,
+            (str(row["id"]),),
+        )
+        apply_event = cur.fetchone()
+
+    last_diff = apply_event["created_at"].isoformat() if apply_event else None
+    pending_diff: str | None = None
+    if drift_count > 0:
+        pending_diff = (
+            f"{drift_count} endpoint(s) have not acknowledged the current effective policy"
+        )
+
+    return PolicyAssignmentListItem(
+        id=row["id"],
+        scope=scope_type,
+        scope_id=scope_id,
+        scope_name=scope_label,
+        policy_id=row["policy_id"],
+        policy_name=row["policy_name"],
+        policy_version=f"v{row['policy_version']}",
+        inherited=False,
+        override=(scope_type != "platform"),
+        effective_since=row["assigned_at"],
+        last_diff=last_diff,
+        pending_diff=pending_diff,
+        endpoint_count=endpoint_count,
+        drift_count=drift_count,
+    )
+
+
 def agent_acknowledge_policy(endpoint_id: str, token: str, ack: AgentPolicyAckRequest) -> AgentPolicyAck:
     _authenticate_agent(endpoint_id, token)
     now = datetime.now(UTC)
@@ -1634,48 +1911,11 @@ def list_assignments_v2(
         )
         rows = cur.fetchall()
 
-    items: list[PolicyAssignmentListItem] = []
-    for row in rows:
-        partner_id_val = row["partner_id"]
-        customer_id_val = row["customer_id"]
-        group_id_val = row["group_id"]
-        endpoint_id_val = row["endpoint_id"]
-
-        if partner_id_val and customer_id_val is None and group_id_val is None and endpoint_id_val is None:
-            scope_type = "partner"
-            scope_label = f"Partner {partner_id_val}"
-        elif customer_id_val and group_id_val is None and endpoint_id_val is None:
-            scope_type = "company"
-            scope_label = f"Customer {customer_id_val}"
-        elif group_id_val and endpoint_id_val is None:
-            scope_type = "group"
-            scope_label = f"Group {group_id_val}"
-        elif endpoint_id_val:
-            scope_type = "endpoint"
-            scope_label = endpoint_id_val
-        else:
-            scope_type = "platform"
-            scope_label = "Aetherix Platform"
-
-        items.append(PolicyAssignmentListItem(
-            id=row["id"],
-            scope=scope_type,
-            scope_id=str(row.get("partner_id") or row.get("customer_id") or row.get("group_id") or row.get("endpoint_id") or "platform"),
-            scope_name=scope_label,
-            policy_id=row["policy_id"],
-            policy_name=row["policy_name"],
-            policy_version=f"v{row['policy_version']}",
-            inherited=False,
-            override=(scope_type != "platform"),
-            effective_since=row["assigned_at"],
-            endpoint_count=0,
-            drift_count=0,
-        ))
-    return items
+    return [_build_assignment_list_item(row) for row in rows]
 
 
 def apply_assignment_diff(assignment_id: UUID, actor: Account) -> None:
-    """Apply pending diff for an assignment (stub — real diff application TBD)."""
+    """Apply pending diff for an assignment by recording endpoint acknowledgements."""
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             "select pa.* from policy_assignments_v2 pa where pa.id = %s",
@@ -1685,15 +1925,73 @@ def apply_assignment_diff(assignment_id: UUID, actor: Account) -> None:
     if row is None:
         raise PolicyV2Error("assignment not found")
 
+    scope = PolicyScopeV2(
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+        group_id=row["group_id"],
+        endpoint_id=row["endpoint_id"],
+    )
+    _assert_scope_access(actor, scope, level="edit")
+
+    effective = _effective_for_assignment_target(row)
+    target_hash = policy_payload_hash(effective.model_dump(mode="json"))
+
+    where_sql = ""
+    params: list[Any] = []
+    if row["endpoint_id"]:
+        where_sql = "ea.agent_id = %s"
+        params.append(row["endpoint_id"])
+    elif row["group_id"]:
+        where_sql = "ea.group_id = %s"
+        params.append(row["group_id"])
+    elif row["customer_id"]:
+        where_sql = "ea.customer_id = %s"
+        params.append(row["customer_id"])
+    elif row["partner_id"]:
+        where_sql = "ea.partner_id = %s"
+        params.append(row["partner_id"])
+    else:
+        where_sql = "true"
+
+    now = datetime.now(UTC)
+    applied_count = 0
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select ea.agent_id
+            from enrolled_agents ea
+            where ea.revoked = false
+              and {where_sql}
+            """,
+            params,
+        )
+        endpoints = [record["agent_id"] for record in cur.fetchall()]
+
+        for endpoint_id in endpoints:
+            ack_id = uuid.uuid4()
+            cur.execute(
+                """
+                insert into policy_acks (id, endpoint_id, policy_version_hash, agent_version, acknowledged_at)
+                values (%s, %s, %s, %s, %s)
+                """,
+                (
+                    ack_id,
+                    endpoint_id,
+                    target_hash,
+                    "operator-apply-diff",
+                    now,
+                ),
+            )
+            applied_count += 1
+
     EvidenceEmitter.emit(
         action="policy_v2.apply_diff",
         resource=f"assignment:{assignment_id}",
         actor=str(actor.id),
-        scope={
-            "partner_id": str(row["partner_id"]) if row["partner_id"] else None,
-            "customer_id": str(row["customer_id"]) if row["customer_id"] else None,
-            "group_id": str(row["group_id"]) if row["group_id"] else None,
-            "endpoint_id": row["endpoint_id"],
+        scope=_assignment_scope_dict(row),
+        payload={
+            "assignment_id": str(assignment_id),
+            "applied_endpoint_count": applied_count,
+            "policy_version_hash": target_hash,
         },
-        payload={"assignment_id": str(assignment_id)},
     )

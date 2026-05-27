@@ -1,21 +1,21 @@
-mod bridge;
-mod dlp;
-mod evidence;
-mod policy;
+use aetherix_agent::edr::ioc;
+use aetherix_agent::edr::response as edr_response;
+use aetherix_agent::{bridge, cis, dlp, dlp_client, fim, interceptors, inventory, policy};
 
 use anyhow::Context;
-use arboard::Clipboard;
 use chrono::Utc;
+use dlp_client::DlpClient;
+use interceptors::{ClipboardInterceptor, FileUploadInterceptor, SystemClipboard, UsbInterceptor};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::process::Command;
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::process::Command;
 use sysinfo::System;
 
 const DEFAULT_AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,6 +34,22 @@ struct Heartbeat {
     #[serde(skip_serializing_if = "Option::is_none")]
     nonce: Option<u64>,
     signals: AgentSignals,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inventory: Option<inventory::SystemInventory>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    fim_events: Vec<fim::FimEvent>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    edr_events: Vec<aetherix_agent::edr::EdrEvent>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    cis_results: Vec<cis::CisCheckResult>,
+}
+
+struct HeartbeatContext<'a> {
+    client: &'a reqwest::blocking::Client,
+    api_url: &'a str,
+    credentials: &'a AgentCredentials,
+    hostname: &'a str,
+    os: &'a str,
 }
 
 #[derive(Serialize)]
@@ -65,7 +81,7 @@ struct EnrollmentResponse {
     policy_package_id: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 struct AgentCredentials {
     agent_id: String,
     agent_secret: String,
@@ -76,6 +92,23 @@ struct AgentCredentials {
     group_id: Option<String>,
     #[serde(default)]
     policy_package_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ModuleAction {
+    id: String,
+    #[serde(rename = "target_id")]
+    #[allow(dead_code)]
+    target_id: String,
+    action: String,
+    #[serde(default)]
+    payload: Option<serde_json::Value>,
+    #[allow(dead_code)]
+    status: String,
+    #[allow(dead_code)]
+    approval_required: bool,
+    #[serde(default)]
+    evidence_controls: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -140,13 +173,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let policy_version = if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
+    let mut active_edr_policy = if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
+        policy::fetch_effective_policy(&client, api_url, &credentials.agent_id, &credentials.agent_secret).ok()
+    } else {
+        None
+    };
+
+    let (policy_version, mut yara_rule_store) = if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
         let policy = fetch_policy_package(&client, api_url, &credentials.agent_id)?;
         save_policy_package(&policy_path(), &policy)?;
-        format!("{}-v{}", policy.id, policy.version)
+        let store = aetherix_agent::edr::yara_scan::YaraRuleStore::load_from_payload(&policy.payload)?;
+        (format!("{}-v{}", policy.id, policy.version), store)
     } else {
-        env_or("AETHERIX_POLICY_VERSION", "policy-local")
+        (env_or("AETHERIX_POLICY_VERSION", "policy-local"), aetherix_agent::edr::yara_scan::YaraRuleStore::new())
     };
+
+    // Seed built-in EICAR test rule if policy provided no YARA rules
+    if !yara_rule_store.is_loaded() {
+        let eicar_source = r#"rule EICAR_test {
+            meta:
+                description = "Aetherix built-in EICAR test detection"
+                severity = "high"
+            strings:
+                $eicar = "X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+            condition:
+                $eicar
+        }"#;
+        if let Err(e) = yara_rule_store.load(eicar_source) {
+            eprintln!("aetherix-agent: failed to load built-in EICAR rule: {e}");
+        } else {
+            println!("aetherix-agent: loaded built-in EICAR test rule (no policy YARA rules)");
+        }
+    }
 
     let (agent_id, signature, nonce) = if let Some(credentials) = credentials.as_mut() {
         let nonce = reserve_next_nonce(credentials, &credentials_path)?;
@@ -169,15 +227,96 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
 
+    // Collect System Inventory
+    let mut system_for_inventory = System::new_all();
+    let inventory = Some(inventory::collect_inventory(&mut system_for_inventory));
+
+    // Run FIM baseline scan (uses real-time notify watcher for ongoing events)
+    let watched_dirs = vec![
+        PathBuf::from("/etc/aetherix"),
+        PathBuf::from("/var/aetherix"),
+        PathBuf::from("C:\\ProgramData\\Aetherix"),
+    ];
+    let mut fim_monitor = fim::FileIntegrityMonitor::new(watched_dirs.clone());
+    let fim_events = fim_monitor.baseline_scan();
+
+    // Initialize ransomware canary files in watched directories
+    for dir in &watched_dirs {
+        if dir.exists() && dir.is_dir() {
+            let canary_path = dir.join("aetherix_canary.txt");
+            if !canary_path.exists() {
+                if let Err(e) = std::fs::write(&canary_path, "Aetherix Ransomware Canary - DO NOT DELETE") {
+                    eprintln!("aetherix-agent: failed to write canary in {:?}: {e}", dir);
+                }
+            }
+        }
+    }
+
+    // Trigger YARA scan on baseline-detected files
+    let mut edr_events = Vec::new();
+    for event in &fim_events {
+        if event.event_type == fim::FimEventType::Added || event.event_type == fim::FimEventType::Modified {
+            let mut yara_events = aetherix_agent::edr::yara_scan::scan_path(&event.file_path, &yara_rule_store, &policy_version);
+            apply_policy_to_edr_events(&mut yara_events, active_edr_policy.as_ref());
+            for yara_event in &yara_events {
+                println!("YARA Match! File: {} matched rule: {}", event.file_path, yara_event.rule_id);
+            }
+            edr_events.extend(yara_events);
+        }
+    }
+
+    // Run IOC matching on baseline FIM file hashes
+    for event in &fim_events {
+        if let Some(ref sha256) = event.sha256_hash {
+            if let Some(mut ioc_event) = ioc::match_indicator(&ioc::Indicator::Sha256(sha256.clone()), &policy_version) {
+                apply_policy_to_edr_events(std::slice::from_mut(&mut ioc_event), active_edr_policy.as_ref());
+                println!("IOC Match! File: {} matched hash: {}", event.file_path, sha256);
+                edr_events.push(ioc_event);
+            }
+        }
+    }
+
+    // Run EDR Process Tree (spawns a real-time watcher thread)
+    let mut process_monitor = aetherix_agent::edr::process_tree::ProcessMonitor::new();
+    let proc_events = process_monitor.scan(&policy_version);
+
+    // Run IOC matching on newly detected process executables
+    for proc_event in &proc_events {
+        if let Some(ref proc_path) = proc_event.process_path {
+            if let Some(hash) = aetherix_agent::edr::yara_scan::compute_sha256_for_path(proc_path) {
+                if let Some(mut ioc_event) = ioc::match_indicator(&ioc::Indicator::Sha256(hash), &policy_version) {
+                    apply_policy_to_edr_events(std::slice::from_mut(&mut ioc_event), active_edr_policy.as_ref());
+                    println!("IOC Match! Process: {} matched hash", proc_path);
+                    edr_events.push(ioc_event);
+                }
+            }
+        }
+    }
+
+    let mut proc_events = proc_events;
+    apply_policy_to_edr_events(&mut proc_events, active_edr_policy.as_ref());
+    edr_events.extend(proc_events);
+
+    let quarantine_secret = credentials.as_ref().map(|creds| creds.agent_secret.as_bytes()).unwrap_or(b"default-agent-key");
+    execute_edr_response_actions(&mut edr_events, quarantine_secret);
+
+    // Run CIS Benchmarking Scan
+    let cis_scanner = cis::CisScanner::new();
+    let cis_results = cis_scanner.scan();
+
     let heartbeat = Heartbeat {
         signature,
         nonce,
         signals: collect_signals(),
-        agent_id,
-        hostname,
-        os,
+        inventory,
+        fim_events,
+        edr_events,
+        cis_results,
+        agent_id: agent_id.clone(),
+        hostname: hostname.clone(),
+        os: os.clone(),
         collected_at,
-        policy_version,
+        policy_version: policy_version.clone(),
         agent_version: DEFAULT_AGENT_VERSION.to_string(),
     };
 
@@ -192,14 +331,119 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{}", serde_json::to_string_pretty(&heartbeat)?);
 
+    // Spawn EDR/FIM real-time monitoring and heartbeat reporting thread
+    let fim_monitor_arc = Arc::new(Mutex::new(fim_monitor));
+    let process_monitor_arc = Arc::new(Mutex::new(process_monitor));
+    let yara_rule_store_arc = Arc::new(yara_rule_store);
+    
+    let credentials_clone = credentials.clone();
+    let api_url_clone = api_url.clone();
+    let client_clone = client.clone();
+    let policy_version_clone = policy_version.clone();
+    let active_edr_policy_for_shared = active_edr_policy.clone();
+    let edr_policy_shared = Arc::new(RwLock::new(active_edr_policy.take()));
+    let edr_policy_loop = edr_policy_shared.clone();
+    let agent_id_clone = agent_id.clone();
+    let hostname_clone = hostname.clone();
+    let os_clone = os.clone();
+    let shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>> =
+        Arc::new(RwLock::new(None));
+    if let Some(policy) = active_edr_policy_for_shared.as_ref() {
+        if let Ok(mut guard) = shared_policy.write() {
+            *guard = Some(policy.clone());
+        }
+    }
+
+    thread::Builder::new()
+        .name("aetherix-edr-heartbeat-loop".to_string())
+        .spawn(move || {
+            let delay = Duration::from_secs(5);
+            loop {
+                thread::sleep(delay);
+
+                let mut fim_events = Vec::new();
+                if let Ok(mut fim) = fim_monitor_arc.lock() {
+                    fim_events = fim.drain_events();
+                }
+
+                let mut edr_events = Vec::new();
+
+                // 1. Run YARA scan and ransomware canary/entropy/mass-write checks on FIM events
+                for event in &fim_events {
+                    if event.event_type == fim::FimEventType::Added || event.event_type == fim::FimEventType::Modified {
+                        // Dynamic YARA scan
+                        let mut yara_matches = aetherix_agent::edr::yara_scan::scan_path(&event.file_path, &yara_rule_store_arc, &policy_version_clone);
+                        let policy_guard = edr_policy_loop.read().ok().and_then(|guard| guard.clone());
+                        apply_policy_to_edr_events(&mut yara_matches, policy_guard.as_ref());
+                        for y_match in yara_matches {
+                            println!("Dynamic YARA Match! File: {} matched rule: {}", event.file_path, y_match.rule_id);
+                            edr_events.push(y_match);
+                        }
+                    }
+
+                    // Dynamic Ransomware checks
+                    if let Some(mut r_event) = aetherix_agent::edr::ransomware::on_file_change(&event.file_path, &policy_version_clone) {
+                        let policy_guard = edr_policy_loop.read().ok().and_then(|guard| guard.clone());
+                        apply_policy_to_edr_events(std::slice::from_mut(&mut r_event), policy_guard.as_ref());
+                        println!("Dynamic Ransomware alert! File: {}, rule: {}", event.file_path, r_event.rule_id);
+                        edr_events.push(r_event);
+                    }
+                }
+
+                // 2. Run Process Tree checks
+                if let Ok(mut pm) = process_monitor_arc.lock() {
+                    let mut proc_events = pm.scan(&policy_version_clone);
+                    let policy_guard = edr_policy_loop.read().ok().and_then(|guard| guard.clone());
+                    apply_policy_to_edr_events(&mut proc_events, policy_guard.as_ref());
+                    edr_events.extend(proc_events);
+                }
+
+                // 3. Apply active response actions locally
+                let quarantine_secret = credentials_clone.as_ref().map(|creds| creds.agent_secret.as_bytes()).unwrap_or(b"default-agent-key");
+                execute_edr_response_actions(&mut edr_events, quarantine_secret);
+
+                // 4. Send heartbeat with dynamic EDR and FIM events
+                if !fim_events.is_empty() || !edr_events.is_empty() {
+                    if let Some(ref url) = api_url_clone {
+                        let endpoint = format!("{}/agent/heartbeat", url.trim_end_matches('/'));
+                        let collected_at = Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+                        let hb = Heartbeat {
+                            agent_id: agent_id_clone.clone(),
+                            hostname: hostname_clone.clone(),
+                            os: os_clone.clone(),
+                            collected_at,
+                            policy_version: policy_version_clone.clone(),
+                            agent_version: DEFAULT_AGENT_VERSION.to_string(),
+                            signature: None,
+                            nonce: None,
+                            signals: collect_signals(),
+                            inventory: None,
+                            fim_events,
+                            edr_events,
+                            cis_results: Vec::new(),
+                        };
+
+                        if let Err(e) = client_clone.post(&endpoint).json(&hb).send() {
+                            eprintln!("aetherix-agent: failed to send dynamic heartbeat: {e}");
+                        }
+                    }
+                }
+            }
+        })
+        .expect("spawn EDR heartbeat loop thread");
+
     // Shared policy state used by both the DLP enforcement loop (writer)
     // and the local browser bridge (reader). Wrapped in an Arc<RwLock<...>>
     // so refreshes from the loop become visible to the bridge instantly.
-    let shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>> =
-        Arc::new(RwLock::new(None));
+    if let Some(policy) = edr_policy_shared.read().ok().and_then(|guard| guard.clone()) {
+        if let Ok(mut guard) = shared_policy.write() {
+            *guard = Some(policy);
+        }
+    }
 
     let bridge_enabled = env_bool("AETHERIX_ENABLE_LOCAL_BRIDGE");
-    if bridge_enabled {
+    let native_bridge_enabled = env_bool("AETHERIX_ENABLE_NATIVE_BRIDGE");
+    if bridge_enabled || native_bridge_enabled {
         if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
             // Best-effort initial population so the extension gets a real
             // policy on its very first poll.
@@ -218,21 +462,30 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if let Err(err) =
-                start_local_bridge(api_url, credentials, shared_policy.clone())
-            {
-                eprintln!("aetherix-agent: local bridge failed to start: {err}");
+            let bridge_state = build_bridge_state(api_url, credentials, shared_policy.clone())?;
+
+            if bridge_enabled {
+                let config = bridge::BridgeConfig::from_env();
+                let addr = bridge::spawn(bridge_state.clone(), config.port)
+                    .context("spawn local HTTP bridge")?;
+                println!("aetherix-agent: local bridge listening on http://{addr}");
+            }
+
+            if native_bridge_enabled {
+                aetherix_agent::native_bridge::spawn(bridge_state)
+                    .context("spawn native messaging bridge")?;
+                println!("aetherix-agent: native messaging bridge active");
             }
         } else {
             eprintln!(
-                "aetherix-agent: AETHERIX_ENABLE_LOCAL_BRIDGE=1 but no credentials or API URL; bridge disabled"
+                "aetherix-agent: bridge enabled but no credentials or API URL; bridges disabled"
             );
         }
     }
 
     if env_bool("AETHERIX_ENABLE_DLP_ENFORCEMENT") {
         if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
-            run_dlp_enforcement_loop(&client, api_url, credentials, shared_policy.clone())
+            run_dlp_enforcement_loop(&client, api_url, credentials, &hostname, &os, shared_policy.clone())
                 .map_err(|err| format!("dlp enforcement failed: {err}"))?;
         }
     } else if bridge_enabled {
@@ -247,13 +500,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn start_local_bridge(
+fn build_bridge_state(
     api_url: &str,
     credentials: &AgentCredentials,
     shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Arc<bridge::BridgeState>> {
     let config = bridge::BridgeConfig::from_env();
-    let state = Arc::new(bridge::BridgeState::new(
+    Ok(Arc::new(bridge::BridgeState::new(
         shared_policy,
         credentials.agent_id.clone(),
         credentials.agent_secret.clone(),
@@ -264,16 +517,13 @@ fn start_local_bridge(
             .context("build bridge http client")?,
         dlp_queue_path(),
         config.allowed_origins,
-    ));
-    let addr = bridge::spawn(state, config.port)
-        .context("spawn local bridge")?;
-    println!("aetherix-agent: local bridge listening on http://{addr}");
-    Ok(())
+    )))
 }
 
 struct DlpRuntimeState {
-    clipboard: Option<Clipboard>,
-    last_clipboard: Option<String>,
+    clipboard: Option<ClipboardInterceptor<SystemClipboard>>,
+    files: Option<FileUploadInterceptor>,
+    usb: UsbInterceptor,
     queue_lines_read: usize,
 }
 
@@ -281,62 +531,132 @@ fn run_dlp_enforcement_loop(
     client: &reqwest::blocking::Client,
     api_url: &str,
     credentials: &AgentCredentials,
+    hostname: &str,
+    os: &str,
     shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>>,
 ) -> anyhow::Result<()> {
     let poll_interval = env_u64("AETHERIX_DLP_POLL_INTERVAL_SECONDS").max(1);
-    let refresh_interval = env_u64("AETHERIX_POLICY_REFRESH_SECONDS").max(5);
     let run_seconds = env_u64("AETHERIX_DLP_RUN_SECONDS");
     let started = Instant::now();
 
     let cache_path = effective_policy_path();
-    let mut active_policy = match policy::fetch_effective_policy(client, api_url, &credentials.agent_id, &credentials.agent_secret) {
-        Ok(fetched) => {
-            let _ = policy::save_policy_cache(&cache_path, &fetched);
-            fetched
-        }
-        Err(fetch_error) => policy::load_policy_cache(&cache_path)
-            .context("unable to load cached policy after fetch failure")?
-            .ok_or_else(|| anyhow::anyhow!("no policy from api and no last-known-good cache: {fetch_error}"))?,
-    };
+    let mut reloader = policy::PolicyHotReloader::from_env(
+        client.clone(),
+        api_url.to_string(),
+        credentials.agent_id.clone(),
+        credentials.agent_secret.clone(),
+        cache_path.clone(),
+    );
+    let mut active_policy = reloader.bootstrap()?;
     if let Ok(mut guard) = shared_policy.write() {
         *guard = Some(active_policy.clone());
     }
 
     let queue_path = dlp_queue_path();
+    let dlp_client = DlpClient::new(
+        client.clone(),
+        api_url.to_string(),
+        credentials.agent_id.clone(),
+        credentials.agent_secret.clone(),
+        queue_path.clone(),
+    );
     let mut state = DlpRuntimeState {
-        clipboard: Clipboard::new().ok(),
-        last_clipboard: None,
+        clipboard: SystemClipboard::new()
+            .map(ClipboardInterceptor::new)
+            .ok(),
+        files: FileUploadInterceptor::from_env(),
+        usb: UsbInterceptor::new(),
         queue_lines_read: 0,
     };
+    if let Some(files) = state.files.as_ref() {
+        println!(
+            "aetherix-agent: file upload interceptor watching {} dir(s)",
+            files.watched_dirs().len()
+        );
+    }
     let mut last_refresh = Instant::now();
 
     loop {
-        if last_refresh.elapsed().as_secs() >= refresh_interval {
-            if let Ok(fetched) = policy::fetch_effective_policy(client, api_url, &credentials.agent_id, &credentials.agent_secret) {
-                let changed = fetched.policy_version_hash != active_policy.policy_version_hash;
-                if changed {
-                    active_policy = fetched;
-                    let _ = policy::save_policy_cache(&cache_path, &active_policy);
-                    if let Ok(mut guard) = shared_policy.write() {
-                        *guard = Some(active_policy.clone());
-                    }
+        if last_refresh.elapsed() >= reloader.refresh_interval() {
+            if let Some(new_policy) = reloader.tick() {
+                // Atomic swap of the active policy. The DLP loop reads
+                // `active_policy` by reference on every interceptor
+                // pass, so the next clipboard/file scan immediately
+                // sees the new rules — no restart required.
+                active_policy = new_policy;
+                if let Ok(mut guard) = shared_policy.write() {
+                    *guard = Some(active_policy.clone());
                 }
             }
             last_refresh = Instant::now();
         }
 
-        let events = collect_dlp_events(&mut state, &queue_path);
-        for event in events {
-            if let Some(decision) = dlp::evaluate_event(&active_policy, &event) {
-                if let Err(err) = evidence::emit_dlp_evidence(
-                    client,
-                    api_url,
-                    &credentials.agent_id,
-                    &credentials.agent_secret,
-                    &active_policy.policy_version_hash,
-                    &event,
-                    &decision,
-                ) {
+        // Clipboard interceptor: every changed clipboard value is
+        // routed through `DlpClient::evaluate` and, on Block, the
+        // clipboard is actively overwritten so the user's paste cannot
+        // succeed.
+        if let Some(interceptor) = state.clipboard.as_mut() {
+            handle_clipboard_paste(interceptor, &active_policy, &dlp_client);
+        }
+
+        // File upload interceptor: every new/changed file in a watched
+        // directory is read (capped) and routed through DlpClient. On a
+        // Block decision the file is deleted in place — equivalent to
+        // cancelling the user's save / pre-upload staging.
+        if let Some(files) = state.files.as_mut() {
+            for candidate in files.scan() {
+                if let Some(decision) = dlp_client.evaluate(&active_policy, &candidate.event) {
+                    if matches!(decision.action, policy::DlpAction::Block) {
+                        match files.enforce_block(&candidate.path) {
+                            Ok(()) => println!(
+                                "Aetherix DLP blocked upload {} (label={:?}); file deleted",
+                                candidate.path.display(),
+                                decision.label_detected
+                            ),
+                            Err(err) => eprintln!(
+                                "aetherix-agent: file deletion failed for {}: {err}",
+                                candidate.path.display()
+                            ),
+                        }
+                    }
+                    if let Err(err) = dlp_client.emit(
+                        &active_policy.policy_version_hash,
+                        &candidate.event,
+                        &decision,
+                    ) {
+                        eprintln!("aetherix-agent: failed to emit upload evidence: {err}");
+                    }
+                }
+            }
+        }
+
+        // USB interceptor: polls for newly mounted removable devices
+        for event in state.usb.poll() {
+            if let Some(decision) = dlp_client.evaluate(&active_policy, &event) {
+                if let Err(err) =
+                    dlp_client.emit(&active_policy.policy_version_hash, &event, &decision)
+                {
+                    eprintln!("aetherix-agent: failed to emit USB evidence: {err}");
+                }
+                if matches!(decision.action, policy::DlpAction::Block) {
+                    println!(
+                        "Aetherix DLP blocked USB mount to {:?}",
+                        decision.destination,
+                    );
+                    // In a full implementation we would unmount or reject the device here
+                }
+            }
+        }
+
+        // File-queue events (legacy + browser bridge replay) — evaluated
+        // through the same DlpClient so behaviour is identical to the
+        // clipboard path. These cannot mutate the clipboard, so block
+        // enforcement is delegated to the originating interceptor.
+        for event in collect_queued_events(&mut state, &queue_path) {
+            if let Some(decision) = dlp_client.evaluate(&active_policy, &event) {
+                if let Err(err) =
+                    dlp_client.emit(&active_policy.policy_version_hash, &event, &decision)
+                {
                     eprintln!("aetherix-agent: failed to emit DLP evidence: {err}");
                 }
                 if matches!(decision.action, policy::DlpAction::Block) {
@@ -350,6 +670,18 @@ fn run_dlp_enforcement_loop(
             }
         }
 
+        // Poll control-plane for any queued module actions and execute them.
+        let heartbeat_context = HeartbeatContext {
+            client,
+            api_url,
+            credentials,
+            hostname,
+            os,
+        };
+        if let Err(err) = poll_and_execute_actions(&heartbeat_context, &mut active_policy, &shared_policy) {
+            eprintln!("aetherix-agent: action poller error: {err}");
+        }
+
         if run_seconds > 0 && started.elapsed().as_secs() >= run_seconds {
             break;
         }
@@ -360,25 +692,68 @@ fn run_dlp_enforcement_loop(
     Ok(())
 }
 
-fn collect_dlp_events(state: &mut DlpRuntimeState, queue_path: &Path) -> Vec<dlp::DlpEvent> {
-    let mut events = Vec::new();
-
-    if let Some(clipboard) = state.clipboard.as_mut() {
-        if let Ok(text) = clipboard.get_text() {
-            let trimmed = text.trim();
-            if !trimmed.is_empty() && state.last_clipboard.as_deref() != Some(trimmed) {
-                state.last_clipboard = Some(trimmed.to_string());
-                events.push(dlp::DlpEvent {
-                    event_type: dlp::DlpEventType::Paste,
-                    source: dlp::EventSource::Endpoint,
-                    content: trimmed.to_string(),
-                    destination: None,
-                    process_name: None,
-                });
+fn handle_clipboard_paste(
+    interceptor: &mut ClipboardInterceptor<SystemClipboard>,
+    active_policy: &policy::RuntimePolicy,
+    dlp_client: &DlpClient,
+) {
+    if let Some(event) = interceptor.poll() {
+        if let Some(decision) = dlp_client.evaluate(active_policy, &event) {
+            if matches!(decision.action, policy::DlpAction::Block) {
+                match interceptor.enforce_block() {
+                    Ok(placeholder) => println!(
+                        "Aetherix DLP blocked clipboard paste (label={:?}); clipboard overwritten with: {placeholder}",
+                        decision.label_detected
+                    ),
+                    Err(err) => eprintln!(
+                        "aetherix-agent: clipboard overwrite failed: {err}"
+                    ),
+                }
+            }
+            if let Err(err) =
+                dlp_client.emit(&active_policy.policy_version_hash, &event, &decision)
+            {
+                eprintln!("aetherix-agent: failed to emit DLP evidence: {err}");
             }
         }
     }
+}
 
+fn apply_policy_to_edr_events(
+    events: &mut [aetherix_agent::edr::EdrEvent],
+    active_policy: Option<&policy::RuntimePolicy>,
+) {
+    for event in events {
+        if let Some(policy) = active_policy {
+            event.action = policy.edr_action_for_kind(&event.kind);
+            event.policy_version = policy.policy_version_hash.clone();
+            event.evidence_controls = policy.evidence_controls.clone();
+        } else {
+            event.action = aetherix_agent::edr::EdrAction::Monitor;
+        }
+    }
+}
+
+fn execute_edr_response_actions(
+    events: &mut [aetherix_agent::edr::EdrEvent],
+    quarantine_secret: &[u8],
+) {
+    for event in events {
+        let evidence = edr_response::apply_to_event_with_secret(event, quarantine_secret);
+        if !matches!(
+            evidence.status,
+            aetherix_agent::edr::ResponseStatus::Staged
+        ) {
+            println!(
+                "Aetherix EDR response {:?} for rule {} -> {:?}",
+                evidence.action, evidence.rule_id, evidence.status
+            );
+        }
+    }
+}
+
+fn collect_queued_events(state: &mut DlpRuntimeState, queue_path: &Path) -> Vec<dlp::DlpEvent> {
+    let mut events = Vec::new();
     if let Ok(content) = fs::read_to_string(queue_path) {
         let lines: Vec<&str> = content.lines().collect();
         for line in lines.iter().skip(state.queue_lines_read) {
@@ -391,7 +766,6 @@ fn collect_dlp_events(state: &mut DlpRuntimeState, queue_path: &Path) -> Vec<dlp
         }
         state.queue_lines_read = lines.len();
     }
-
     events
 }
 
@@ -518,6 +892,247 @@ fn save_policy_package(path: &Path, policy: &PolicyPackage) -> Result<(), Box<dy
     }
     write_credentials_file(path, &serde_json::to_string_pretty(policy)?)?;
     Ok(())
+}
+
+fn poll_and_execute_actions(
+    context: &HeartbeatContext,
+    active_policy: &mut policy::RuntimePolicy,
+    shared_policy: &Arc<RwLock<Option<policy::RuntimePolicy>>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let endpoint = format!("{}/agent/actions?endpoint_id={}", context.api_url.trim_end_matches('/'), context.credentials.agent_id);
+    let resp = context.client
+        .get(&endpoint)
+        .bearer_auth(&context.credentials.agent_secret)
+        .send()?;
+
+    if !resp.status().is_success() {
+        // nothing to do if control-plane doesn't respond with actions
+        return Ok(());
+    }
+
+    let actions: Vec<ModuleAction> = resp.json()?;
+    for action in actions {
+        println!("aetherix-agent: action received: {} -> {}", action.id, action.action);
+        match action.action.as_str() {
+            "push_policy_update" => {
+                if let Ok(fetched) = policy::fetch_effective_policy(context.client, context.api_url, &context.credentials.agent_id, &context.credentials.agent_secret) {
+                    *active_policy = fetched.clone();
+                    if let Ok(mut guard) = shared_policy.write() {
+                        *guard = Some(fetched);
+                    }
+                }
+                ack_action(context, &action.id);
+            }
+            "quarantine" | "kill_process" | "isolate_endpoint" | "quarantine_list"
+            | "list_quarantine" | "restore_quarantine" | "release_from_quarantine" => {
+                let event = remote_action_event(&action, active_policy, &context.credentials.agent_secret);
+                emit_remote_action_evidence(context, event);
+                ack_action(context, &action.id);
+            }
+            other => {
+                eprintln!("aetherix-agent: unsupported action {other}");
+                ack_action(context, &action.id);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn ack_action(context: &HeartbeatContext, action_id: &str) {
+    let ack_url = format!(
+        "{}/agent/actions/{}/ack?endpoint_id={}",
+        context.api_url.trim_end_matches('/'),
+        action_id,
+        context.credentials.agent_id
+    );
+    let _ = context
+        .client
+        .post(&ack_url)
+        .bearer_auth(&context.credentials.agent_secret)
+        .send();
+}
+
+fn remote_action_event(
+    action: &ModuleAction,
+    active_policy: &policy::RuntimePolicy,
+    quarantine_secret: &str,
+) -> aetherix_agent::edr::EdrEvent {
+    let payload = action.payload.as_ref();
+    let requested_action = normalize_remote_edr_action(&action.action);
+    let mut event = aetherix_agent::edr::EdrEvent::new(
+        aetherix_agent::edr::EdrDetectionKind::ResponseAction,
+        payload
+            .and_then(|value| value.get("rule_id"))
+            .and_then(|value| value.as_str())
+            .unwrap_or(action.action.as_str()),
+        requested_action.clone(),
+        &active_policy.policy_version_hash,
+    );
+    event.evidence_controls = action
+        .evidence_controls
+        .clone()
+        .unwrap_or_else(|| active_policy.evidence_controls.clone());
+    event.tags.push("remote_response_action".to_string());
+    event.matched_indicator = Some(action.id.clone());
+    event.process_pid = payload
+        .and_then(|value| value.get("target_pid"))
+        .and_then(|value| value.as_u64())
+        .and_then(|pid| u32::try_from(pid).ok());
+    event.file_path = payload
+        .and_then(|value| value.get("target_path").or_else(|| value.get("file_path")))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+
+    let allowed = remote_action_is_policy_promoted(&requested_action, payload, active_policy);
+    if !allowed && dangerous_remote_action(&requested_action) {
+        event.action = aetherix_agent::edr::EdrAction::Review;
+        let mut evidence = edr_response::execute(
+            &event.action,
+            event.process_pid,
+            event.file_path.as_deref(),
+            None,
+            &event.rule_id,
+            &event.policy_version,
+            &event.evidence_controls,
+            quarantine_secret.as_bytes(),
+        );
+        evidence.status = aetherix_agent::edr::ResponseStatus::Staged;
+        evidence.decision_trace.push(format!(
+            "remote action {:?} denied: current policy has not promoted matching detector action",
+            requested_action
+        ));
+        event.response = Some(evidence);
+        return event;
+    }
+
+    if matches!(
+        requested_action,
+        aetherix_agent::edr::EdrAction::QuarantineRestore
+    ) {
+        event.file_path = payload
+            .and_then(|value| value.get("quarantine_id").or_else(|| value.get("target_path")))
+            .and_then(|value| value.as_str())
+            .map(str::to_string);
+    }
+
+    if requires_target_path(&requested_action) && event.file_path.is_none() {
+        let mut evidence = edr_response::execute(
+            &requested_action,
+            event.process_pid,
+            event.file_path.as_deref(),
+            None,
+            &event.rule_id,
+            &event.policy_version,
+            &event.evidence_controls,
+            quarantine_secret.as_bytes(),
+        );
+        evidence.status = aetherix_agent::edr::ResponseStatus::Failed;
+        event.action = requested_action;
+        event.response = Some(evidence);
+        return event;
+    }
+
+    let evidence = edr_response::apply_to_event_with_secret(&mut event, quarantine_secret.as_bytes());
+    if matches!(evidence.status, aetherix_agent::edr::ResponseStatus::Failed) {
+        eprintln!(
+            "aetherix-agent: remote action {} failed: {}",
+            action.id,
+            evidence.error.clone().unwrap_or_else(|| "unknown error".to_string())
+        );
+    }
+    event
+}
+
+fn requires_target_path(action: &aetherix_agent::edr::EdrAction) -> bool {
+    matches!(
+        action,
+        aetherix_agent::edr::EdrAction::Quarantine
+            | aetherix_agent::edr::EdrAction::QuarantineRestore
+    )
+}
+
+fn normalize_remote_edr_action(action: &str) -> aetherix_agent::edr::EdrAction {
+    match action {
+        "quarantine" => aetherix_agent::edr::EdrAction::Quarantine,
+        "kill_process" | "kill" => aetherix_agent::edr::EdrAction::Kill,
+        "isolate_endpoint" | "isolate" => aetherix_agent::edr::EdrAction::Isolate,
+        "quarantine_list" | "list_quarantine" => aetherix_agent::edr::EdrAction::QuarantineList,
+        "restore_quarantine" | "release_from_quarantine" => {
+            aetherix_agent::edr::EdrAction::QuarantineRestore
+        }
+        _ => aetherix_agent::edr::EdrAction::Review,
+    }
+}
+
+fn dangerous_remote_action(action: &aetherix_agent::edr::EdrAction) -> bool {
+    matches!(
+        action,
+        aetherix_agent::edr::EdrAction::Quarantine
+            | aetherix_agent::edr::EdrAction::Kill
+            | aetherix_agent::edr::EdrAction::Isolate
+    )
+}
+
+fn remote_action_is_policy_promoted(
+    action: &aetherix_agent::edr::EdrAction,
+    payload: Option<&serde_json::Value>,
+    active_policy: &policy::RuntimePolicy,
+) -> bool {
+    if !dangerous_remote_action(action) {
+        return true;
+    }
+    let kind = payload
+        .and_then(|value| value.get("kind").or_else(|| value.get("detection_kind")))
+        .and_then(|value| value.as_str())
+        .and_then(parse_remote_detection_kind)
+        .unwrap_or(match action {
+            aetherix_agent::edr::EdrAction::Quarantine => {
+                aetherix_agent::edr::EdrDetectionKind::YaraMatch
+            }
+            aetherix_agent::edr::EdrAction::Kill => {
+                aetherix_agent::edr::EdrDetectionKind::SuspiciousProcessChain
+            }
+            aetherix_agent::edr::EdrAction::Isolate => {
+                aetherix_agent::edr::EdrDetectionKind::RansomwareCanary
+            }
+            _ => aetherix_agent::edr::EdrDetectionKind::ResponseAction,
+        });
+    active_policy.edr_action_for_kind(&kind) == *action
+}
+
+fn parse_remote_detection_kind(value: &str) -> Option<aetherix_agent::edr::EdrDetectionKind> {
+    match value {
+        "yara_match" => Some(aetherix_agent::edr::EdrDetectionKind::YaraMatch),
+        "ioc_match" => Some(aetherix_agent::edr::EdrDetectionKind::IocMatch),
+        "ransomware_canary" => Some(aetherix_agent::edr::EdrDetectionKind::RansomwareCanary),
+        "suspicious_process_chain" => Some(
+            aetherix_agent::edr::EdrDetectionKind::SuspiciousProcessChain,
+        ),
+        _ => None,
+    }
+}
+
+fn emit_remote_action_evidence(context: &HeartbeatContext, event: aetherix_agent::edr::EdrEvent) {
+    let endpoint = format!("{}/agent/heartbeat", context.api_url.trim_end_matches('/'));
+    let hb = Heartbeat {
+        agent_id: context.credentials.agent_id.clone(),
+        hostname: context.hostname.to_string(),
+        os: context.os.to_string(),
+        collected_at: Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string(),
+        policy_version: event.policy_version.clone(),
+        agent_version: DEFAULT_AGENT_VERSION.to_string(),
+        signature: None,
+        nonce: None,
+        signals: collect_signals(),
+        inventory: None,
+        fim_events: Vec::new(),
+        edr_events: vec![event],
+        cis_results: Vec::new(),
+    };
+    if let Err(err) = context.client.post(endpoint).json(&hb).send() {
+        eprintln!("aetherix-agent: failed to emit remote response evidence: {err}");
+    }
 }
 
 #[cfg(unix)]

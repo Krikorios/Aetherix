@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from "react";
 import {
   Usb,
-  RefreshCw,
-  ShieldAlert,
   CheckCircle,
   AlertTriangle,
   Printer,
@@ -10,12 +8,13 @@ import {
   HardDrive,
   LockKeyhole,
   ShieldCheck,
+  Clipboard,
 } from "lucide-react";
 import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
-import { LoadingState } from "../components/protection/EmptyState";
+import { EmptyState, LoadingState } from "../components/protection/EmptyState";
 import {
   Detection,
   StagedAction,
@@ -23,9 +22,9 @@ import {
   EffectivePolicy,
 } from "../components/protection/types";
 import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner } from "../components";
-import { apiGet, apiPost, type MeResponse } from "../api";
+import { apiGet, apiPost, type MeResponse, type EffectivePolicyResponse } from "../api";
 
-export type DeviceType = "usb_storage" | "usb_other" | "printer" | "bluetooth" | "optical" | "thunderbolt";
+export type DeviceType = "usb_storage" | "usb_other" | "printer" | "bluetooth" | "optical" | "thunderbolt" | "clipboard";
 
 export interface DeviceEvent {
   id: string;
@@ -37,23 +36,16 @@ export interface DeviceEvent {
   vendor_id: string;
   product_id: string;
   serial?: string | null;
-  action: "connected" | "blocked" | "allowed_once" | "read_attempted" | "write_attempted";
+  action: "connected" | "blocked" | "allowed_once" | "read_attempted" | "write_attempted" | "paste_attempted" | "print_job";
   severity: "low" | "medium" | "high" | "critical";
   status: "blocked" | "pending_approval" | "allowed" | "review";
   timestamp: string;
   bytes_written?: number | null;
+  destination?: string | null;
   policy_rule?: string | null;
   approval_required: boolean;
 }
 
-const DEVICE_ICON: Record<DeviceType, React.ReactNode> = {
-  usb_storage: <HardDrive size={14} />,
-  usb_other: <Usb size={14} />,
-  printer: <Printer size={14} />,
-  bluetooth: <Bluetooth size={14} />,
-  optical: <HardDrive size={14} />,
-  thunderbolt: <Usb size={14} />,
-};
 
 const DEVICE_LABEL: Record<DeviceType, string> = {
   usb_storage: "USB Storage",
@@ -62,100 +54,8 @@ const DEVICE_LABEL: Record<DeviceType, string> = {
   bluetooth: "Bluetooth",
   optical: "Optical Drive",
   thunderbolt: "Thunderbolt",
+  clipboard: "Clipboard",
 };
-
-const DEMO_EVENTS: DeviceEvent[] = [
-  {
-    id: "dev-001",
-    customer_id: null,
-    hostname: "WIN-WORK-042",
-    user: "jdoe@northgate.internal",
-    device_type: "usb_storage",
-    device_name: "SanDisk Ultra 64GB",
-    vendor_id: "0781",
-    product_id: "5591",
-    serial: "AA01234567890123",
-    action: "write_attempted",
-    severity: "high",
-    status: "blocked",
-    timestamp: new Date(Date.now() - 3600000).toISOString(),
-    bytes_written: 0,
-    policy_rule: "device:block-usb-storage-write",
-    approval_required: true,
-  },
-  {
-    id: "dev-002",
-    customer_id: null,
-    hostname: "WIN-WORK-017",
-    user: "ksmith@northgate.internal",
-    device_type: "usb_storage",
-    device_name: "Kingston DataTraveler 32GB",
-    vendor_id: "0951",
-    product_id: "1666",
-    serial: "KT201812345",
-    action: "connected",
-    severity: "medium",
-    status: "pending_approval",
-    timestamp: new Date(Date.now() - 7200000).toISOString(),
-    bytes_written: null,
-    policy_rule: "device:require-approval-removable",
-    approval_required: true,
-  },
-  {
-    id: "dev-003",
-    customer_id: null,
-    hostname: "WIN-WORK-001",
-    user: "mwilson@northgate.internal",
-    device_type: "bluetooth",
-    device_name: "AirPods Pro (2nd gen)",
-    vendor_id: "004C",
-    product_id: "2002",
-    serial: null,
-    action: "connected",
-    severity: "low",
-    status: "allowed",
-    timestamp: new Date(Date.now() - 86400000).toISOString(),
-    bytes_written: null,
-    policy_rule: "device:allow-audio-bluetooth",
-    approval_required: false,
-  },
-  {
-    id: "dev-004",
-    customer_id: null,
-    hostname: "LINUX-SRV-08",
-    user: "svc-backup@northgate.internal",
-    device_type: "usb_storage",
-    device_name: "Unknown USB Device",
-    vendor_id: "1234",
-    product_id: "5678",
-    serial: null,
-    action: "write_attempted",
-    severity: "critical",
-    status: "blocked",
-    timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
-    bytes_written: 52428800,
-    policy_rule: "device:block-server-usb",
-    approval_required: true,
-  },
-  {
-    id: "dev-005",
-    customer_id: null,
-    hostname: "WIN-WORK-042",
-    user: "jdoe@northgate.internal",
-    device_type: "printer",
-    device_name: "HP LaserJet Pro MFP M428",
-    vendor_id: "03F0",
-    product_id: "4E17",
-    serial: "VNB3M12345",
-    action: "connected",
-    severity: "low",
-    status: "allowed",
-    timestamp: new Date(Date.now() - 86400000 * 3).toISOString(),
-    bytes_written: null,
-    policy_rule: "device:allow-approved-printers",
-    approval_required: false,
-  },
-];
 
 export function DeviceControlPage({ me }: { me: MeResponse }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -163,7 +63,7 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [policy, setPolicy] = useState<EffectivePolicy>({
+  const [policy, setPolicy] = useState<EffectivePolicy>(() => ({
     policy_version: "v2.10.4",
     last_updated: new Date(Date.now() - 3600000).toISOString(),
     status: "protected",
@@ -174,7 +74,7 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
       bluetooth_monitor: true,
       audit_evidence: true,
     },
-  });
+  }));
 
   const [deviceEvents, setDeviceEvents] = useState<DeviceEvent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -196,16 +96,24 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
     risk_band: ev.severity,
     confidence: ev.status === "blocked" ? 95 : 70,
     recommended_action:
-      ev.status === "pending_approval" ? "approve_device" : ev.status === "blocked" ? "confirm_block" : "add_to_allowlist",
+      ev.status === "pending_approval"
+        ? "approve_device"
+        : ev.status === "review"
+        ? "review_event"
+        : ev.status === "blocked"
+        ? "confirm_block"
+        : "add_to_allowlist",
     status:
-      ev.status === "blocked" ? "investigating" : ev.status === "pending_approval" ? "staged" : "resolved",
+      ev.status === "blocked" ? "investigating"
+        : ev.status === "pending_approval" || ev.status === "review" ? "staged"
+        : "resolved",
     created_at: ev.timestamp,
     context: {
       user: ev.user,
       command_line: `vid:${ev.vendor_id} pid:${ev.product_id}${ev.serial ? ` sn:${ev.serial}` : ""}`,
       mitre_techniques:
-        ev.action === "write_attempted"
-          ? [{ id: "T1052.001", name: "Exfiltration over USB", tactic: "Exfiltration" }]
+        ev.action === "write_attempted" || ev.action === "paste_attempted"
+          ? [{ id: "T1052.001", name: "Exfiltration over Physical/Logical Medium", tactic: "Exfiltration" }]
           : [],
     },
   }));
@@ -218,16 +126,39 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
       try {
         const customerId = me.scope.customer_ids[0];
         const url = customerId ? `/device-control/events?customer_id=${customerId}` : `/device-control/events`;
-        const data = await apiGet<DeviceEvent[]>(url);
+        const [data, effectivePolicy] = await Promise.all([
+          apiGet<DeviceEvent[]>(url),
+          apiGet<EffectivePolicyResponse>(customerId ? `/policies/effective?customer_id=${customerId}` : "/policies/effective").catch(() => null),
+        ]);
+        if (effectivePolicy) {
+          const module = effectivePolicy.resolved_policy.modules.device_control ?? {};
+          const enabled = module.enabled !== false;
+          setPolicy({
+            policy_version: effectivePolicy.assignments_applied[0]?.policy_version_id ?? effectivePolicy.policy_ids_applied[0] ?? "No active assignment",
+            last_updated: new Date().toISOString(),
+            status: enabled ? "protected" : "disabled",
+            approval_required: true,
+            controls: {
+              usb_storage_block: enabled,
+              usb_approval_gate: enabled,
+              bluetooth_monitor: enabled,
+              audit_evidence: true,
+            },
+          });
+        }
         setDeviceEvents(data);
         if (data.length > 0) {
           setSelectedId(data[0].id);
-          setSelectedAction(data[0].status === "pending_approval" ? "approve_device" : "confirm_block");
+          setSelectedAction(
+            data[0].status === "pending_approval"
+              ? "approve_device"
+              : data[0].status === "review"
+              ? "review_event"
+              : "confirm_block",
+          );
         }
-      } catch {
-        setDeviceEvents(DEMO_EVENTS);
-        setSelectedId(DEMO_EVENTS[0].id);
-        setSelectedAction("confirm_block");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load device control events.");
       } finally {
         setIsLoading(false);
       }
@@ -238,7 +169,8 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
   const handleSyncPolicy = async () => {
     setIsSyncing(true);
     try {
-      await new Promise((r) => setTimeout(r, 600));
+      const customerId = me.scope.customer_ids[0];
+      await apiGet<EffectivePolicyResponse>(customerId ? `/policies/effective?customer_id=${customerId}` : "/policies/effective");
       setPolicy((prev) => ({ ...prev, last_updated: new Date().toISOString() }));
       setSuccess("Device control policies synced.");
     } catch {
@@ -252,29 +184,11 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
     if (!selectedEvent) return;
     setIsWorking(true);
     try {
-      await apiPost(`/device-control/events/${selectedEvent.id}/simulate`, { action: selectedAction });
-    } catch {
-      const sim: SimulationPreview = {
-        id: `sim-dev-${selectedEvent.id}-${Date.now()}`,
-        detection_id: selectedEvent.id,
-        action: selectedAction,
-        destructive: false,
-        approval_required: selectedEvent.approval_required,
-        affected_systems: 1,
-        estimated_impact: [
-          `Device: ${selectedEvent.device_name} (VID:${selectedEvent.vendor_id} PID:${selectedEvent.product_id})`,
-          `Endpoint: ${selectedEvent.hostname}`,
-          selectedAction === "add_to_allowlist"
-            ? "Device will be added to the tenant allowlist and permitted on all enrolled endpoints."
-            : selectedAction === "approve_device"
-            ? "One-time access approval will be granted for this device connection."
-            : "Device connection will remain blocked. Audit evidence preserved.",
-        ],
-        evidence_controls: ["iso27001-2022:A.8.12", "nist-csf-2.0:PR.DS"],
-        created_at: new Date().toISOString(),
-      };
+      const sim = await apiPost<SimulationPreview>(`/device-control/events/${selectedEvent.id}/simulate`, { action: selectedAction });
       setSimulation(sim);
       setSuccess("Simulation complete.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Device simulation failed.");
     } finally {
       setIsWorking(false);
     }
@@ -296,11 +210,17 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
     setStagedActions((prev) => [optimistic, ...prev]);
     try {
       await apiPost(`/device-control/events/${selectedEvent.id}/action`, { action: selectedAction });
-    } catch {
-      // offline fallback
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stage device action.");
+      setIsWorking(false);
+      return;
     }
     const nextStatus: DeviceEvent["status"] =
-      selectedAction === "add_to_allowlist" || selectedAction === "approve_device" ? "allowed" : "blocked";
+      selectedAction === "add_to_allowlist" || selectedAction === "approve_device"
+        ? "allowed"
+        : selectedAction === "review_event"
+        ? "review"
+        : "blocked";
     setDeviceEvents((prev) =>
       prev.map((e) => (e.id === selectedEvent.id ? { ...e, status: nextStatus } : e)),
     );
@@ -310,8 +230,11 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
 
   const blocked = deviceEvents.filter((e) => e.status === "blocked").length;
   const pendingApproval = deviceEvents.filter((e) => e.status === "pending_approval").length;
+  const review = deviceEvents.filter((e) => e.status === "review").length;
   const allowed = deviceEvents.filter((e) => e.status === "allowed").length;
   const usbEvents = deviceEvents.filter((e) => e.device_type.startsWith("usb")).length;
+  const clipboardEvents = deviceEvents.filter((e) => e.device_type === "clipboard").length;
+  const printerEvents = deviceEvents.filter((e) => e.device_type === "printer").length;
 
   if (isLoading) {
     return (
@@ -343,12 +266,21 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
         items={[
           { label: "Blocked", value: blocked, icon: <LockKeyhole size={18} />, color: "var(--danger)" },
           { label: "Pending Approval", value: pendingApproval, icon: <AlertTriangle size={18} />, color: "var(--warning)" },
+          { label: "Review Queue", value: review, icon: <AlertTriangle size={18} />, color: "var(--warning)" },
           { label: "Allowed", value: allowed, icon: <CheckCircle size={18} />, color: "var(--success)" },
-          { label: "USB Events", value: usbEvents, icon: <Usb size={18} />, color: "var(--accent)" },
-          { label: "Total Events", value: deviceEvents.length, icon: <ShieldCheck size={18} />, color: "var(--muted)" },
+          { label: "USB", value: usbEvents, icon: <Usb size={18} />, color: "var(--accent)" },
+          { label: "Clipboard", value: clipboardEvents, icon: <Clipboard size={18} />, color: "var(--accent)" },
+          { label: "Printer", value: printerEvents, icon: <Printer size={18} />, color: "var(--accent)" },
         ]}
       />
 
+      {deviceEvents.length === 0 ? (
+        <EmptyState
+          icon={Usb}
+          title="No device control events yet"
+          message="USB, printer, Bluetooth, and clipboard activity from enrolled endpoints will appear here as policies engage."
+        />
+      ) : (
       <section className="panelWorkspace" aria-label="Device Control Board">
         <DetectionTable
           detections={detections}
@@ -356,7 +288,13 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
           onSelect={(d) => {
             setSelectedId(d.id);
             const ev = deviceEvents.find((e) => e.id === d.id);
-            setSelectedAction(ev?.status === "pending_approval" ? "approve_device" : "confirm_block");
+            setSelectedAction(
+              ev?.status === "pending_approval"
+                ? "approve_device"
+                : ev?.status === "review"
+                ? "review_event"
+                : "confirm_block",
+            );
             setSimulation(null);
           }}
           isLoading={isLoading}
@@ -382,6 +320,7 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
                       { label: "Action", value: ev.action.replace(/_/g, " ") },
                       { label: "Status", value: ev.status.replace(/_/g, " ") },
                       { label: "User", value: ev.user },
+                      ...(ev.destination ? [{ label: "Destination", value: ev.destination }] : []),
                       ...(ev.policy_rule ? [{ label: "Policy Rule", value: ev.policy_rule }] : []),
                       ...(ev.bytes_written != null
                         ? [{ label: "Bytes Written", value: ev.bytes_written === 0 ? "Blocked (0)" : `${(ev.bytes_written / 1024 / 1024).toFixed(1)} MB` }]
@@ -425,12 +364,14 @@ export function DeviceControlPage({ me }: { me: MeResponse }) {
           onStage={handleStage}
           availableActions={[
             { value: "confirm_block", label: "Confirm Block", destructive: false },
+            { value: "review_event", label: "Mark for Review", destructive: false },
             { value: "approve_device", label: "Approve One-Time Access", destructive: false },
             { value: "add_to_allowlist", label: "Add to Allowlist", destructive: false },
             { value: "block_device_class", label: "Block Entire Device Class", destructive: true },
           ]}
         />
       </section>
+      )}
     </ConsolePage>
   );
 }

@@ -4,7 +4,12 @@ export type ModuleStatus = "protected" | "review_needed" | "disabled" | "planned
 
 export type DetectionStatus = "new" | "investigating" | "staged" | "resolved";
 
-export type ActionStatus = "queued" | "awaiting_approval" | "approved" | "failed";
+export type ActionStatus =
+  | "queued"
+  | "awaiting_approval"
+  | "approved"
+  | "executed"
+  | "failed";
 
 export interface Detection {
   id: string;

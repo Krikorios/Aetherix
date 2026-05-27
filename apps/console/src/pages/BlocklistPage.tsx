@@ -3,7 +3,6 @@ import {
   Ban,
   PlusCircle,
   Trash2,
-  RefreshCw,
   Hash,
   Globe,
   Link,
@@ -42,13 +41,6 @@ export interface BlocklistEntry {
   last_triggered?: string | null;
 }
 
-const KIND_ICON: Record<BlocklistEntryKind, React.ReactNode> = {
-  hash: <Hash size={14} />,
-  domain: <Globe size={14} />,
-  url: <Link size={14} />,
-  user: <User size={14} />,
-  process: <Terminal size={14} />,
-};
 
 const KIND_LABEL: Record<BlocklistEntryKind, string> = {
   hash: "File Hash",
@@ -58,81 +50,13 @@ const KIND_LABEL: Record<BlocklistEntryKind, string> = {
   process: "Process Name",
 };
 
-const DEMO_ENTRIES: BlocklistEntry[] = [
-  {
-    id: "bl-001",
-    customer_id: null,
-    kind: "hash",
-    value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    description: "Known ransomware dropper — Emotet variant tracked by ThreatFox",
-    severity: "critical",
-    status: "active",
-    added_by: "secops@aetherix-msp.com",
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-    hit_count: 4,
-    last_triggered: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: "bl-002",
-    customer_id: null,
-    kind: "domain",
-    value: "update-flash-player.net",
-    description: "Phishing domain impersonating Adobe update service",
-    severity: "high",
-    status: "active",
-    added_by: "secops@aetherix-msp.com",
-    created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
-    hit_count: 12,
-    last_triggered: new Date(Date.now() - 7200000).toISOString(),
-  },
-  {
-    id: "bl-003",
-    customer_id: null,
-    kind: "process",
-    value: "mimikatz.exe",
-    description: "Credential harvesting tool — always block",
-    severity: "critical",
-    status: "active",
-    added_by: "platform@aetherix-msp.com",
-    created_at: new Date(Date.now() - 86400000 * 30).toISOString(),
-    hit_count: 0,
-    last_triggered: null,
-  },
-  {
-    id: "bl-004",
-    customer_id: null,
-    kind: "url",
-    value: "https://pastebin.com/raw/xX99zQ",
-    description: "C2 staging URL observed in recent PowerShell dropper",
-    severity: "high",
-    status: "review",
-    added_by: "analyst@client-northgate.com",
-    created_at: new Date(Date.now() - 86400000 * 1).toISOString(),
-    hit_count: 1,
-    last_triggered: new Date(Date.now() - 14400000).toISOString(),
-  },
-  {
-    id: "bl-005",
-    customer_id: null,
-    kind: "user",
-    value: "testadmin@northgate.internal",
-    description: "Compromised service account — disabled pending investigation",
-    severity: "medium",
-    status: "active",
-    added_by: "soc-lead@aetherix-msp.com",
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-    hit_count: 0,
-    last_triggered: null,
-  },
-];
-
 export function BlocklistPage({ me }: { me: MeResponse }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [policy, setPolicy] = useState<EffectivePolicy>({
+  const [policy, setPolicy] = useState<EffectivePolicy>(() => ({
     policy_version: "v2.10.4",
     last_updated: new Date(Date.now() - 3600000).toISOString(),
     status: "protected",
@@ -142,7 +66,7 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
       blocklist_hash_check: true,
       blocklist_dns_sinkhole: true,
     },
-  });
+  }));
 
   const [entries, setEntries] = useState<BlocklistEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -195,10 +119,8 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
           setSelectedId(data[0].id);
           setSelectedAction(data[0].status === "review" ? "validate_and_activate" : "enforce_block");
         }
-      } catch {
-        setEntries(DEMO_ENTRIES);
-        setSelectedId(DEMO_ENTRIES[0].id);
-        setSelectedAction("enforce_block");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load blocklist entries.");
       } finally {
         setIsLoading(false);
       }
@@ -209,7 +131,8 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
   const handleSyncPolicy = async () => {
     setIsSyncing(true);
     try {
-      await new Promise((r) => setTimeout(r, 600));
+      const customerId = me.scope.customer_ids[0];
+      await apiGet(customerId ? `/blocklist?customer_id=${customerId}` : "/blocklist");
       setPolicy((prev) => ({ ...prev, last_updated: new Date().toISOString() }));
       setSuccess("Blocklist policies synced from Policy Engine v2.");
     } catch {
@@ -223,25 +146,11 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
     if (!selectedEntry) return;
     setIsWorking(true);
     try {
-      await apiPost(`/blocklist/${selectedEntry.id}/simulate`, {});
-    } catch {
-      const sim: SimulationPreview = {
-        id: `sim-bl-${selectedEntry.id}-${Date.now()}`,
-        detection_id: selectedEntry.id,
-        action: selectedAction,
-        destructive: false,
-        approval_required: policy.approval_required,
-        affected_systems: entries.filter((e) => e.kind === selectedEntry.kind && e.status === "active").length,
-        estimated_impact: [
-          `Blocklist entry for ${KIND_LABEL[selectedEntry.kind]} will be distributed to all enrolled agents.`,
-          `Policy merge will occur on next heartbeat cycle (≈30s).`,
-          `Hit detection will fire on any attempt to access or execute the blocked indicator.`,
-        ],
-        evidence_controls: ["iso27001-2022:A.8.7", "nist-csf-2.0:DE.CM"],
-        created_at: new Date().toISOString(),
-      };
-      setSimulation(sim);
+      const sim = await apiPost<SimulationPreview>(`/blocklist/${selectedEntry.id}/simulate`, {});
+      setSimulation({ ...sim, action: selectedAction });
       setSuccess("Simulation complete — blocklist distribution validated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Blocklist simulation failed.");
     } finally {
       setIsWorking(false);
     }
@@ -267,11 +176,8 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
         prev.map((e) => (e.id === selectedEntry.id ? { ...e, status: "active" } : e)),
       );
       setSuccess(`Blocklist entry activated: ${selectedEntry.value}`);
-    } catch {
-      setEntries((prev) =>
-        prev.map((e) => (e.id === selectedEntry.id ? { ...e, status: "active" } : e)),
-      );
-      setSuccess(`Entry staged locally: ${selectedEntry.value}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to activate blocklist entry.");
     } finally {
       setIsWorking(false);
     }
@@ -287,24 +193,8 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
       setSelectedId(res.id);
       setIsCreateOpen(false);
       setSuccess(`Blocklist entry added: ${res.value}`);
-    } catch {
-      const offline: BlocklistEntry = {
-        id: `offline-bl-${Date.now()}`,
-        customer_id: me.scope.customer_ids[0] || null,
-        kind: newEntry.kind,
-        value: newEntry.value,
-        description: newEntry.description,
-        severity: newEntry.severity,
-        status: "review",
-        added_by: me.account.email,
-        created_at: new Date().toISOString(),
-        hit_count: 0,
-        last_triggered: null,
-      };
-      setEntries((prev) => [offline, ...prev]);
-      setSelectedId(offline.id);
-      setIsCreateOpen(false);
-      setSuccess(`Entry staged locally for review: ${offline.value}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create blocklist entry.");
     } finally {
       setIsWorking(false);
     }
@@ -318,10 +208,8 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
       setEntries((prev) => prev.filter((e) => e.id !== selectedEntry.id));
       setSelectedId(entries.find((e) => e.id !== selectedEntry.id)?.id ?? null);
       setSuccess(`Removed: ${selectedEntry.value}`);
-    } catch {
-      setEntries((prev) => prev.filter((e) => e.id !== selectedEntry.id));
-      setSelectedId(entries.find((e) => e.id !== selectedEntry.id)?.id ?? null);
-      setSuccess(`Entry removed locally.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove blocklist entry.");
     } finally {
       setIsWorking(false);
     }

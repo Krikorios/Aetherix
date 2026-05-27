@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from "react";
 import {
-  Settings,
   Save,
   RefreshCw,
   Palette,
-  Globe,
   Mail,
   Phone,
   Link,
@@ -14,8 +12,8 @@ import {
   EyeOff,
   Building2,
 } from "lucide-react";
-import { ErrorBanner, SuccessBanner } from "../components";
-import { type MeResponse } from "../api";
+import { ConsolePage, ErrorBanner, PageHeader, SuccessBanner } from "../components";
+import { apiDelete, apiGet, apiPatch, apiPost, type MeResponse, type SystemBanner, type SystemBannerCreate, type SystemBannerSeverity } from "../api";
 
 export interface BrandingConfig {
   product_name: string;
@@ -50,8 +48,16 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
   const [success, setSuccess] = useState<string | null>(null);
   const [branding, setBranding] = useState<BrandingConfig>(DEFAULT_BRANDING);
   const [draft, setDraft] = useState<BrandingConfig>(DEFAULT_BRANDING);
+  const [banners, setBanners] = useState<SystemBanner[]>([]);
+  const [bannerDraft, setBannerDraft] = useState<SystemBannerCreate>({
+    message: "Due to a scheduled update, Control Center will be unavailable on June 9, 2026 from 09:00 AM GMT+03:00 to 02:00 PM GMT+03:00.",
+    link_label: "Release Notes",
+    link_url: "https://example.com/release-notes",
+    severity: "warning",
+  });
   const [isDirty, setIsDirty] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
+  const isPlatformOwner = me.account.roles.some((role) => role.role_code === "platform_owner");
 
   // Live branding from /me scope
   useEffect(() => {
@@ -63,10 +69,10 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
         primary_color: meB.primary_color ?? DEFAULT_BRANDING.primary_color,
         accent_color: meB.accent_color ?? DEFAULT_BRANDING.accent_color,
         logo_url: meB.logo_url ?? DEFAULT_BRANDING.logo_url,
-        favicon_url: meB.favicon_url ?? DEFAULT_BRANDING.favicon_url,
+        favicon_url: DEFAULT_BRANDING.favicon_url,
         support_email: meB.support_email ?? DEFAULT_BRANDING.support_email,
         support_url: meB.support_url ?? DEFAULT_BRANDING.support_url,
-        support_phone: meB.support_phone ?? DEFAULT_BRANDING.support_phone,
+        support_phone: DEFAULT_BRANDING.support_phone,
         footer_note: meB.footer_note ?? DEFAULT_BRANDING.footer_note,
       };
       setBranding(loaded);
@@ -74,6 +80,13 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
     }
     setIsLoading(false);
   }, [me]);
+
+  useEffect(() => {
+    if (!isPlatformOwner) return;
+    apiGet<SystemBanner[]>("/system/banners/all")
+      .then(setBanners)
+      .catch(() => setBanners([]));
+  }, [isPlatformOwner]);
 
   const handleChange = (field: keyof BrandingConfig, value: string) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
@@ -84,9 +97,21 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
     setIsSaving(true);
     setError(null);
     try {
+      await apiPatch<MeResponse>("/branding", {
+        product_name: draft.product_name,
+        tagline: draft.tagline,
+        primary_color: draft.primary_color,
+        accent_color: draft.accent_color,
+        logo_url: draft.logo_url || null,
+        support_email: draft.support_email || null,
+        support_url: draft.support_url || null,
+        footer_note: draft.footer_note || null,
+      });
       setBranding(draft);
       setIsDirty(false);
-      setSuccess("Branding configuration saved locally.");
+      setSuccess("Branding configuration saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save branding configuration.");
     } finally {
       setIsSaving(false);
     }
@@ -95,6 +120,39 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
   const handleReset = () => {
     setDraft(branding);
     setIsDirty(false);
+  };
+
+  const handleCreateBanner = async () => {
+    if (!bannerDraft.message?.trim()) {
+      setError("Banner message is required.");
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      const created = await apiPost<SystemBanner>("/system/banners", {
+        ...bannerDraft,
+        link_label: bannerDraft.link_label?.trim() || null,
+        link_url: bannerDraft.link_url?.trim() || null,
+      });
+      setBanners((current) => [created, ...current]);
+      setSuccess("System banner published.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to publish banner.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDisableBanner = async (id: string) => {
+    setError(null);
+    try {
+      await apiDelete(`/system/banners/${id}`);
+      setBanners((current) => current.map((banner) => banner.id === id ? { ...banner, active: false } : banner));
+      setSuccess("System banner disabled.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to disable banner.");
+    }
   };
 
   if (isLoading) {
@@ -116,15 +174,11 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
   const previewBranding = previewMode ? draft : branding;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
+    <ConsolePage>
       {/* Header */}
       <div style={{ marginBottom: "24px" }}>
-        <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: "4px" }}>
-          Platform Settings
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
-          <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>Configuration</h1>
-          <div style={{ display: "flex", gap: "8px" }}>
+        <PageHeader eyebrow="Platform Settings" title="Configuration" subtitle="MSP white-label branding, support contacts, and global defaults." />
+        <div style={{ display: "flex", gap: "8px" }}>
             <button className="btn" onClick={() => setPreviewMode(!previewMode)}>
               {previewMode ? <EyeOff size={14} /> : <Eye size={14} />}
               {previewMode ? "Stop Preview" : "Preview Changes"}
@@ -145,7 +199,6 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
             <AlertTriangle size={13} /> Unsaved changes
           </div>
         )}
-      </div>
 
       {error && <ErrorBanner message={error} />}
       {success && <SuccessBanner message={success} />}
@@ -153,6 +206,66 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
       <div style={{ display: "flex", gap: "20px", flex: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
         {/* Left: settings form */}
         <div style={{ flex: "1 1 420px", minWidth: "320px", display: "flex", flexDirection: "column", gap: "20px" }}>
+          {isPlatformOwner && (
+            <div className="panel ownerBannerPanel">
+              <h3><AlertTriangle size={14} /> System Banner</h3>
+              <label>
+                Message
+                <textarea
+                  className="input"
+                  value={bannerDraft.message ?? ""}
+                  onChange={(event) => setBannerDraft((current) => ({ ...current, message: event.target.value }))}
+                  rows={3}
+                />
+              </label>
+              <div className="ownerBannerGrid">
+                <label>
+                  Severity
+                  <select
+                    className="input"
+                    value={bannerDraft.severity ?? "warning"}
+                    onChange={(event) => setBannerDraft((current) => ({ ...current, severity: event.target.value as SystemBannerSeverity }))}
+                  >
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </label>
+                <label>
+                  Ends at
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={bannerDraft.ends_at ?? ""}
+                    onChange={(event) => setBannerDraft((current) => ({ ...current, ends_at: event.target.value ? new Date(event.target.value).toISOString() : null }))}
+                  />
+                </label>
+              </div>
+              <div className="ownerBannerGrid">
+                <label>
+                  Link label
+                  <input className="input" value={bannerDraft.link_label ?? ""} onChange={(event) => setBannerDraft((current) => ({ ...current, link_label: event.target.value }))} />
+                </label>
+                <label>
+                  Link URL
+                  <input className="input" value={bannerDraft.link_url ?? ""} onChange={(event) => setBannerDraft((current) => ({ ...current, link_url: event.target.value }))} />
+                </label>
+              </div>
+              <button className="btn btnPrimary" type="button" onClick={handleCreateBanner} disabled={isSaving}>
+                Publish Banner
+              </button>
+              <div className="ownerBannerList">
+                {banners.length === 0 ? <span>No banners created.</span> : banners.map((banner) => (
+                  <article key={banner.id} className={!banner.active ? "inactive" : ""}>
+                    <strong>{banner.message}</strong>
+                    <span>{banner.severity} · {banner.active ? "active" : "inactive"}</span>
+                    {banner.active ? <button type="button" onClick={() => handleDisableBanner(banner.id)}>Disable</button> : null}
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Branding section */}
           <div className="panel" style={{ padding: "20px" }}>
             <h3 style={{ margin: "0 0 16px 0", fontSize: "13px", fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
@@ -266,7 +379,7 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
                 background: previewBranding.primary_color,
               }}
             >
-              {/* Mock sidebar header */}
+              {/* Sidebar header preview */}
               <div style={{ padding: "16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   {previewBranding.logo_url ? (
@@ -287,7 +400,7 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
                   </div>
                 </div>
               </div>
-              {/* Mock nav item */}
+              {/* Navigation item preview */}
               <div style={{ padding: "10px 12px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", borderRadius: "6px", background: previewBranding.accent_color + "22" }}>
                   <div style={{ width: "10px", height: "10px", borderRadius: "2px", background: previewBranding.accent_color }} />
@@ -330,6 +443,6 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
           </div>
         </div>
       </div>
-    </div>
+    </ConsolePage>
   );
 }

@@ -1,6 +1,13 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import jwt_tokens, tenancy
+
+
+def _owner_headers() -> dict[str, str]:
+    owner = tenancy.ensure_platform_owner("api-dlp-owner@aetherix.test", "API DLP Owner")
+    token, _ = jwt_tokens.issue(str(owner.id))
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_scan_route_uses_active_policy_mode(promote_default_policy) -> None:
@@ -51,5 +58,5 @@ def test_scan_route_returns_409_without_active_policy() -> None:
 
 
 def test_active_policy_route_returns_409_without_promoted_document() -> None:
-    response = TestClient(app).get("/policies/active")
+    response = TestClient(app).get("/policies/active", headers=_owner_headers())
     assert response.status_code == 409

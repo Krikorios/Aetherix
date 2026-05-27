@@ -355,3 +355,174 @@ def investigate_exposure(exposure_id: UUID, account: Account) -> EASMExposure:
 def remediate_exposure(exposure_id: UUID, account: Account) -> EASMExposure:
     """Transition an exposure to 'remediated'."""
     return _transition_exposure(exposure_id, account, "remediated")
+
+
+# --- Policy view + simulate (Phase 2) --------------------------------------
+
+_DRP_DEFAULT_CONTROLS: dict[str, bool] = {
+    "brand_misuse_detection": True,
+    "executive_impersonation": True,
+    "dark_web_credential_monitoring": True,
+    "leaked_secret_detection": True,
+}
+
+_EASM_DEFAULT_CONTROLS: dict[str, bool] = {
+    "continuous_port_scanning": True,
+    "certificate_lifecycle_monitoring": True,
+    "cloud_storage_exposure": True,
+    "subdomain_takeover_prevention": True,
+}
+
+_DRP_EVIDENCE = ["nist-csf-2.0:ID.RA", "iso27001-2022:A.5.7"]
+_EASM_EVIDENCE = ["nist-csf-2.0:PR.AC", "iso27001-2022:A.8.20"]
+
+# Actions that mutate the upstream asset / require approval.
+_DRP_DESTRUCTIVE = {"takedown", "remediate"}
+_EASM_DESTRUCTIVE = {"remediate"}
+
+
+def _module_policy_view(
+    account: Account,
+    customer_id: UUID | None,
+    module: str,
+    defaults: dict[str, bool],
+):
+    """Resolve effective policy for an external-risk module.
+
+    Falls back to a deterministic protected baseline when no policy is
+    assigned (matching the legacy hardcoded UI defaults but sourced
+    server-side).
+    """
+
+    from app.schemas import ExternalRiskPolicyView
+    from app.services import policy_v2 as policy_v2_service
+
+    now = _now()
+    policy_version = "v0-default"
+    approval_required = True
+    controls = dict(defaults)
+
+    if customer_id is not None:
+        try:
+            effective = policy_v2_service.effective_policy(
+                account,
+                customer_id=customer_id,
+            )
+            policy_version = effective.policy_version_hash[:12] or policy_version
+            modules = effective.resolved_policy.modules or {}
+            module_payload = modules.get(module)
+            if isinstance(module_payload, dict):
+                approval_required = bool(
+                    module_payload.get("approval_required", approval_required)
+                )
+                module_controls = module_payload.get("controls")
+                if isinstance(module_controls, dict):
+                    controls = {
+                        name: bool(value)
+                        for name, value in module_controls.items()
+                    }
+                elif module_payload.get("enabled", True) is False:
+                    controls = {name: False for name in controls}
+        except Exception:
+            # If policy resolution fails (no assignment, transient db error),
+            # fall back to defaults — UI still gets a coherent shape.
+            pass
+
+    status = "protected" if any(controls.values()) else "off"
+    return ExternalRiskPolicyView(
+        policy_version=policy_version,
+        last_updated=now,
+        status=status,
+        approval_required=approval_required,
+        controls=controls,
+    )
+
+
+def drp_policy_view(account: Account, customer_id: UUID | None):
+    return _module_policy_view(account, customer_id, "drp", _DRP_DEFAULT_CONTROLS)
+
+
+def easm_policy_view(account: Account, customer_id: UUID | None):
+    return _module_policy_view(account, customer_id, "easm", _EASM_DEFAULT_CONTROLS)
+
+
+def _simulation_preview(
+    *,
+    detection_id: str,
+    action: str,
+    destructive: bool,
+    approval_required: bool,
+    target_label: str,
+    evidence: list[str],
+):
+    from app.schemas import ExternalRiskSimulationPreview
+
+    impact: list[str] = [
+        f"Action: {action.replace('_', ' ')} will be applied to {target_label}.",
+    ]
+    if destructive:
+        impact.append(
+            "Marks the upstream entity as remediated and emits an evidence event."
+        )
+    elif action == "investigate":
+        impact.append("Moves the entity into the active investigation queue.")
+    else:
+        impact.append("Records analyst review; no state change to upstream entity.")
+
+    return ExternalRiskSimulationPreview(
+        id=f"sim-{uuid.uuid4()}",
+        detection_id=detection_id,
+        action=action,
+        destructive=destructive,
+        approval_required=approval_required or destructive,
+        affected_systems=1,
+        evidence_controls=evidence,
+        estimated_impact=impact,
+        created_at=_now(),
+    )
+
+
+def simulate_finding(finding_id: UUID, action: str, account: Account):
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM drp_findings WHERE id = %s", (finding_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise ExternalRiskError("finding not found")
+    _require_scope(
+        account, "view",
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+    )
+    policy = drp_policy_view(account, row["customer_id"])
+    destructive = action in _DRP_DESTRUCTIVE
+    return _simulation_preview(
+        detection_id=str(finding_id),
+        action=action,
+        destructive=destructive,
+        approval_required=policy.approval_required,
+        target_label=row.get("asset_display_name") or "DRP finding",
+        evidence=_DRP_EVIDENCE,
+    )
+
+
+def simulate_exposure(exposure_id: UUID, action: str, account: Account):
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM easm_exposures WHERE id = %s", (exposure_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise ExternalRiskError("exposure not found")
+    _require_scope(
+        account, "view",
+        partner_id=row["partner_id"],
+        customer_id=row["customer_id"],
+    )
+    policy = easm_policy_view(account, row["customer_id"])
+    destructive = action in _EASM_DESTRUCTIVE
+    return _simulation_preview(
+        detection_id=str(exposure_id),
+        action=action,
+        destructive=destructive,
+        approval_required=policy.approval_required,
+        target_label=row.get("asset_display_name") or "External exposure",
+        evidence=_EASM_EVIDENCE,
+    )

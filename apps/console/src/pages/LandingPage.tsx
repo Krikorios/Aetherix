@@ -1,7 +1,7 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Building2, KeyRound, Layers, ShieldCheck, UserCog } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Building2, Layers, ShieldCheck, UserCog } from "lucide-react";
 
-import { apiGet, getAccountId, setAccountId, type MeResponse } from "../api";
+import { apiGet, getAccessToken, logout, type MeResponse } from "../api";
 import { ErrorBanner, PageHeader, SuccessBanner } from "../components";
 
 export function LandingPage({
@@ -9,15 +9,13 @@ export function LandingPage({
 }: {
   onNavigate: (page: "companies" | "accounts" | "enrollment") => void;
 }) {
-  const [accountInput, setAccountInput] = useState(getAccountId() ?? "");
   const [me, setMe] = useState<MeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const loadMe = useCallback(async () => {
-    const accountId = getAccountId();
-    if (!accountId) {
+    if (!getAccessToken()) {
       setMe(null);
       setError(null);
       return;
@@ -37,33 +35,22 @@ export function LandingPage({
 
   useEffect(() => {
     void loadMe();
-    function onAccountChanged() {
-      setAccountInput(getAccountId() ?? "");
+    function onAuthChanged() {
       void loadMe();
     }
-    window.addEventListener("aetherix:account-changed", onAccountChanged);
-    window.addEventListener("storage", onAccountChanged);
+    window.addEventListener("aetherix:auth-changed", onAuthChanged);
+    window.addEventListener("storage", onAuthChanged);
     return () => {
-      window.removeEventListener("aetherix:account-changed", onAccountChanged);
-      window.removeEventListener("storage", onAccountChanged);
+      window.removeEventListener("aetherix:auth-changed", onAuthChanged);
+      window.removeEventListener("storage", onAuthChanged);
     };
   }, [loadMe]);
 
-  async function handleSignIn(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = accountInput.trim();
-    if (!trimmed) return;
-    setAccountId(trimmed);
-    setSuccess("Signed in. You can now open Companies to test subcompany scopes.");
-    await loadMe();
-  }
-
-  async function handleSignOut() {
-    setAccountId(null);
-    setAccountInput("");
+  function handleSignOut() {
+    logout();
     setMe(null);
     setError(null);
-    setSuccess("Signed out. Enter a different account ID to test another scope.");
+    setSuccess("Signed out.");
   }
 
   return (
@@ -71,7 +58,7 @@ export function LandingPage({
       <PageHeader
         eyebrow="Access control"
         title="Landing + Sign-in"
-        subtitle="Use this page to switch account scope quickly while testing partner and subcompany behavior."
+        subtitle="Use this page to validate signed-in scope while testing partner and company behavior."
       />
       {error ? <ErrorBanner message={error} /> : null}
       {success ? <SuccessBanner message={success} /> : null}
@@ -81,29 +68,20 @@ export function LandingPage({
           <div className="panelHeader">
             <div>
               <h2>Session authentication</h2>
-              <span>Paste any account UUID (platform owner, partner, or company account).</span>
+              <span>Session identity is derived from the bearer token.</span>
             </div>
-            <KeyRound size={18} />
+            <ShieldCheck size={18} />
           </div>
-          <form className="formStack" onSubmit={handleSignIn}>
-            <div className="formRow">
-              <label htmlFor="landingAccountId">Account ID</label>
-              <input
-                id="landingAccountId"
-                placeholder="00000000-0000-0000-0000-000000000000"
-                value={accountInput}
-                onChange={(event) => setAccountInput(event.target.value)}
-              />
-            </div>
+          <div className="formStack">
+            <p className="muted" style={{ margin: 0 }}>
+              {me ? `Signed in as ${me.account.email}.` : "No active session. Use the login flow to sign in."}
+            </p>
             <div className="formActions">
-              <button type="submit" className="btnPrimary" disabled={!accountInput.trim() || loading}>
-                Sign in
-              </button>
-              <button type="button" className="btnGhost" onClick={() => void handleSignOut()}>
+              <button type="button" className="btnGhost" onClick={handleSignOut} disabled={!me && !getAccessToken()}>
                 Sign out
               </button>
             </div>
-          </form>
+          </div>
         </article>
 
         <article className="panel">

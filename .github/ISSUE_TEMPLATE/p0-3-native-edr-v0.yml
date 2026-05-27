@@ -1,0 +1,46 @@
+name: P0-3 — Native AV/EDR v0 (deterministic)
+description: YARA + IOC + ransomware canaries + process tree + response actions. No ML.
+title: "[P0-3] Native AV/EDR v0 (deterministic-only)"
+labels: ["P0", "agent", "edr", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-3,
+        [docs/native-security-gap-review.md](../../docs/native-security-gap-review.md) Priority 4,
+        [docs/architecture.md §3.4.2](../../docs/architecture.md).
+
+        Skeleton already landed in `agent/src/edr/` — see
+        `mod.rs`, `yara_scan.rs`, `ioc.rs`, `ransomware.rs`,
+        `process_tree.rs`, `response.rs`.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        - `agent/src/edr/yara_scan.rs` — implement using `yara-x`
+          (pure-Rust). Rules pulled from control plane.
+        - `agent/src/edr/ioc.rs` — hash/IP/domain matching against
+          cached IOC feed.
+        - `agent/src/edr/ransomware.rs` — canary watcher + entropy
+          delta + mass-rename throttle.
+        - `agent/src/edr/process_tree.rs` — ETW (Windows), ESF (macOS),
+          eBPF/procfs (Linux).
+        - `agent/src/edr/response.rs` — quarantine / kill / isolate,
+          all policy-gated.
+        - Backend: `apps/api/app/services/edr.py` ingest +
+          `evidence_controls` mapping; new `edr` section in v2 policy
+          schema.
+        - Honesty rule: market as "Behavior & Anti-Ransomware" until
+          AV-Comparatives certification (P1-4).
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - EICAR + a YARA rule + a ransomware-canary trigger each
+          produce a `security_alerts` row with `evidence_controls`
+          tags.
+        - Compliance Evidence export contains the detections.
+        - All actions default to `monitor` until promoted via
+          Policy Engine v2 simulation.

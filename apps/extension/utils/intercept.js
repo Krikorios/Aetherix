@@ -11,6 +11,7 @@ import { sha256Hex } from "./hash.js";
 import { classifyText, policyActionFor } from "./classify.js";
 import { resolveDestinationSlug } from "./destinations.js";
 import { showToast } from "./toast.js";
+import { getDestinationContext, installLocationChangeWatcher } from "./site_context.js";
 
 const MSG_DECIDE = "aetherix.decide";
 const MSG_EVIDENCE = "aetherix.evidence";
@@ -18,6 +19,15 @@ const MSG_EVIDENCE = "aetherix.evidence";
 const MAX_TEXT_SCAN = 64 * 1024; // 64 KiB cap on local classification
 
 let destination = null;
+let destinationContext = null;
+const _boundShadowRoots = new WeakSet();
+let _lastSubmitDecisionAt = 0;
+let _lastSubmitContentHash = null;
+
+function refreshDestinationContext() {
+  destinationContext = getDestinationContext();
+  destination = destinationContext?.site || destination;
+}
 
 function sendMessage(type, payload) {
   return new Promise((resolve) => {
@@ -83,9 +93,11 @@ async function decideAndEmit({ eventType, sampleText, fileSummaries }) {
       ? await sha256Hex(JSON.stringify(fileSummaries))
       : "sha256:empty";
 
+  refreshDestinationContext();
   const req = {
     event_type: eventType,
     destination,
+    destination_context: destinationContext,
     label_detected: label,
     signals,
     policy_action_field: policyActionFor(eventType),
@@ -103,6 +115,7 @@ async function decideAndEmit({ eventType, sampleText, fileSummaries }) {
     action: `dlp.${eventType}_${decision}`,
     event_type: eventType,
     destination,
+    destination_context: destinationContext,
     label_detected: label,
     content_hash: contentHash,
     policy_action_field: req.policy_action_field,
@@ -274,15 +287,153 @@ function onDropCapture(ev) {
 
 // ---------- bootstrap ----------
 
+// ---------- composer submit safety net ----------
+//
+// Paste/upload/drop cover bytes the user introduces from elsewhere. They do
+// NOT cover text the user TYPES into the composer. For typed text we have to
+// observe the composer at submit time (Enter key / send-button click) and
+// classify the buffered prompt before the host page actually sends it.
+//
+// Strategy: scan visible composer elements (contenteditable / textarea) when
+// the user presses Enter without Shift, or when they click a send button.
+// We do not block the host page submit (that would break too many SPAs);
+// instead we always emit evidence with the classification, and on `block`
+// we surface a toast asking the user to remove the content. This matches
+// the deterministic-first principle: evidence-by-construction, with policy
+// enforcement deferred to the agent's outbound network interceptor.
+
+function findComposerNear(node) {
+  let cur = node;
+  while (cur && cur !== document.body) {
+    if (cur instanceof HTMLElement && (
+      cur.isContentEditable ||
+      cur instanceof HTMLTextAreaElement
+    )) {
+      return cur;
+    }
+    cur = cur.parentElement;
+  }
+  // Fall back to the active element.
+  const ae = document.activeElement;
+  if (ae instanceof HTMLElement && (ae.isContentEditable || ae instanceof HTMLTextAreaElement)) {
+    return ae;
+  }
+  return null;
+}
+
+function readComposerText(el) {
+  if (!el) return "";
+  if (el instanceof HTMLTextAreaElement) return el.value || "";
+  if (el.isContentEditable) return el.innerText || el.textContent || "";
+  return "";
+}
+
+async function handleComposerSubmit(composer) {
+  const text = (readComposerText(composer) || "").trim();
+  if (!text) return;
+  // Debounce identical submits within 750ms (Enter + send-button fire both).
+  const now = Date.now();
+  const hash = await sha256Hex(text);
+  if (hash === _lastSubmitContentHash && now - _lastSubmitDecisionAt < 750) return;
+  _lastSubmitContentHash = hash;
+  _lastSubmitDecisionAt = now;
+  await decideAndEmit({ eventType: "paste", sampleText: text });
+}
+
+function onKeyDownCapture(ev) {
+  if (ev.key !== "Enter" || ev.shiftKey || ev.isComposing) return;
+  const composer = findComposerNear(ev.target instanceof Element ? ev.target : null);
+  if (!composer) return;
+  // Don't block — let the host page submit. Evidence is emitted async.
+  handleComposerSubmit(composer).catch(() => {});
+}
+
+function onClickCapture(ev) {
+  const t = ev.target;
+  if (!(t instanceof Element)) return;
+  // Heuristic: send button is usually an aria-label containing "send" or a
+  // submit button inside a form near a composer. Cheap label check.
+  const btn = t.closest('button, [role="button"]');
+  if (!btn) return;
+  const label = (btn.getAttribute("aria-label") || btn.textContent || "").toLowerCase();
+  if (!/send|submit/.test(label)) return;
+  const composer = findComposerNear(btn);
+  if (!composer) return;
+  handleComposerSubmit(composer).catch(() => {});
+}
+
+// ---------- shadow DOM rebinding ----------
+
+function bindToRoot(root) {
+  if (!root || _boundShadowRoots.has(root)) return;
+  _boundShadowRoots.add(root);
+  root.addEventListener("paste", onPasteCapture, true);
+  root.addEventListener("copy", onCopyCapture, true);
+  root.addEventListener("change", onFileInputChange, true);
+  root.addEventListener("drop", onDropCapture, true);
+  root.addEventListener("keydown", onKeyDownCapture, true);
+  root.addEventListener("click", onClickCapture, true);
+}
+
+function scanForShadowRoots(node) {
+  if (!node) return;
+  if (node.shadowRoot) bindToRoot(node.shadowRoot);
+  let walker;
+  try {
+    walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
+  } catch {
+    return;
+  }
+  let el = walker.nextNode();
+  while (el) {
+    if (el.shadowRoot) bindToRoot(el.shadowRoot);
+    el = walker.nextNode();
+  }
+}
+
+function installShadowObserver() {
+  try {
+    const obs = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const added of m.addedNodes) {
+          if (added instanceof Element) scanForShadowRoots(added);
+        }
+      }
+    });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
+    scanForShadowRoots(document.documentElement);
+  } catch { /* ignore */ }
+}
+
+// ---------- bootstrap ----------
+
 export function bootstrap() {
   destination = resolveDestinationSlug(location.hostname);
   if (!destination) return false;
+  refreshDestinationContext();
 
   // capture=true so we run before the page's own handlers.
   document.addEventListener("paste", onPasteCapture, true);
   document.addEventListener("copy", onCopyCapture, true);
   document.addEventListener("change", onFileInputChange, true);
   document.addEventListener("drop", onDropCapture, true);
+  document.addEventListener("keydown", onKeyDownCapture, true);
+  document.addEventListener("click", onClickCapture, true);
+
+  installShadowObserver();
+
+  // Track SPA navigation so the agent has a per-conversation audit trail.
+  installLocationChangeWatcher(() => {
+    refreshDestinationContext();
+    sendMessage(MSG_EVIDENCE, {
+      action: "genai.navigation",
+      event_type: "navigation",
+      destination,
+      destination_context: destinationContext,
+      timestamp: new Date().toISOString(),
+      tab_url: location.href,
+    });
+  });
 
   return true;
 }

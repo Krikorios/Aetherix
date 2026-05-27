@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Playwright E2E tests",
+			"type": "shell",
+			"command": "npx playwright test e2e/policy-v2-critical-flows.spec.ts",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		}
+	]
+}

@@ -246,6 +246,21 @@ _SCHEMA_STATEMENTS = (
     create index if not exists enrolled_agents_customer_id_idx on enrolled_agents(customer_id)
     """,
     """
+    create table if not exists module_actions (
+        id uuid primary key,
+        endpoint_id text not null references enrolled_agents(agent_id),
+        action text not null,
+        payload jsonb,
+        status text not null default 'queued',
+        approval_required boolean not null default false,
+        created_by text not null,
+        created_at timestamptz not null,
+        processed_by text,
+        processed_at timestamptz,
+        evidence_controls jsonb not null default '[]'::jsonb
+    )
+    """,
+    """
     alter table heartbeats add column if not exists partner_id uuid references partners(id)
     """,
     """
@@ -558,38 +573,184 @@ _SCHEMA_STATEMENTS = (
     """
     create table if not exists compliance_reviews (
         id uuid primary key,
-        customer_id uuid not null references customers(id) on delete cascade,
+        customer_id uuid references customers(id) on delete cascade,
+        source_table text not null,
+        source_id text not null,
         framework text not null,
         control_id text not null,
-        status text not null,
-        reviewed_by text not null,
-        notes text,
-        reviewed_at timestamptz not null
+        reviewed_by_account_id uuid references accounts(id) on delete set null,
+        reviewed_by_role text not null,
+        reviewed_by_name text not null,
+        decision text not null,
+        note text,
+        reviewed_at timestamptz not null,
+        constraint ck_review_decision
+            check (decision in ('accept', 'reject', 'needs_more')),
+        constraint ck_review_framework check (
+            framework in (
+                'iso27001-2022', 'soc2-2017', 'nist-csf-2.0',
+                'gdpr', 'hipaa-security-rule'
+            )
+        ),
+        constraint ck_review_source_table check (
+            source_table in (
+                'compliance_controls', 'policy_documents', 'evidence_events',
+                'security_alerts', 'audit_log'
+            )
+        )
     )
+    """,
+    """alter table compliance_reviews add column if not exists source_table text""",
+    """alter table compliance_reviews add column if not exists source_id text""",
+    """alter table compliance_reviews add column if not exists reviewed_by_account_id uuid references accounts(id) on delete set null""",
+    """alter table compliance_reviews add column if not exists reviewed_by_role text""",
+    """alter table compliance_reviews add column if not exists reviewed_by_name text""",
+    """alter table compliance_reviews add column if not exists decision text""",
+    """alter table compliance_reviews add column if not exists note text""",
+    """
+    do $$
+    begin
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_reviews' and column_name = 'status') then
+            alter table compliance_reviews alter column status drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_reviews' and column_name = 'reviewed_by') then
+            alter table compliance_reviews alter column reviewed_by drop not null;
+        end if;
+    end $$
+    """,
+    """
+    create index if not exists ix_compliance_reviews_lookup
+    on compliance_reviews(source_table, source_id, framework, control_id)
+    """,
+    """
+    create index if not exists ix_compliance_reviews_customer
+    on compliance_reviews(customer_id, framework, reviewed_at)
     """,
     """
     create table if not exists compliance_attestations (
         id uuid primary key,
-        customer_id uuid not null references customers(id) on delete cascade,
+        customer_id uuid references customers(id) on delete cascade,
         framework text not null,
-        attested_by text not null,
-        notes text,
-        bundle_hash text not null,
-        status text not null,
-        attested_at timestamptz not null
+        period_start date not null,
+        period_end date not null,
+        attested_by_account_id uuid references accounts(id) on delete set null,
+        attested_role text not null,
+        attested_name text not null,
+        bundle_sha256 text not null,
+        signature text not null,
+        signature_algo text not null default 'hmac-sha256',
+        statement text not null,
+        created_at timestamptz not null,
+        constraint ck_attestation_period check (period_end >= period_start),
+        constraint ck_attestation_framework check (
+            framework in (
+                'iso27001-2022', 'soc2-2017', 'nist-csf-2.0',
+                'gdpr', 'hipaa-security-rule'
+            )
+        ),
+        constraint ck_attestation_bundle_sha256
+            check (bundle_sha256 ~ '^[0-9a-f]{64}$')
     )
+    """,
+    """alter table compliance_attestations add column if not exists period_start date""",
+    """alter table compliance_attestations add column if not exists period_end date""",
+    """alter table compliance_attestations add column if not exists attested_by_account_id uuid references accounts(id) on delete set null""",
+    """alter table compliance_attestations add column if not exists attested_role text""",
+    """alter table compliance_attestations add column if not exists attested_name text""",
+    """alter table compliance_attestations add column if not exists bundle_sha256 text""",
+    """alter table compliance_attestations add column if not exists signature text""",
+    """alter table compliance_attestations add column if not exists signature_algo text""",
+    """alter table compliance_attestations add column if not exists statement text""",
+    """alter table compliance_attestations add column if not exists created_at timestamptz""",
+    """
+    do $$
+    begin
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_attestations' and column_name = 'attested_by') then
+            alter table compliance_attestations alter column attested_by drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_attestations' and column_name = 'bundle_hash') then
+            alter table compliance_attestations alter column bundle_hash drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_attestations' and column_name = 'status') then
+            alter table compliance_attestations alter column status drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_attestations' and column_name = 'attested_at') then
+            alter table compliance_attestations alter column attested_at drop not null;
+        end if;
+    end $$
+    """,
+    """
+    create index if not exists ix_compliance_attestations_customer_framework
+    on compliance_attestations(customer_id, framework, period_end)
+    """,
+    """
+    create index if not exists ix_compliance_attestations_attested_by
+    on compliance_attestations(attested_by_account_id)
     """,
     """
     create table if not exists compliance_vault_references (
         id uuid primary key,
-        customer_id uuid not null references customers(id) on delete cascade,
+        customer_id uuid references customers(id) on delete cascade,
+        source_table text not null,
+        source_id text not null,
         framework text not null,
-        vault_provider text not null,
-        reference_uri text not null,
-        bundle_hash text not null,
-        status text not null,
-        exported_at timestamptz not null
+        storage_kind text not null,
+        storage_uri text not null,
+        sha256 text not null,
+        byte_size bigint not null,
+        created_at timestamptz not null,
+        constraint ck_vault_storage_kind
+            check (storage_kind in ('filesystem', 's3', 'blob')),
+        constraint ck_vault_framework check (
+            framework in (
+                'iso27001-2022', 'soc2-2017', 'nist-csf-2.0',
+                'gdpr', 'hipaa-security-rule'
+            )
+        ),
+        constraint ck_vault_source_table check (
+            source_table in (
+                'compliance_controls', 'policy_documents', 'evidence_events',
+                'security_alerts', 'audit_log'
+            )
+        ),
+        constraint ck_vault_sha256 check (sha256 ~ '^[0-9a-f]{64}$'),
+        constraint ck_vault_byte_size check (byte_size >= 0)
     )
+    """,
+    """alter table compliance_vault_references add column if not exists source_table text""",
+    """alter table compliance_vault_references add column if not exists source_id text""",
+    """alter table compliance_vault_references add column if not exists storage_kind text""",
+    """alter table compliance_vault_references add column if not exists storage_uri text""",
+    """alter table compliance_vault_references add column if not exists sha256 text""",
+    """alter table compliance_vault_references add column if not exists byte_size bigint""",
+    """alter table compliance_vault_references add column if not exists created_at timestamptz""",
+    """
+    do $$
+    begin
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_vault_references' and column_name = 'vault_provider') then
+            alter table compliance_vault_references alter column vault_provider drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_vault_references' and column_name = 'reference_uri') then
+            alter table compliance_vault_references alter column reference_uri drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_vault_references' and column_name = 'bundle_hash') then
+            alter table compliance_vault_references alter column bundle_hash drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_vault_references' and column_name = 'status') then
+            alter table compliance_vault_references alter column status drop not null;
+        end if;
+        if exists (select 1 from information_schema.columns where table_name = 'compliance_vault_references' and column_name = 'exported_at') then
+            alter table compliance_vault_references alter column exported_at drop not null;
+        end if;
+    end $$
+    """,
+    """
+    create index if not exists ix_compliance_vault_references_lookup
+    on compliance_vault_references(source_table, source_id, framework)
+    """,
+    """
+    create index if not exists ix_compliance_vault_references_customer
+    on compliance_vault_references(customer_id, framework, created_at)
     """,
     # --- Companies + Licensing + Accounts module ---------------------------
     """
@@ -759,7 +920,7 @@ _SCHEMA_STATEMENTS = (
     create table if not exists login_challenges (
         id uuid primary key,
         account_id uuid not null references accounts(id) on delete cascade,
-        purpose text not null check (purpose in ('totp_setup', 'totp_verify')),
+        purpose text not null check (purpose in ('totp_setup', 'totp_verify', 'recovery_code')),
         expires_at timestamptz not null,
         created_at timestamptz not null
     )
@@ -769,6 +930,81 @@ _SCHEMA_STATEMENTS = (
     """,
     """
     create index if not exists login_challenges_expires_idx on login_challenges(expires_at)
+    """,
+    """
+    create table if not exists recovery_codes (
+        id uuid primary key,
+        account_id uuid not null references accounts(id) on delete cascade,
+        code_hash text not null,
+        used boolean not null default false,
+        created_at timestamptz not null,
+        used_at timestamptz
+    )
+    """,
+    """
+    create index if not exists recovery_codes_account_idx on recovery_codes(account_id)
+    """,
+    """
+    create table if not exists oauth2_providers (
+        id uuid primary key,
+        partner_id uuid references partners(id),
+        name text not null,
+        provider_type text not null check (provider_type in ('google', 'microsoft', 'github', 'oidc_generic')),
+        client_id text not null,
+        client_secret text not null,
+        issuer_url text,
+        authorization_url text,
+        token_url text,
+        userinfo_url text,
+        scopes text not null default 'openid email profile',
+        enabled boolean not null default true,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create table if not exists oauth2_identities (
+        id uuid primary key,
+        account_id uuid not null references accounts(id) on delete cascade,
+        provider_id uuid not null references oauth2_providers(id) on delete cascade,
+        provider_subject text not null,
+        email text,
+        created_at timestamptz not null,
+        unique(provider_id, provider_subject)
+    )
+    """,
+    """
+    create index if not exists oauth2_identities_account_idx on oauth2_identities(account_id)
+    """,
+    """
+    create table if not exists oauth2_states (
+        id uuid primary key,
+        provider_id uuid not null references oauth2_providers(id) on delete cascade,
+        state_token text not null unique,
+        redirect_uri text,
+        expires_at timestamptz not null,
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists oauth2_states_token_idx on oauth2_states(state_token)
+    """,
+    """
+    create table if not exists system_banners (
+        id uuid primary key,
+        message text not null,
+        link_label text,
+        link_url text,
+        severity text not null default 'info' check (severity in ('info', 'warning', 'critical')),
+        starts_at timestamptz not null,
+        ends_at timestamptz,
+        active boolean not null default true,
+        created_by uuid references accounts(id),
+        created_at timestamptz not null
+    )
+    """,
+    """
+    create index if not exists system_banners_active_idx
+    on system_banners(active, starts_at, ends_at)
     """,
     """
     create table if not exists impersonation_sessions (
@@ -981,6 +1217,288 @@ _SCHEMA_STATEMENTS = (
         last_called_at timestamptz,
         primary key (customer_id, day)
     )
+    """,
+    # --- Subscription lifecycle (P1 #5) ------------------------------------
+    """
+    create table if not exists billing_customers (
+        customer_id uuid primary key references customers(id) on delete cascade,
+        provider text not null,
+        external_id text not null,
+        default_payment_method text,
+        status text not null default 'active',
+        created_at timestamptz not null,
+        updated_at timestamptz not null,
+        constraint ck_billing_customers_provider
+            check (provider in ('stripe', 'manual', 'mock'))
+    )
+    """,
+    """
+    create unique index if not exists billing_customers_provider_external_idx
+    on billing_customers(provider, external_id)
+    """,
+    """
+    create table if not exists subscription_instances (
+        id uuid primary key,
+        customer_id uuid not null unique references customers(id) on delete cascade,
+        subscription_id uuid not null references subscriptions(id),
+        status text not null default 'trialing',
+        trial_ends_at timestamptz,
+        current_period_start timestamptz,
+        current_period_end timestamptz,
+        cancel_at_period_end boolean not null default false,
+        canceled_at timestamptz,
+        provider text,
+        provider_subscription_id text,
+        seats integer not null default 0,
+        created_at timestamptz not null,
+        updated_at timestamptz not null,
+        constraint ck_subscription_status check (
+            status in ('trialing', 'active', 'past_due', 'canceled',
+                      'paused', 'incomplete')
+        )
+    )
+    """,
+    """
+    create index if not exists subscription_instances_status_idx
+    on subscription_instances(status)
+    """,
+    """
+    create table if not exists subscription_events (
+        id uuid primary key,
+        subscription_instance_id uuid not null
+            references subscription_instances(id) on delete cascade,
+        kind text not null,
+        payload jsonb not null default '{}'::jsonb,
+        source text not null default 'internal',
+        received_at timestamptz not null,
+        constraint ck_subscription_events_source
+            check (source in ('internal', 'webhook'))
+    )
+    """,
+    """
+    create index if not exists subscription_events_instance_idx
+    on subscription_events(subscription_instance_id, received_at desc)
+    """,
+    # --- Row-Level Security (RLS) — defense-in-depth for multi-tenancy -----
+    """
+    create schema if not exists app;
+    """,
+    """
+    create or replace function app.set_tenant_context(
+        p_partner_ids uuid[] default null,
+        p_customer_ids uuid[] default null
+    ) returns void
+    language plpgsql
+    as $$
+    begin
+        perform set_config('app.partner_ids', coalesce(p_partner_ids::text, ''), true);
+        perform set_config('app.customer_ids', coalesce(p_customer_ids::text, ''), true);
+    end;
+    $$;
+    """,
+    """
+    create or replace function app.current_has_tenant_access(
+        p_partner_id uuid default null,
+        p_customer_id uuid default null
+    ) returns boolean
+    language plpgsql
+    stable
+    as $$
+    declare
+        v_partner_ids uuid[];
+        v_customer_ids uuid[];
+    begin
+        -- Platform owners see everything (partner_ids/customer_ids are empty)
+        v_partner_ids := current_setting('app.partner_ids', true)::uuid[];
+        v_customer_ids := current_setting('app.customer_ids', true)::uuid[];
+
+        -- If neither context is set, allow (platform owner / unauthenticated)
+        if (v_partner_ids is null or array_length(v_partner_ids, 1) is null)
+           and (v_customer_ids is null or array_length(v_customer_ids, 1) is null) then
+            return true;
+        end if;
+
+        -- Check partner scope
+        if p_partner_id is not null
+           and v_partner_ids is not null
+           and array_length(v_partner_ids, 1) > 0 then
+            if p_partner_id = any(v_partner_ids) then
+                return true;
+            end if;
+        end if;
+
+        -- Check customer scope
+        if p_customer_id is not null
+           and v_customer_ids is not null
+           and array_length(v_customer_ids, 1) > 0 then
+            if p_customer_id = any(v_customer_ids) then
+                return true;
+            end if;
+        end if;
+
+        -- If p_customer_id was given but only partner scope is set, allow if
+        -- that customer belongs to one of the allowed partners.
+        if p_customer_id is not null
+           and v_partner_ids is not null
+           and array_length(v_partner_ids, 1) > 0 then
+            if exists (
+                select 1 from customers
+                where id = p_customer_id
+                  and partner_id = any(v_partner_ids)
+            ) then
+                return true;
+            end if;
+        end if;
+
+        return false;
+    end;
+    $$;
+    """,
+    """
+    -- Enable RLS on tenant-scoped tables
+    alter table if exists customers enable row level security;
+    alter table if exists heartbeats enable row level security;
+    alter table if exists alerts enable row level security;
+    alter table if exists security_alerts enable row level security;
+    alter table if exists incident_cases enable row level security;
+    alter table if exists telemetry_events enable row level security;
+    alter table if exists enrolled_agents enable row level security;
+    alter table if exists installer_builds enable row level security;
+    alter table if exists policy_documents_v2 enable row level security;
+    alter table if exists policy_assignments_v2 enable row level security;
+    alter table if exists custom_detection_rules enable row level security;
+    alter table if exists blocklist_entries enable row level security;
+    """,
+    """
+    -- Drop existing policies first (idempotent re-apply)
+    drop policy if exists customers_tenant_policy on customers;
+    drop policy if exists heartbeats_tenant_policy on heartbeats;
+    drop policy if exists alerts_tenant_policy on alerts;
+    drop policy if exists security_alerts_tenant_policy on security_alerts;
+    drop policy if exists incident_cases_tenant_policy on incident_cases;
+    drop policy if exists telemetry_events_tenant_policy on telemetry_events;
+    drop policy if exists enrolled_agents_tenant_policy on enrolled_agents;
+    drop policy if exists installer_builds_tenant_policy on installer_builds;
+    drop policy if exists policy_documents_v2_tenant_policy on policy_documents_v2;
+    drop policy if exists policy_assignments_v2_tenant_policy on policy_assignments_v2;
+    drop policy if exists custom_detection_rules_tenant_policy on custom_detection_rules;
+    drop policy if exists blocklist_entries_tenant_policy on blocklist_entries;
+    """,
+    """
+    -- RLS policy for customers: checks partner_id
+    create policy customers_tenant_policy on customers
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := id));
+    """,
+    """
+    -- RLS policy for heartbeats
+    create policy heartbeats_tenant_policy on heartbeats
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for alerts
+    create policy alerts_tenant_policy on alerts
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for security_alerts (no partner_id column — derive from customer_id)
+    create policy security_alerts_tenant_policy on security_alerts
+        for all
+        using (app.current_has_tenant_access(p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for incident_cases (no partner_id column)
+    create policy incident_cases_tenant_policy on incident_cases
+        for all
+        using (app.current_has_tenant_access(p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for telemetry_events (no partner_id column)
+    create policy telemetry_events_tenant_policy on telemetry_events
+        for all
+        using (app.current_has_tenant_access(p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for enrolled_agents
+    create policy enrolled_agents_tenant_policy on enrolled_agents
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for installer_builds
+    create policy installer_builds_tenant_policy on installer_builds
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for policy_documents_v2
+    create policy policy_documents_v2_tenant_policy on policy_documents_v2
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for policy_assignments_v2
+    create policy policy_assignments_v2_tenant_policy on policy_assignments_v2
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for custom_detection_rules
+    create policy custom_detection_rules_tenant_policy on custom_detection_rules
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    """
+    -- RLS policy for blocklist_entries
+    create policy blocklist_entries_tenant_policy on blocklist_entries
+        for all
+        using (app.current_has_tenant_access(p_partner_id := partner_id, p_customer_id := customer_id));
+    """,
+    # --- Ecosystem integrations (per-connector state, encrypted config) -----
+    """
+    create table if not exists integrations (
+        connector_id text primary key,
+        status text not null default 'disconnected',
+        config_ciphertext bytea,
+        config_fingerprint text,
+        last_sync timestamptz,
+        last_error text,
+        updated_at timestamptz not null default now(),
+        updated_by uuid references accounts(id),
+        constraint ck_integrations_status
+            check (status in ('connected', 'disconnected', 'error', 'configuring'))
+    )
+    """,
+    # --- Generated reports (persisted artifacts) ---------------------------
+    """
+    create table if not exists reports (
+        id uuid primary key,
+        type text not null,
+        title text not null,
+        description text not null default '',
+        status text not null default 'ready',
+        customer_id uuid references customers(id) on delete cascade,
+        partner_id uuid references partners(id) on delete cascade,
+        generated_at timestamptz not null default now(),
+        size_bytes integer not null default 0,
+        confidence integer not null default 0,
+        source_event_count integer not null default 0,
+        download_url text,
+        artifact jsonb not null default '{}'::jsonb,
+        generated_by uuid references accounts(id),
+        constraint ck_reports_status
+            check (status in ('ready', 'generating', 'failed', 'scheduled'))
+    )
+    """,
+    """
+    create index if not exists reports_customer_generated_idx
+    on reports(customer_id, generated_at desc)
+    """,
+    """
+    create index if not exists reports_type_generated_idx
+    on reports(type, generated_at desc)
     """,
 )
 

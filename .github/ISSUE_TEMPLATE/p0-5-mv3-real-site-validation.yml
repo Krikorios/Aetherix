@@ -1,0 +1,30 @@
+name: P0-5 — Real-site MV3 extension validation
+description: Validate the GenAI guardrail extension against ChatGPT, Claude, Gemini, Copilot.
+title: "[P0-5] Real-site MV3 extension validation"
+labels: ["P0", "extension", "dlp", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-5,
+        [docs/milestone-summary-2026-05-23.md](../../docs/milestone-summary-2026-05-23.md) Risks & Open Items #1.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        - Run `apps/extension/` end-to-end against ChatGPT, Claude,
+          Gemini, and Copilot.
+        - Capture and document selectors that drift; replace with
+          resilient DOM observers.
+        - Do NOT change the bridge architecture, origin allow-list,
+          or 256 KiB body cap.
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - Each of the four sites produces a `dlp-event` POST hitting
+          the local bridge with the expected `destination` field.
+        - Evidence row appears in the control plane for each.
+        - Selector resilience documented in `docs/agent-semantic-dlp-enforcement.md`.

@@ -2,15 +2,13 @@
 
 The Companies page is the MSP tenant foundation: customer lifecycle, licensing
 posture, seat usage, AI provider settings, and per-company deployment controls
-in one place. It is also where the local console exposes the dev sign-in
-surface.
+in one place.
 
-## Sign-in (dev)
+## Sign-in
 
-The header form accepts any platform owner / MSP partner / company-admin
-account UUID. The console stores the ID in `localStorage` and sends it as
-`X-Aetherix-Account` on every request. Production sign-in (password + 2FA)
-replaces this surface.
+The console uses the login + TOTP flow and stores a bearer session token in
+`localStorage`. API requests are authorized with
+`Authorization: Bearer <jwt>`.
 
 ## Company Hub table
 

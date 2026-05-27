@@ -16,7 +16,7 @@ import {
   ThumbsDown,
 } from "lucide-react";
 import { LoadingState } from "../components/protection/EmptyState";
-import { ErrorBanner, SuccessBanner } from "../components";
+import { ConsolePage, ErrorBanner, PageHeader, SuccessBanner } from "../components";
 import { apiGet, apiPost, type MeResponse } from "../api";
 
 export type InvestigationStatus = "open" | "in_progress" | "awaiting_approval" | "resolved" | "dismissed";
@@ -48,83 +48,6 @@ export interface AgentCase {
   updated_at: string;
   resolved_at?: string | null;
 }
-
-const DEMO_CASES: AgentCase[] = [
-  {
-    id: "case-001",
-    customer_id: null,
-    title: "Potential Lateral Movement — WIN-WORK-042",
-    summary:
-      "Correlated 3 events: abnormal SMB enumeration from WIN-WORK-042, credential access attempt on WIN-SRV-DC01, and an unusually-timed process execution (conhost.exe spawned by svchost.exe). Timeline suggests staged compromise attempt.",
-    status: "awaiting_approval",
-    confidence: "high",
-    confidence_pct: 87,
-    severity: "critical",
-    affected_endpoints: ["WIN-WORK-042", "WIN-SRV-DC01"],
-    related_events: 8,
-    mitre_tactics: ["Discovery", "Lateral Movement", "Credential Access"],
-    recommended_response: "Isolate WIN-WORK-042, rotate credentials for jdoe@northgate.internal, review DC01 auth logs.",
-    steps: [
-      { id: "s1", description: "Ingested endpoint telemetry from WIN-WORK-042", completed: true, timestamp: new Date(Date.now() - 3600000 * 2).toISOString() },
-      { id: "s2", description: "Correlated SMB enumeration events with user activity", completed: true, timestamp: new Date(Date.now() - 3600000 * 1.5).toISOString() },
-      { id: "s3", description: "Cross-referenced DLP events for data staging signals", completed: true, timestamp: new Date(Date.now() - 3600000).toISOString(), evidence: "No DLP events matched — staging not confirmed" },
-      { id: "s4", description: "Queried threat intel for IP 192.168.4.88", completed: true, timestamp: new Date(Date.now() - 1800000).toISOString(), evidence: "Internal IP — no external IoC match" },
-      { id: "s5", description: "Generated response recommendation", completed: true, timestamp: new Date(Date.now() - 900000).toISOString() },
-      { id: "s6", description: "Awaiting operator approval for isolation action", completed: false, timestamp: null },
-    ],
-    created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
-    updated_at: new Date(Date.now() - 900000).toISOString(),
-    resolved_at: null,
-  },
-  {
-    id: "case-002",
-    customer_id: null,
-    title: "Suspicious Scheduled Task Creation",
-    summary:
-      "Agent detected scheduled task created via schtasks.exe with a base64-encoded payload. Process lineage: explorer.exe → cmd.exe → schtasks.exe. Pattern is consistent with persistence via scheduled tasks (T1053.005).",
-    status: "in_progress",
-    confidence: "medium",
-    confidence_pct: 64,
-    severity: "high",
-    affected_endpoints: ["WIN-WORK-017"],
-    related_events: 5,
-    mitre_tactics: ["Persistence", "Execution"],
-    recommended_response: "Decode and analyse scheduled task payload, check for network callbacks, consider isolation.",
-    steps: [
-      { id: "s1", description: "Detected scheduled task creation event", completed: true, timestamp: new Date(Date.now() - 7200000).toISOString() },
-      { id: "s2", description: "Analysing process lineage and parent chain", completed: true, timestamp: new Date(Date.now() - 6000000).toISOString() },
-      { id: "s3", description: "Decoding Base64 payload", completed: false, timestamp: null },
-      { id: "s4", description: "Correlating with network telemetry", completed: false, timestamp: null },
-    ],
-    created_at: new Date(Date.now() - 7200000).toISOString(),
-    updated_at: new Date(Date.now() - 6000000).toISOString(),
-    resolved_at: null,
-  },
-  {
-    id: "case-003",
-    customer_id: null,
-    title: "False Positive: IT Asset Management Script",
-    summary:
-      "Flagged PowerShell-based asset discovery script run by IT admin. After correlating with scheduled maintenance window and admin identity context, agent assessed this as authorized activity.",
-    status: "resolved",
-    confidence: "confirmed",
-    confidence_pct: 98,
-    severity: "low",
-    affected_endpoints: ["WIN-WORK-001"],
-    related_events: 2,
-    mitre_tactics: ["Discovery"],
-    recommended_response: "No action required — add to allowlist to reduce future alerts.",
-    steps: [
-      { id: "s1", description: "Initial PowerShell execution alert", completed: true, timestamp: new Date(Date.now() - 86400000).toISOString() },
-      { id: "s2", description: "Correlated with maintenance window schedule", completed: true, timestamp: new Date(Date.now() - 86400000 + 600000).toISOString(), evidence: "Matched approved maintenance window MW-2024-06-12" },
-      { id: "s3", description: "Verified admin identity and intent", completed: true, timestamp: new Date(Date.now() - 86400000 + 1200000).toISOString() },
-      { id: "s4", description: "Closed as authorized activity", completed: true, timestamp: new Date(Date.now() - 86400000 + 1800000).toISOString() },
-    ],
-    created_at: new Date(Date.now() - 86400000).toISOString(),
-    updated_at: new Date(Date.now() - 86400000 + 1800000).toISOString(),
-    resolved_at: new Date(Date.now() - 86400000 + 1800000).toISOString(),
-  },
-];
 
 const CONFIDENCE_COLOR: Record<ConfidenceLevel, string> = {
   low: "var(--muted)",
@@ -158,9 +81,8 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
         const data = await apiGet<AgentCase[]>("/agentic/cases");
         setCases(data);
         if (data.length > 0) setSelectedId(data[0].id);
-      } catch {
-        setCases(DEMO_CASES);
-        setSelectedId(DEMO_CASES[0].id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load agentic investigation cases.");
       } finally {
         setIsLoading(false);
       }
@@ -172,13 +94,13 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
     if (!selectedCase) return;
     setIsApproving(true);
     try {
-      await apiPost(`/agentic/cases/${selectedCase.id}/approve`, {});
-    } catch {
-      // offline
+      const result = await apiPost<{ case: AgentCase }>(`/agentic/cases/${selectedCase.id}/approve`, {});
+      setCases((prev) => prev.map((c) => (c.id === selectedCase.id ? result.case : c)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to approve response.");
+      setIsApproving(false);
+      return;
     }
-    setCases((prev) =>
-      prev.map((c) => (c.id === selectedCase.id ? { ...c, status: "resolved" as InvestigationStatus, resolved_at: new Date().toISOString() } : c)),
-    );
     setSuccess(`Response approved and staged for: ${selectedCase.title}`);
     setIsApproving(false);
   };
@@ -187,13 +109,13 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
     if (!selectedCase) return;
     setIsApproving(true);
     try {
-      await apiPost(`/agentic/cases/${selectedCase.id}/dismiss`, {});
-    } catch {
-      // offline
+      const result = await apiPost<{ case: AgentCase }>(`/agentic/cases/${selectedCase.id}/dismiss`, {});
+      setCases((prev) => prev.map((c) => (c.id === selectedCase.id ? result.case : c)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to dismiss case.");
+      setIsApproving(false);
+      return;
     }
-    setCases((prev) =>
-      prev.map((c) => (c.id === selectedCase.id ? { ...c, status: "dismissed" as InvestigationStatus } : c)),
-    );
     setSuccess(`Case dismissed: ${selectedCase.title}`);
     setIsApproving(false);
   };
@@ -211,25 +133,14 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
-      {/* Header */}
-      <div style={{ marginBottom: "20px" }}>
-        <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: "4px" }}>
-          Autonomous Response
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>Agentic AI</h1>
-            <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "var(--muted)" }}>
-              Investigation agents correlate telemetry, DLP events, and threat intel into auditable timelines with confidence-scored recommendations.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <button className="btn" onClick={() => setIsSyncing(true)} disabled={isSyncing}>
-              <RefreshCw size={14} className={isSyncing ? "spin" : ""} />
-              {isSyncing ? "Syncing…" : "Refresh"}
-            </button>
-          </div>
+    <ConsolePage>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "20px" }}>
+        <PageHeader eyebrow="Autonomous Response" title="Agentic AI" subtitle="AI-driven investigation and response agents that correlate endpoint telemetry, DLP events, and threat intelligence." />
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <button className="btn" onClick={() => setIsSyncing(true)} disabled={isSyncing}>
+            <RefreshCw size={14} className={isSyncing ? "spin" : ""} />
+            {isSyncing ? "Syncing…" : "Refresh"}
+          </button>
         </div>
       </div>
 
@@ -430,6 +341,6 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
           )}
         </div>
       </div>
-    </div>
+    </ConsolePage>
   );
 }

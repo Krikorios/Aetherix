@@ -1,0 +1,32 @@
+name: P0-6 — CI hardening (cargo-audit / clippy / npm audit / pip-audit)
+description: Add security audit tooling to CI and fix or waive findings.
+title: "[P0-6] CI hardening"
+labels: ["P0", "ci", "security", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-6,
+        [docs/milestone-summary-2026-05-23.md](../../docs/milestone-summary-2026-05-23.md) Risks & Open Items #3.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        - `cargo audit` and `cargo clippy -- -D warnings` for `agent/`.
+        - `npm audit --audit-level=high` for the workspace.
+        - `pip-audit` for `apps/api/requirements.txt`.
+        - Fix findings or record waivers in `docs/security-waivers.md`.
+  - type: textarea
+    id: touches
+    attributes:
+      label: Files touched
+      value: |
+        - `.github/workflows/ci.yml`
+        - new `docs/security-waivers.md` (if waivers needed)
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - Green CI on main with all four audit steps enabled.

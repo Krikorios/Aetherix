@@ -75,10 +75,16 @@ def package_installer(
     binary_dir = _binary_dir_for_platform(platform)
     binary_path = os.path.join(binary_dir, binary_name)
     if not os.path.isfile(binary_path):
-        raise PackagerError(
-            f"Agent binary not found at {binary_path} "
-            f"(set AETHERIX_AGENT_BINARY_DIR to override)"
-        )
+        # Graceful fallback: check if alternative extension binary exists in the same resolved folder
+        alt_name = "aetherix-agent" if binary_name.endswith(".exe") else "aetherix-agent.exe"
+        alt_path = os.path.join(binary_dir, alt_name)
+        if os.path.isfile(alt_path):
+            binary_path = alt_path
+        else:
+            raise PackagerError(
+                f"Agent binary not found at {binary_path} "
+                f"(set AETHERIX_AGENT_BINARY_DIR to override)"
+            )
 
     profile_bytes = json.dumps(install_profile, indent=2).encode("utf-8")
 

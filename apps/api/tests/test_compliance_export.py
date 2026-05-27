@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app import db as app_db
 from app.main import app
 from app.schemas import AccountCreate, CompanyLicenseAssign, RoleAssignmentRequest
-from app.services import licensing, tenancy
+from app.services import jwt_tokens, licensing, tenancy
 
 
 def _make_customer() -> uuid.UUID:
@@ -37,6 +37,8 @@ def _make_customer() -> uuid.UUID:
 def test_compliance_export_contains_signed_iso_evidence(promote_default_policy) -> None:
     customer_id = _make_customer()
     promote_default_policy(mode="block", entities=["EMAIL_ADDRESS"])
+    owner = tenancy.ensure_platform_owner("compliance-owner-iso@aetherix.test", "Compliance Owner ISO")
+    token, _ = jwt_tokens.issue(str(owner.id))
 
     client = TestClient(app)
     scan_response = client.post(
@@ -51,6 +53,7 @@ def test_compliance_export_contains_signed_iso_evidence(promote_default_policy) 
 
     response = client.get(
         "/compliance/export",
+        headers={"Authorization": f"Bearer {token}"},
         params={"customer_id": str(customer_id), "framework": "iso27001-2022"},
     )
     assert response.status_code == 200
@@ -76,14 +79,17 @@ def test_compliance_export_contains_signed_iso_evidence(promote_default_policy) 
 
 def test_compliance_export_rejects_unknown_framework() -> None:
     customer_id = _make_customer()
+    owner = tenancy.ensure_platform_owner("compliance-owner-unknown@aetherix.test", "Compliance Owner Unknown")
+    token, _ = jwt_tokens.issue(str(owner.id))
     response = TestClient(app).get(
         "/compliance/export",
+        headers={"Authorization": f"Bearer {token}"},
         params={"customer_id": str(customer_id), "framework": "unknown"},
     )
     assert response.status_code == 400
 
 
-def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_templates) -> None:
+def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_templates, auth_headers) -> None:
     owner = tenancy.ensure_platform_owner("compliance-owner@aetherix.test", "Compliance Owner")
     partner_id = uuid.uuid4()
     customer_id = uuid.uuid4()
@@ -123,7 +129,7 @@ def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_template
     modules = deepcopy(policy_v2_templates["genai_focused"])
     create = TestClient(app).post(
         "/policies",
-        headers={"X-Aetherix-Account": str(msp.id)},
+        headers=auth_headers(str(msp.id)),
         json={
             "schema_version": "2.0",
             "name": "Compliance Flow Policy",
@@ -138,13 +144,13 @@ def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_template
 
     simulation = TestClient(app).post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": str(msp.id)},
+        headers=auth_headers(str(msp.id)),
     )
     assert simulation.status_code == 200, simulation.text
 
     promotion = TestClient(app).post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": str(msp.id)},
+        headers=auth_headers(str(msp.id)),
         json={
             "simulation_id": simulation.json()["id"],
             "operator_approved": True,
@@ -155,19 +161,20 @@ def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_template
 
     assign = TestClient(app).post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": str(msp.id)},
+        headers=auth_headers(str(msp.id)),
         json={"policy_id": policy_id, "customer_id": str(customer_id)},
     )
     assert assign.status_code == 201, assign.text
 
     effective = TestClient(app).get(
         f"/policies/effective?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": str(msp.id)},
+        headers=auth_headers(str(msp.id)),
     )
     assert effective.status_code == 200, effective.text
 
     export = TestClient(app).get(
         "/compliance/export",
+        headers=auth_headers(str(msp.id)),
         params={"customer_id": str(customer_id), "framework": "iso27001-2022"},
     )
     assert export.status_code == 200, export.text
@@ -192,78 +199,102 @@ def test_compliance_export_includes_policy_v2_evidence_events(policy_v2_template
     assert "A.8.12" in controls_with_evidence
 
 
-def test_compliance_v0_5_reviews_and_attestation_workflow() -> None:
+def test_compliance_v0_5_reviews_and_attestation_workflow(auth_headers) -> None:
     owner = tenancy.ensure_platform_owner("compliance-v5@aetherix.test", "Compliance Owner v0.5")
     customer_id = _make_customer()
     client = TestClient(app)
-    headers = {"X-Aetherix-Account": str(owner.id)}
+    headers = auth_headers(str(owner.id), **{"X-Aetherix-Customer": str(customer_id)})
+    evidence_id = uuid.uuid4()
+    bundle_sha256 = "a" * 64
+    now = datetime.now(UTC)
+
+    with app_db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into evidence_events (id, action, resource, actor, scope, payload, evidence_controls, created_at)
+            values (%s, 'dlp.scan', 'browser:chatgpt', 'agent', %s::jsonb, '{}'::jsonb, %s::jsonb, %s)
+            """,
+            (
+                evidence_id,
+                f'{ {"customer_id": str(customer_id)} }'.replace("'", '"'),
+                '["iso27001-2022:A.5.12"]',
+                now,
+            ),
+        )
+        cur.execute(
+            """
+            insert into compliance_vault_references (
+                id, customer_id, source_table, source_id, framework, storage_kind, storage_uri, sha256, byte_size, created_at
+            ) values (%s, %s, 'evidence_events', %s, 'iso27001-2022', 'filesystem', %s, %s, 128, %s)
+            """,
+            (uuid.uuid4(), customer_id, str(evidence_id), f"file:///tmp/{bundle_sha256}.json", bundle_sha256, now),
+        )
 
     r_list = client.get(
-        f"/compliance/reviews?customer_id={customer_id}&framework=iso27001-2022",
+        "/compliance/reviews?framework=iso27001-2022&source_table=evidence_events",
         headers=headers,
     )
     assert r_list.status_code == 200
-    assert len(r_list.json()) == 0
+    assert r_list.json()[0]["review_status"] == "pending"
 
     review_create = client.post(
-        f"/compliance/reviews?customer_id={customer_id}",
+        "/compliance/reviews",
         headers=headers,
         json={
+            "source_table": "evidence_events",
+            "source_id": str(evidence_id),
             "framework": "iso27001-2022",
             "control_id": "A.5.12",
-            "status": "reviewed",
-            "notes": "Validated semantic policies",
+            "decision": "accept",
+            "note": "Validated semantic policies",
+            "reviewed_by_role": "CISO",
+            "reviewed_by_name": "Compliance Owner v0.5",
         },
     )
-    assert review_create.status_code == 200
+    assert review_create.status_code == 201
     res = review_create.json()
-    assert res["status"] == "reviewed"
-    assert res["notes"] == "Validated semantic policies"
-    assert res["reviewed_by"] == owner.email
+    assert res["decision"] == "accept"
+    assert res["note"] == "Validated semantic policies"
+    assert res["reviewed_by_account_id"] == str(owner.id)
 
     r_list2 = client.get(
-        f"/compliance/reviews?customer_id={customer_id}&framework=iso27001-2022",
+        "/compliance/reviews?framework=iso27001-2022&source_table=evidence_events",
         headers=headers,
     )
     assert r_list2.status_code == 200
-    assert len(r_list2.json()) == 1
+    assert r_list2.json()[0]["review_status"] == "completed"
 
     a_list = client.get(
-        f"/compliance/attestations?customer_id={customer_id}&framework=iso27001-2022",
+        "/compliance/attestations?framework=iso27001-2022&period_end=2026-05-31",
         headers=headers,
     )
     assert a_list.status_code == 200
     assert len(a_list.json()) == 0
 
     attest_create = client.post(
-        f"/compliance/attestations?customer_id={customer_id}",
+        "/compliance/attestations",
         headers=headers,
         json={
             "framework": "iso27001-2022",
-            "notes": "Signed off on Q2 2026",
+            "period_start": "2026-05-01",
+            "period_end": "2026-05-31",
+            "attested_role": "CISO",
+            "attested_name": "Compliance Owner v0.5",
+            "statement": "Signed off on May ISO 27001 evidence.",
+            "bundle_sha256": bundle_sha256,
+            "signature": "signed-attestation-value",
+            "signature_algo": "hmac-sha256",
         },
     )
-    assert attest_create.status_code == 200
+    assert attest_create.status_code == 201
     res_a = attest_create.json()
-    assert res_a["status"] == "active"
-    assert res_a["notes"] == "Signed off on Q2 2026"
-    assert len(res_a["bundle_hash"]) == 64
+    assert res_a["attested_role"] == "CISO"
+    assert res_a["bundle_sha256"] == bundle_sha256
+    assert res_a["evidence_summary_count"] >= 1
 
     a_list2 = client.get(
-        f"/compliance/attestations?customer_id={customer_id}&framework=iso27001-2022",
+        "/compliance/attestations?framework=iso27001-2022&period_end=2026-05-31",
         headers=headers,
     )
     assert a_list2.status_code == 200
     assert len(a_list2.json()) == 1
-
-    vault_list = client.get(
-        f"/compliance/vault?customer_id={customer_id}&framework=iso27001-2022",
-        headers=headers,
-    )
-    assert vault_list.status_code == 200
-    assert len(vault_list.json()) == 1
-    vault_item = vault_list.json()[0]
-    assert vault_item["status"] == "sealed"
-    assert vault_item["vault_provider"] == "Azure Immutable Blob Storage (WORM Policy)"
-    assert vault_item["bundle_hash"] == res_a["bundle_hash"]
-    assert "https://" in vault_item["reference_uri"]

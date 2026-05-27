@@ -5,7 +5,13 @@ from fastapi.testclient import TestClient
 
 from app import db as app_db
 from app.main import app
-from app.services import audit
+from app.services import audit, jwt_tokens, tenancy
+
+
+def _owner_auth_header() -> dict[str, str]:
+    owner = tenancy.ensure_platform_owner("audit-owner@aetherix.test", "Audit Owner")
+    token, _ = jwt_tokens.issue(str(owner.id))
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_scan_writes_audit_record_without_storing_raw_text(promote_default_policy) -> None:
@@ -18,7 +24,7 @@ def test_scan_writes_audit_record_without_storing_raw_text(promote_default_polic
     )
     assert scan_response.status_code == 200
 
-    audit_response = client.get("/audit", params={"action": "dlp.scan"})
+    audit_response = client.get("/audit", params={"action": "dlp.scan"}, headers=_owner_auth_header())
     assert audit_response.status_code == 200
     records = audit_response.json()
     assert len(records) == 1
@@ -48,7 +54,7 @@ def test_rejected_heartbeat_is_audited(monkeypatch) -> None:
     client = TestClient(app)
     assert client.post("/agent/heartbeat", json=payload).status_code == 401
 
-    records = client.get("/audit", params={"action": "agent.heartbeat.rejected"}).json()
+    records = client.get("/audit", params={"action": "agent.heartbeat.rejected"}, headers=_owner_auth_header()).json()
     assert len(records) == 1
     assert records[0]["actor"] == "agent:agent-test"
     assert records[0]["resource"] == "agent:agent-test"
@@ -93,10 +99,10 @@ def test_signed_heartbeat_writes_audit(monkeypatch) -> None:
     client = TestClient(app)
     assert client.post("/agent/heartbeat", json=payload).status_code == 200
 
-    records = client.get("/audit", params={"action": "agent.heartbeat"}).json()
+    records = client.get("/audit", params={"action": "agent.heartbeat"}, headers=_owner_auth_header()).json()
     assert len(records) == 1
     assert records[0]["actor"] == "agent:agent-test"
 
-    verify = client.get("/audit/verify").json()
+    verify = client.get("/audit/verify", headers=_owner_auth_header()).json()
     assert verify["ok"] is True
     assert verify["first_bad_seq"] is None

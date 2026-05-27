@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import jwt_tokens, tenancy
 
 
 def _client(monkeypatch) -> TestClient:
@@ -8,8 +9,18 @@ def _client(monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+def _owner_headers() -> dict[str, str]:
+    owner = tenancy.ensure_platform_owner("agent-dlp-owner@aetherix.test", "Agent DLP Owner")
+    token, _ = jwt_tokens.issue(str(owner.id))
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _enroll(client: TestClient) -> dict:
-    token_response = client.post("/enrollment/tokens", json={"note": "dlp evidence", "ttl_seconds": 600})
+    token_response = client.post(
+        "/enrollment/tokens",
+        headers=_owner_headers(),
+        json={"note": "dlp evidence", "ttl_seconds": 600},
+    )
     assert token_response.status_code == 201, token_response.text
     token = token_response.json()["token"]
 

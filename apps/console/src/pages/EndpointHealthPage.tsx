@@ -1,23 +1,18 @@
 import React, { useState, useEffect } from "react";
 import {
   Shield,
-  RefreshCw,
   AlertTriangle,
   CheckCircle,
-  XCircle,
   Clock,
   Cpu,
-  Activity,
   WifiOff,
-  Package,
   GitBranch,
-  Layers,
-} from "lucide-react";
+  } from "lucide-react";
 import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
-import { LoadingState } from "../components/protection/EmptyState";
+import { EmptyState, LoadingState } from "../components/protection/EmptyState";
 import {
   Detection,
   StagedAction,
@@ -129,87 +124,15 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
     async function load() {
       try {
         const customerId = me.scope.customer_ids[0];
-        const url = customerId ? `/endpoints?customer_id=${customerId}` : `/endpoints`;
+        const url = customerId ? `/endpoints/health?customer_id=${customerId}` : `/endpoints/health`;
         const data = await apiGet<EndpointHealthRecord[]>(url);
         setEndpoints(data);
         if (data.length > 0) {
           setSelectedId(data[0].id);
           setSelectedAction(data[0].status === "healthy" ? "no_action_required" : "push_policy_update");
         }
-      } catch {
-        const fallback: EndpointHealthRecord[] = [
-          {
-            id: "ep-001",
-            customer_id: me.scope.customer_ids[0] || null,
-            endpoint_name: "WIN-WORK-001",
-            hostname: "WIN-WORK-001",
-            os: "Windows 11 22H2",
-            agent_version: "1.4.2",
-            latest_agent_version: "1.4.2",
-            policy_version: "v2.10.4",
-            active_policy_version: "v2.10.4",
-            status: "healthy",
-            last_heartbeat: new Date(Date.now() - 60000).toISOString(),
-            risk_score: 12,
-            open_alerts: 0,
-            pending_actions: 0,
-            tags: ["finance", "tier-1"],
-          },
-          {
-            id: "ep-002",
-            customer_id: me.scope.customer_ids[0] || null,
-            endpoint_name: "WIN-WORK-042",
-            hostname: "WIN-WORK-042",
-            os: "Windows 10 21H2",
-            agent_version: "1.3.8",
-            latest_agent_version: "1.4.2",
-            policy_version: "v2.9.1",
-            active_policy_version: "v2.10.4",
-            status: "drifted",
-            last_heartbeat: new Date(Date.now() - 300000).toISOString(),
-            risk_score: 62,
-            open_alerts: 2,
-            pending_actions: 1,
-            tags: ["operations"],
-          },
-          {
-            id: "ep-003",
-            customer_id: me.scope.customer_ids[0] || null,
-            endpoint_name: "LINUX-SRV-08",
-            hostname: "LINUX-SRV-08",
-            os: "Ubuntu 22.04 LTS",
-            agent_version: "1.4.1",
-            latest_agent_version: "1.4.2",
-            policy_version: "v2.10.3",
-            active_policy_version: "v2.10.4",
-            status: "attention",
-            last_heartbeat: new Date(Date.now() - 1800000).toISOString(),
-            risk_score: 47,
-            open_alerts: 3,
-            pending_actions: 0,
-            tags: ["server", "critical-infra"],
-          },
-          {
-            id: "ep-004",
-            customer_id: me.scope.customer_ids[0] || null,
-            endpoint_name: "WIN-WORK-017",
-            hostname: "WIN-WORK-017",
-            os: "Windows 11 23H2",
-            agent_version: "1.4.2",
-            latest_agent_version: "1.4.2",
-            policy_version: "v2.10.4",
-            active_policy_version: "v2.10.4",
-            status: "offline",
-            last_heartbeat: new Date(Date.now() - 86400000).toISOString(),
-            risk_score: 78,
-            open_alerts: 5,
-            pending_actions: 3,
-            tags: ["remote-worker"],
-          },
-        ];
-        setEndpoints(fallback);
-        setSelectedId(fallback[0].id);
-        setSelectedAction("no_action_required");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load endpoint health.");
       } finally {
         setIsLoading(false);
       }
@@ -221,7 +144,8 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
     setIsSyncing(true);
     setError(null);
     try {
-      await new Promise((r) => setTimeout(r, 600));
+      const customerId = me.scope.customer_ids[0];
+      await apiGet(customerId ? `/endpoints/health?customer_id=${customerId}` : "/endpoints/health");
       setPolicy((prev) => ({ ...prev, last_updated: new Date().toISOString() }));
       setSuccess("Health monitoring policies synced from Policy Engine v2.");
     } catch {
@@ -236,25 +160,11 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
     setIsWorking(true);
     setError(null);
     try {
-      await apiPost(`/endpoints/${selectedEndpoint.id}/simulate-remediation`, {});
-    } catch {
-      const sim: SimulationPreview = {
-        id: `sim-ep-${selectedEndpoint.id}-${Date.now()}`,
-        detection_id: selectedEndpoint.id,
-        action: selectedAction,
-        destructive: false,
-        approval_required: policy.approval_required,
-        affected_systems: 1,
-        estimated_impact: [
-          `Push updated policy ${selectedEndpoint.active_policy_version} to endpoint ${selectedEndpoint.hostname}.`,
-          `Agent will reload policy within next heartbeat cycle (≈30s).`,
-          `No service interruption expected.`,
-        ],
-        evidence_controls: ["iso27001-2022:A.8.9", "nist-csf-2.0:PR.PS"],
-        created_at: new Date().toISOString(),
-      };
+      const sim = await apiPost<SimulationPreview>(`/endpoints/${selectedEndpoint.id}/simulate-remediation`, { action: selectedAction });
       setSimulation(sim);
       setSuccess("Remediation simulation complete — ready to stage.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Endpoint remediation simulation failed.");
     } finally {
       setIsWorking(false);
     }
@@ -282,8 +192,8 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
         ),
       );
       setSuccess(`Remediation queued for ${selectedEndpoint.hostname}.`);
-    } catch {
-      setSuccess(`Action queued locally for ${selectedEndpoint.hostname}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to queue endpoint remediation.");
     } finally {
       setIsWorking(false);
     }
@@ -331,6 +241,9 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
         ]}
       />
 
+      {endpoints.length === 0 ? (
+        <EmptyState icon={Shield} title="No endpoint heartbeats yet" message="Enrolled agents will appear here after they send signed heartbeats." />
+      ) : (
       <section className="panelWorkspace" aria-label="Endpoint Health Board">
         <DetectionTable
           detections={detections}
@@ -418,6 +331,7 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
           ]}
         />
       </section>
+      )}
     </ConsolePage>
   );
 }

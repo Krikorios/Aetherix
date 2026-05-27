@@ -12,6 +12,7 @@ pub enum DlpEventType {
     Paste,
     Upload,
     Copy,
+    UsbMounted,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -106,6 +107,11 @@ pub fn evaluate_event(policy: &RuntimePolicy, event: &DlpEvent) -> Option<Enforc
             "genai_copy_detected",
             "copy_to_genai",
         ),
+        DlpEventType::UsbMounted => (
+            DlpAction::Block, // Hardcoded block for POC, would come from policy in prod
+            "usb_mounted",
+            "usb_control",
+        ),
     };
 
     Some(EnforcementDecision {
@@ -149,6 +155,7 @@ mod tests {
                     endpoint_enforcement: true,
                     actions: guardrails_actions,
                 },
+                ..Default::default()
             },
         }
     }
@@ -261,6 +268,7 @@ mod tests {
                         ..SemanticActions::default()
                     },
                 },
+                ..Default::default()
             },
         };
 

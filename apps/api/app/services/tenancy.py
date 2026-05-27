@@ -6,9 +6,8 @@ queries ``accounts``/``account_roles`` directly; it goes through the
 functions defined here.
 
 Authentication itself is intentionally out of scope for this module —
-the API uses ``resolve_current_account`` which reads ``X-Aetherix-Account``
-(account id) until real session auth lands. Permission evaluation,
-however, is final here and shared by every endpoint.
+the API resolves the current account from bearer-session authentication,
+while permission evaluation is final here and shared by every endpoint.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ from app.schemas import (
     DEFAULT_BRANDING,
     MeResponse,
     PermissionLevel,
+    RecoveryCodeList,
     Role,
     RoleAssignment,
     RoleAssignmentRequest,
@@ -145,7 +145,7 @@ def _load_assignments(cur, account_id: UUID) -> list[RoleAssignment]:
     ]
 
 
-def create_account(payload: AccountCreate) -> Account:
+def create_account(payload: AccountCreate, *, actor: "Account | None" = None) -> Account:
     email = payload.email.strip().lower()
     if "@" not in email:
         raise TenancyError("email must contain '@'")
@@ -187,6 +187,7 @@ def create_account(payload: AccountCreate) -> Account:
                 request=payload.initial_role,
                 granted_by=payload.created_by,
                 now=now,
+                actor=actor,
             )
             assignments.append(assignment)
 
@@ -350,7 +351,7 @@ def touch_last_login(account_id: UUID) -> None:
 
 
 def create_login_challenge(account_id: UUID, purpose: str, ttl_seconds: int) -> UUID:
-    if purpose not in ("totp_setup", "totp_verify"):
+    if purpose not in ("totp_setup", "totp_verify", "recovery_code"):
         raise TenancyError("invalid challenge purpose")
     challenge_id = uuid.uuid4()
     now = datetime.now(UTC)
@@ -442,9 +443,100 @@ def list_accounts() -> list[Account]:
     return results
 
 
+def account_visible_to(actor: Account, target: Account) -> bool:
+    """Return True iff ``actor``'s tenant scope intersects ``target``.
+
+    - Platform owners see every account.
+    - An account with no role assignments at all (a freshly-created
+      invitee) is only visible to platform owners and to the actor who
+      created it (handled by the caller via the audit log; here we
+      conservatively return False).
+    - Otherwise actor must share at least one partner_id or customer_id
+      with one of ``target``'s role assignments.
+    """
+
+    scope = compute_scope(actor)
+    if scope.is_platform:
+        return True
+    if actor.id == target.id:
+        return True  # self-visibility for /me-style flows
+    actor_partners = set(scope.partner_ids)
+    actor_customers = set(scope.customer_ids)
+    for assignment in target.roles:
+        if assignment.role_code == "platform_owner":
+            # Only platform owners may see other platform owners.
+            continue
+        if assignment.partner_id and assignment.partner_id in actor_partners:
+            return True
+        if assignment.customer_id and assignment.customer_id in actor_customers:
+            return True
+        # MSP partner can see company_* whose customer belongs to the partner.
+        if assignment.customer_id and actor_partners:
+            # Lookup the customer's owning partner. Cached not yet — this is
+            # the slow path; account listings are low-volume so an extra
+            # SELECT per account is acceptable.
+            with connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "select partner_id from customers where id = %s",
+                    (assignment.customer_id,),
+                )
+                row = cur.fetchone()
+                if row is not None and row["partner_id"] in actor_partners:
+                    return True
+    return False
+
+
+def list_accounts_for(actor: Account) -> list[Account]:
+    """Tenant-scoped variant of :func:`list_accounts`."""
+
+    all_accounts = list_accounts()
+    scope = compute_scope(actor)
+    if scope.is_platform:
+        return all_accounts
+    return [a for a in all_accounts if account_visible_to(actor, a)]
+
+
 # ---------------------------------------------------------------------------
 # Role assignments
 # ---------------------------------------------------------------------------
+
+
+def _actor_can_grant(actor: "Account | None", request: RoleAssignmentRequest) -> bool:
+    """Return True iff ``actor`` is allowed to grant ``request``.
+
+    Rules:
+      - ``actor=None`` is reserved for the bootstrap/system path and may
+        grant any role. Callers reach this only via
+        ``ensure_platform_owner`` and ``accept_invite``.
+      - ``platform_owner`` may only be granted by a platform_owner.
+      - ``msp_partner`` may be granted by a platform_owner or by an
+        msp_partner whose own assignment covers the same partner_id.
+      - ``company_*`` roles may be granted by any actor with
+        ``accounts:manage`` on the target ``(partner_id, customer_id)``
+        scope (platform owners and matching MSP partners qualify, as do
+        company admins on the same customer).
+    """
+
+    if actor is None:
+        return True
+    code = request.role_code
+    if code == "platform_owner":
+        return any(a.role_code == "platform_owner" for a in actor.roles)
+    if code == "msp_partner":
+        if any(a.role_code == "platform_owner" for a in actor.roles):
+            return True
+        return any(
+            a.role_code == "msp_partner" and a.partner_id == request.partner_id
+            for a in actor.roles
+        )
+    # company_* roles: defer to permission engine with the target scope.
+    return has_permission(
+        actor,
+        "accounts",
+        "manage",
+        partner_id=request.partner_id,
+        customer_id=request.customer_id,
+    )
 
 
 def _insert_role_assignment(
@@ -454,6 +546,7 @@ def _insert_role_assignment(
     request: RoleAssignmentRequest,
     granted_by: str,
     now: datetime,
+    actor: "Account | None" = None,
 ) -> RoleAssignment:
     cur.execute("select 1 from roles where code = %s", (request.role_code,))
     if cur.fetchone() is None:
@@ -471,6 +564,11 @@ def _insert_role_assignment(
     else:  # company_*
         if not request.customer_id:
             raise TenancyError(f"{role_code} role requires customer_id")
+
+    if not _actor_can_grant(actor, request):
+        raise TenancyError(
+            f"actor not authorized to grant role {role_code!r} in this scope"
+        )
 
     assignment_id = uuid.uuid4()
     cur.execute(
@@ -523,6 +621,7 @@ def assign_role(
     request: RoleAssignmentRequest,
     *,
     granted_by: str,
+    actor: "Account | None" = None,
 ) -> RoleAssignment:
     now = datetime.now(UTC)
     with connection() as conn, conn.cursor() as cur:
@@ -535,6 +634,7 @@ def assign_role(
             request=request,
             granted_by=granted_by,
             now=now,
+            actor=actor,
         )
 
 
@@ -771,3 +871,250 @@ def _find_by_email(email: str) -> Account | None:
     if row is None:
         return None
     return get_account(row["id"])
+
+
+def find_account_by_email(email: str) -> Account | None:
+    return _find_by_email(email)
+
+
+# ---------------------------------------------------------------------------
+# Recovery codes
+# ---------------------------------------------------------------------------
+
+RECOVERY_CODE_COUNT = 10
+RECOVERY_CODE_BYTES = 10  # 80 bits → 14 base32 chars
+
+
+def _hash_recovery_code(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def _generate_plaintext_recovery_code() -> str:
+    raw = secrets.token_bytes(RECOVERY_CODE_BYTES)
+    return base64.b32encode(raw).decode("ascii").rstrip("=")
+
+
+def generate_recovery_codes(account_id: UUID) -> list[str]:
+    """Generate, persist, and return ``RECOVERY_CODE_COUNT`` plaintext codes.
+
+    Any previously-issued codes for this account are invalidated first so
+    there is only ever one active set at a time.
+    """
+    invalidate_all_recovery_codes(account_id)
+    now = datetime.now(UTC)
+    codes: list[str] = []
+    with connection() as conn, conn.cursor() as cur:
+        for _ in range(RECOVERY_CODE_COUNT):
+            plain = _generate_plaintext_recovery_code()
+            codes.append(plain)
+            cur.execute(
+                """
+                insert into recovery_codes (id, account_id, code_hash, created_at)
+                values (%s, %s, %s, %s)
+                """,
+                (uuid.uuid4(), account_id, _hash_recovery_code(plain), now),
+            )
+    return codes
+
+
+def verify_recovery_code(account_id: UUID, code: str) -> bool:
+    """Check a plaintext code against unused hashes.
+
+    On match, the code row is marked as used and the function returns True.
+    If no match is found returns False.
+    """
+    hashed = _hash_recovery_code(code.strip())
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id from recovery_codes
+            where account_id = %s and code_hash = %s and used = false
+            for update skip locked
+            """,
+            (account_id, hashed),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return False
+        cur.execute(
+            "update recovery_codes set used = true, used_at = %s where id = %s",
+            (datetime.now(UTC), row["id"]),
+        )
+    return True
+
+
+def list_recovery_codes(account_id: UUID) -> RecoveryCodeList:
+    codes = count_remaining_recovery_codes(account_id)
+    # We never return the actual plaintext codes after generation —
+    # just metadata (count of remaining ones). The plaintext was shown
+    # exactly once during ``generate_recovery_codes``.
+    return RecoveryCodeList(codes=[], remaining=codes)
+
+
+def count_remaining_recovery_codes(account_id: UUID) -> int:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) as n from recovery_codes where account_id = %s and used = false",
+            (account_id,),
+        )
+        return int(cur.fetchone()["n"])
+
+
+def invalidate_all_recovery_codes(account_id: UUID) -> None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "update recovery_codes set used = true, used_at = %s where account_id = %s and used = false",
+            (datetime.now(UTC), account_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# OAuth2 / SSO
+# ---------------------------------------------------------------------------
+
+
+def create_oauth2_state(provider_id: UUID, state_token: str, redirect_uri: str | None, ttl_seconds: int) -> UUID:
+    state_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into oauth2_states (id, provider_id, state_token, redirect_uri, expires_at, created_at)
+            values (%s, %s, %s, %s, %s, %s)
+            """,
+            (state_id, provider_id, state_token, redirect_uri, expires_at, now),
+        )
+    return state_id
+
+
+def consume_oauth2_state(state_token: str) -> dict | None:
+    """Return provider_id, redirect_uri for a valid state, or None."""
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            delete from oauth2_states
+            where state_token = %s and expires_at > %s
+            returning provider_id, redirect_uri
+            """,
+            (state_token, now),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return {"provider_id": row["provider_id"], "redirect_uri": row["redirect_uri"]}
+
+
+def list_oauth2_providers() -> list[dict]:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, partner_id, name, provider_type, client_id,
+                   issuer_url, authorization_url, token_url, userinfo_url,
+                   scopes, enabled, created_at
+            from oauth2_providers
+            where enabled = true
+            order by name
+            """
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_oauth2_provider(provider_id: UUID) -> dict | None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, partner_id, name, provider_type, client_id, client_secret,
+                   issuer_url, authorization_url, token_url, userinfo_url,
+                   scopes, enabled, created_at
+            from oauth2_providers
+            where id = %s
+            """,
+            (provider_id,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def upsert_oauth2_identity(account_id: UUID, provider_id: UUID, provider_subject: str, email: str | None) -> None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into oauth2_identities (id, account_id, provider_id, provider_subject, email, created_at)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (provider_id, provider_subject)
+            do update set account_id = excluded.account_id, email = coalesce(excluded.email, oauth2_identities.email)
+            """,
+            (uuid.uuid4(), account_id, provider_id, provider_subject, email, datetime.now(UTC)),
+        )
+
+
+def find_account_by_oauth2_identity(provider_id: UUID, provider_subject: str) -> UUID | None:
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select account_id from oauth2_identities
+            where provider_id = %s and provider_subject = %s
+            """,
+            (provider_id, provider_subject),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return row["account_id"]
+
+
+def create_oauth2_provider(payload: dict) -> dict:
+    import app.schemas as schemas
+    provider_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into oauth2_providers (
+                id, partner_id, name, provider_type, client_id, client_secret,
+                issuer_url, authorization_url, token_url, userinfo_url,
+                scopes, enabled, created_at
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true, %s)
+            returning *
+            """,
+            (
+                provider_id,
+                payload.get("partner_id"),
+                payload["name"],
+                payload["provider_type"],
+                payload["client_id"],
+                payload["client_secret"],
+                payload.get("issuer_url"),
+                payload.get("authorization_url"),
+                payload.get("token_url"),
+                payload.get("userinfo_url"),
+                payload.get("scopes", "openid email profile"),
+                now,
+            ),
+        )
+        return dict(cur.fetchone())
+
+
+def update_oauth2_provider(provider_id: UUID, payload: dict) -> dict | None:
+    fields = []
+    values = []
+    for key in ("name", "client_id", "client_secret", "issuer_url", "authorization_url", "token_url", "userinfo_url", "scopes", "enabled"):
+        if key in payload and payload[key] is not None:
+            fields.append(f"{key} = %s")
+            values.append(payload[key])
+    if not fields:
+        return get_oauth2_provider(provider_id)
+    values.append(provider_id)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"update oauth2_providers set {', '.join(fields)} where id = %s returning *",
+            values,
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    return dict(row)

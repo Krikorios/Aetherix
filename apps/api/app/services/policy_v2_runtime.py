@@ -25,7 +25,7 @@ from app.services.compliance import controls_for_event
 from app.services.crypto import canonical_json
 
 
-DESTRUCTIVE_ACTIONS = {"block", "isolate", "rollback"}
+DESTRUCTIVE_ACTIONS = {"block", "isolate", "rollback", "quarantine", "kill"}
 REVIEW_ACTIONS = {"review", "operator_required", "monitor"}
 ALLOWED_POLICY_ACTIONS = {"allow", "review", "block"}
 DEFAULT_SENSITIVITY_LABELS = ["Public", "Internal", "Confidential", "Restricted"]
@@ -194,6 +194,8 @@ class PolicySimulationService:
         "block": 12,
         "isolate": 24,
         "rollback": 18,
+        "quarantine": 10,
+        "kill": 14,
         "review": 4,
         "enabled": 1,
         "disabled": 0,
@@ -203,8 +205,21 @@ class PolicySimulationService:
         "antimalware": ["iso27001-2022:A.8.7", "soc2-2017:CC7.2"],
         "behavior_monitoring": ["iso27001-2022:A.8.16", "nist-csf-2.0:DE.CM"],
         "ransomware_mitigation": ["iso27001-2022:A.8.7", "soc2-2017:CC6.1"],
+        "anti_exploit": ["iso27001-2022:A.8.7", "nist-csf-2.0:PR.PS"],
+        "edr": ["iso27001-2022:A.8.16", "soc2-2017:CC7.2", "nist-csf-2.0:DE.CM"],
+        "firewall": ["iso27001-2022:A.8.20", "soc2-2017:CC6.6"],
+        "network_protection": ["iso27001-2022:A.8.21", "soc2-2017:CC6.6"],
+        "web_protection": ["iso27001-2022:A.8.23", "soc2-2017:CC6.7"],
+        "device_control": ["iso27001-2022:A.8.7", "soc2-2017:CC6.1"],
         "semantic_dlp": ["iso27001-2022:A.5.12", "gdpr:Art. 32"],
         "genai_guardrails": ["iso27001-2022:A.5.12", "soc2-2017:CC6.1"],
+        "siem_hids": ["iso27001-2022:A.8.15", "soc2-2017:CC7.2"],
+        "integrity_monitoring": ["iso27001-2022:A.8.32", "soc2-2017:CC7.1"],
+        "vulnerability_inventory": ["iso27001-2022:A.8.8", "nist-csf-2.0:ID.RA"],
+        "digital_risk_protection": ["iso27001-2022:A.5.7", "soc2-2017:CC3.2"],
+        "external_attack_surface_management": ["iso27001-2022:A.8.16", "nist-csf-2.0:DE.CM"],
+        "threat_intelligence": ["iso27001-2022:A.5.7", "nist-csf-2.0:ID.RA"],
+        "incident_correlation": ["iso27001-2022:A.5.24", "soc2-2017:CC7.3"],
         "compliance_evidence": ["soc2-2017:CC7.2", "nist-csf-2.0:RS.AN"],
     }
 
@@ -270,6 +285,24 @@ class PolicySimulationService:
                 risk_delta += guardrail_adjustment
                 risk_delta_total += guardrail_adjustment
                 notes.extend(guardrail_notes)
+
+            if module_name == "edr" and enabled:
+                edr_adjustment, edr_notes = cls._edr_impact(module_payload)
+                risk_delta += edr_adjustment
+                risk_delta_total += edr_adjustment
+                notes.extend(edr_notes)
+
+            if module_name == "external_attack_surface_management" and enabled:
+                easm_adjustment, easm_notes = cls._easm_impact(module_payload)
+                risk_delta += easm_adjustment
+                risk_delta_total += easm_adjustment
+                notes.extend(easm_notes)
+
+            if module_name == "digital_risk_protection" and enabled:
+                drp_adjustment, drp_notes = cls._drp_impact(module_payload)
+                risk_delta += drp_adjustment
+                risk_delta_total += drp_adjustment
+                notes.extend(drp_notes)
 
             outcomes.append(
                 PolicySimulationModuleOutcome(
@@ -376,6 +409,148 @@ class PolicySimulationService:
         if isinstance(destinations, list) and destinations:
             adjustment += min(5, len(destinations))
             notes.append(f"guarded_destinations:{len(destinations)}")
+
+        return adjustment, notes
+
+    # -- EDR / EASM / DRP module-specific impact -------------------------------
+    #
+    # These functions translate per-module policy configuration into a
+    # deterministic risk delta and human-readable notes the simulator
+    # surfaces back to the operator. They do not perform IO; they read
+    # the module payload exactly as authored. Runtime services that
+    # actually act on policy (state.py EDR ingest, drp_easm service)
+    # consume the same module payload from the effective policy resolver.
+
+    EDR_DETECTOR_KEYS: tuple[str, ...] = (
+        "yara_scan",
+        "ioc_match",
+        "ransomware_canary",
+        "process_tree",
+        "suspicious_process_chain",
+    )
+
+    EDR_RESPONSE_KEYS: tuple[str, ...] = (
+        "yara_match",
+        "ioc_match",
+        "ransomware_canary",
+        "suspicious_process_chain",
+    )
+
+    @classmethod
+    def _edr_impact(cls, module_payload: Any) -> tuple[int, list[str]]:
+        edr = dict(module_payload or {})
+        detectors = dict(edr.get("detectors") or {})
+        responses = dict(edr.get("responses") or {})
+
+        adjustment = 0
+        notes: list[str] = []
+
+        for key in cls.EDR_DETECTOR_KEYS:
+            if bool(detectors.get(key, True)):
+                adjustment += 2
+                notes.append(f"detector:{key}")
+
+        # Per-event-kind response actions configured by the operator.
+        # Anything matching an ALLOWED_POLICY_ACTIONS or destructive
+        # action carries weight; unknown values are ignored.
+        for key in cls.EDR_RESPONSE_KEYS:
+            value = responses.get(key)
+            if isinstance(value, str) and value in cls.MODULE_IMPACT_WEIGHTS:
+                adjustment += cls.MODULE_IMPACT_WEIGHTS[value]
+                notes.append(f"response:{key}:{value}")
+
+        if bool(edr.get("auto_isolate", False)):
+            adjustment += cls.MODULE_IMPACT_WEIGHTS["isolate"]
+            notes.append("response:auto_isolate")
+        if bool(edr.get("auto_rollback", False)):
+            adjustment += cls.MODULE_IMPACT_WEIGHTS["rollback"]
+            notes.append("response:auto_rollback")
+
+        approval = str(edr.get("destructive_action_approval", "operator_required"))
+        if approval in ("operator_required", "review"):
+            notes.append(f"approval:{approval}")
+
+        return adjustment, notes
+
+    @classmethod
+    def _easm_impact(cls, module_payload: Any) -> tuple[int, list[str]]:
+        easm = dict(module_payload or {})
+        adjustment = 0
+        notes: list[str] = []
+
+        sources = easm.get("discovery_sources") or []
+        if isinstance(sources, list) and sources:
+            adjustment += min(7, len(sources))
+            notes.append(f"discovery_sources:{len(sources)}")
+
+        enrichment = easm.get("vulnerability_enrichment") or []
+        if isinstance(enrichment, list):
+            for tag in ("cvss", "epss", "cisa_kev"):
+                if tag in enrichment:
+                    adjustment += 2
+                    notes.append(f"enrichment:{tag}")
+
+        if bool(easm.get("continuous_monitoring_enabled", True)):
+            adjustment += 3
+            notes.append("continuous_monitoring")
+        if bool(easm.get("change_detection_enabled", True)):
+            adjustment += 2
+            notes.append("change_detection")
+        if bool(easm.get("correlate_with_drp", False)):
+            adjustment += 2
+            notes.append("correlate_with_drp")
+
+        default_action = str(easm.get("default_action", "review"))
+        if default_action in cls.MODULE_IMPACT_WEIGHTS:
+            adjustment += cls.MODULE_IMPACT_WEIGHTS[default_action]
+            notes.append(f"default_action:{default_action}")
+
+        # Safe-port-scan ceiling is an operational guardrail; flag it
+        # so operators can see at-a-glance what the simulation assumed.
+        try:
+            max_ports = int(easm.get("max_safe_ports_per_asset", 0) or 0)
+        except (TypeError, ValueError):
+            max_ports = 0
+        if max_ports > 0:
+            notes.append(f"max_safe_ports:{max_ports}")
+
+        return adjustment, notes
+
+    @classmethod
+    def _drp_impact(cls, module_payload: Any) -> tuple[int, list[str]]:
+        drp = dict(module_payload or {})
+        adjustment = 0
+        notes: list[str] = []
+
+        detections = drp.get("detections_enabled") or []
+        if isinstance(detections, list) and detections:
+            adjustment += min(8, len(detections))
+            notes.append(f"detections:{len(detections)}")
+
+        sources = drp.get("collection_sources") or []
+        if isinstance(sources, list) and sources:
+            adjustment += min(5, len(sources))
+            notes.append(f"collection_sources:{len(sources)}")
+
+        if bool(drp.get("ai_llm_validation_enabled", False)):
+            adjustment += 3
+            notes.append("ai_validation")
+
+        if bool(drp.get("auto_takedown_enabled", False)):
+            adjustment += cls.MODULE_IMPACT_WEIGHTS["block"]
+            notes.append("auto_takedown_enabled")
+
+        default_action = str(drp.get("default_action", "review"))
+        if default_action in cls.MODULE_IMPACT_WEIGHTS:
+            adjustment += cls.MODULE_IMPACT_WEIGHTS[default_action]
+            notes.append(f"default_action:{default_action}")
+
+        try:
+            threshold = int(drp.get("confidence_threshold", 0) or 0)
+        except (TypeError, ValueError):
+            threshold = 0
+        if threshold:
+            notes.append(f"confidence_threshold:{threshold}")
 
         return adjustment, notes
 

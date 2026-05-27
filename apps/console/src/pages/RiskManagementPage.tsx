@@ -1,13 +1,8 @@
 import React, { useState, useEffect } from "react";
 import {
   AlertTriangle,
-  PlusCircle,
-  RefreshCw,
   CheckCircle,
   Package,
-  Clock,
-  Tag,
-  Server,
   ShieldAlert,
   TrendingUp,
 } from "lucide-react";
@@ -15,7 +10,7 @@ import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
-import { LoadingState } from "../components/protection/EmptyState";
+import { EmptyState, LoadingState } from "../components/protection/EmptyState";
 import {
   Detection,
   StagedAction,
@@ -43,99 +38,6 @@ export interface PatchItem {
   tags: string[];
   cvss_score?: number | null;
 }
-
-const DEMO_PATCHES: PatchItem[] = [
-  {
-    id: "patch-001",
-    customer_id: null,
-    hostname: "WIN-WORK-042",
-    os: "Windows 10 21H2",
-    cve_id: "CVE-2024-30080",
-    kb_id: "KB5039212",
-    title: "Windows MSMQ Remote Code Execution Vulnerability",
-    description: "Critical RCE in Message Queuing service. Exploitable without authentication on exposed hosts.",
-    severity: "critical",
-    status: "missing",
-    category: "security",
-    vendor: "Microsoft",
-    release_date: new Date(Date.now() - 86400000 * 21).toISOString(),
-    installed_at: null,
-    tags: ["rce", "critical-infra"],
-    cvss_score: 9.8,
-  },
-  {
-    id: "patch-002",
-    customer_id: null,
-    hostname: "LINUX-SRV-08",
-    os: "Ubuntu 22.04 LTS",
-    cve_id: "CVE-2024-1086",
-    kb_id: null,
-    title: "Linux Kernel Use-After-Free Privilege Escalation",
-    description: "Local privilege escalation in nftables subsystem. Affects kernels 5.14–6.6.",
-    severity: "high",
-    status: "pending",
-    category: "os",
-    vendor: "Canonical",
-    release_date: new Date(Date.now() - 86400000 * 14).toISOString(),
-    installed_at: null,
-    tags: ["lpe", "server"],
-    cvss_score: 7.8,
-  },
-  {
-    id: "patch-003",
-    customer_id: null,
-    hostname: "WIN-WORK-001",
-    os: "Windows 11 22H2",
-    cve_id: null,
-    kb_id: "KB5039213",
-    title: "Cumulative Security Update — June 2024",
-    description: "Monthly cumulative update addressing 18 CVEs including 2 zero-days.",
-    severity: "high",
-    status: "missing",
-    category: "os",
-    vendor: "Microsoft",
-    release_date: new Date(Date.now() - 86400000 * 7).toISOString(),
-    installed_at: null,
-    tags: ["cumulative"],
-    cvss_score: null,
-  },
-  {
-    id: "patch-004",
-    customer_id: null,
-    hostname: "WIN-WORK-042",
-    os: "Windows 10 21H2",
-    cve_id: "CVE-2024-21338",
-    kb_id: "KB5034763",
-    title: "Windows Kernel Elevation of Privilege",
-    description: "Zero-day exploit in Windows AppLocker driver component.",
-    severity: "high",
-    status: "failed",
-    category: "security",
-    vendor: "Microsoft",
-    release_date: new Date(Date.now() - 86400000 * 45).toISOString(),
-    installed_at: null,
-    tags: ["zero-day", "lpe"],
-    cvss_score: 7.8,
-  },
-  {
-    id: "patch-005",
-    customer_id: null,
-    hostname: "WIN-WORK-001",
-    os: "Windows 11 22H2",
-    cve_id: null,
-    kb_id: "KB5038505",
-    title: "Microsoft Edge Stable Channel Update",
-    description: "Browser stability and security update for Chromium 124.",
-    severity: "medium",
-    status: "applied",
-    category: "application",
-    vendor: "Microsoft",
-    release_date: new Date(Date.now() - 86400000 * 5).toISOString(),
-    installed_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-    tags: ["browser"],
-    cvss_score: null,
-  },
-];
 
 export function RiskManagementPage({ me }: { me: MeResponse }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -202,10 +104,8 @@ export function RiskManagementPage({ me }: { me: MeResponse }) {
           setSelectedId(data[0].id);
           setSelectedAction(data[0].status === "failed" ? "retry_patch_install" : "schedule_patch");
         }
-      } catch {
-        setPatches(DEMO_PATCHES);
-        setSelectedId(DEMO_PATCHES[0].id);
-        setSelectedAction("schedule_patch");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load patch risk data.");
       } finally {
         setIsLoading(false);
       }
@@ -216,7 +116,8 @@ export function RiskManagementPage({ me }: { me: MeResponse }) {
   const handleSyncPolicy = async () => {
     setIsSyncing(true);
     try {
-      await new Promise((r) => setTimeout(r, 600));
+      const customerId = me.scope.customer_ids[0];
+      await apiGet(customerId ? `/risk/patches?customer_id=${customerId}` : "/risk/patches");
       setPolicy((prev) => ({ ...prev, last_updated: new Date().toISOString() }));
       setSuccess("Patch management policies synced.");
     } catch {
@@ -230,30 +131,11 @@ export function RiskManagementPage({ me }: { me: MeResponse }) {
     if (!selectedPatch) return;
     setIsWorking(true);
     try {
-      await apiPost(`/risk/patches/${selectedPatch.id}/simulate`, {});
-    } catch {
-      const sim: SimulationPreview = {
-        id: `sim-patch-${selectedPatch.id}-${Date.now()}`,
-        detection_id: selectedPatch.id,
-        action: selectedAction,
-        destructive: selectedPatch.category === "os",
-        approval_required: policy.approval_required || selectedPatch.severity === "critical",
-        affected_systems: 1,
-        estimated_impact: [
-          `Target endpoint: ${selectedPatch.hostname}`,
-          `Patch: ${selectedPatch.title}`,
-          selectedPatch.cvss_score
-            ? `CVSS Score: ${selectedPatch.cvss_score} — ${selectedPatch.severity.toUpperCase()} severity`
-            : `Severity: ${selectedPatch.severity.toUpperCase()}`,
-          selectedPatch.category === "os"
-            ? `OS-level patch — may require restart. Schedule during maintenance window.`
-            : `Application-level patch — no restart expected.`,
-        ],
-        evidence_controls: ["iso27001-2022:A.8.8", "nist-csf-2.0:PR.PS", "soc2-2017:CC6.1"],
-        created_at: new Date().toISOString(),
-      };
+      const sim = await apiPost<SimulationPreview>(`/risk/patches/${selectedPatch.id}/simulate`, { action: selectedAction });
       setSimulation(sim);
       setSuccess("Patch simulation complete — review impact before staging.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Patch simulation failed.");
     } finally {
       setIsWorking(false);
     }
@@ -279,11 +161,8 @@ export function RiskManagementPage({ me }: { me: MeResponse }) {
         prev.map((p) => (p.id === selectedPatch.id ? { ...p, status: "pending" } : p)),
       );
       setSuccess(`Patch deployment staged: ${selectedPatch.title}`);
-    } catch {
-      setPatches((prev) =>
-        prev.map((p) => (p.id === selectedPatch.id ? { ...p, status: "pending" } : p)),
-      );
-      setSuccess(`Patch action queued locally for ${selectedPatch.hostname}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stage patch deployment.");
     } finally {
       setIsWorking(false);
     }
@@ -330,6 +209,13 @@ export function RiskManagementPage({ me }: { me: MeResponse }) {
         ]}
       />
 
+      {patches.length === 0 ? (
+        <EmptyState
+          icon={Package}
+          title="No patch risk items"
+          message="Endpoint heartbeat signals with pending updates will appear here once enrolled agents report them."
+        />
+      ) : (
       <section className="panelWorkspace" aria-label="Patch Management Board">
         <DetectionTable
           detections={detections}
@@ -418,6 +304,7 @@ export function RiskManagementPage({ me }: { me: MeResponse }) {
           ]}
         />
       </section>
+      )}
     </ConsolePage>
   );
 }

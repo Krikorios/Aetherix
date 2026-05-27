@@ -1,6 +1,6 @@
 # Aetherix Architecture
 
-Status: active POC architecture, May 2026. Companion to [docs/poc-plan.md](poc-plan.md), [docs/development.md](development.md), and [docs/policy-engine.md](policy-engine.md).
+Status: active POC architecture, May 2026. Companion to [docs/poc-plan.md](poc-plan.md), [docs/development.md](development.md), [docs/policy-engine.md](policy-engine.md), and [docs/multi-agent-coordination-protocol.md](multi-agent-coordination-protocol.md).
 Scope: the system spine — what the pieces are, what they own, how they talk,
 and where the trust boundaries sit. Not a feature catalogue.
 
@@ -97,7 +97,7 @@ Today: enrolls with a one-time token or installer profile, stores a per-agent se
 | Identity | Agent id, machine fingerprint, enrollment cert | User identity, SSO |
 | Telemetry | Heartbeat, host signals, local event stream | Long-term storage |
 | Local scan | Deterministic DLP rules over text the OS hands it | Semantic/LLM scoring |
-| Enforcement | Apply policy actions (`monitor`/`review`/`block`) | Author policy |
+| Enforcement | Apply policy actions (`monitor`/`review`/`block`, plus EDR `quarantine`/`kill`/`isolate` when explicitly promoted) | Author policy |
 
 Hard constraints:
 
@@ -147,7 +147,7 @@ Isolation rules:
 - Platform Owner impersonation is a support workflow, not a silent context switch; every impersonation start, action, and end must write audit records.
 - Every new operational table must carry the required tenant context for its scope: `partner_id`, `customer_id`, and, when relevant, `group_id` and `endpoint_id`.
 
-Current state: customers, accounts, roles, role assignments, invitations, password setup, login/TOTP challenge flow, company scoping, account hard delete, and company hard delete are persisted in Postgres and covered by API tests. The console still uses a dev sign-in surface that sends `X-Aetherix-Account`; production authentication, recursive partner hierarchy semantics, and full impersonation workflows remain planned hardening.
+Current state: customers, accounts, roles, role assignments, invitations, password setup, login/TOTP challenge flow, company scoping, account hard delete, and company hard delete are persisted in Postgres and covered by API tests. The console and API now use bearer sessions (`Authorization: Bearer <jwt>`) as the only auth path. Recursive partner hierarchy semantics and full impersonation workflows remain planned hardening.
 
 ### 3.3 Data Plane
 
@@ -312,6 +312,27 @@ declares which modules are active for a given customer).
 Phase ordering (user-mode first, kernel modules only after a signed-release
 pipeline + dedicated systems team exist): see §8.
 
+Current EDR response implementation is user-mode and policy-gated. YARA,
+ransomware, IOC, and process-chain detections default to `monitor`/`review`
+unless the resolved `RuntimePolicy` explicitly promotes them. Quarantine writes
+an AES-256-GCM encrypted artifact plus a reversible manifest containing original
+path, metadata, file hash, KDF parameters, per-artifact salt, previous manifest
+hash, and manifest hash. New quarantine keys are derived with Argon2id from the
+agent secret; legacy manifests without KDF metadata remain restorable through the
+old raw/SHA-256 compatibility path. Process kill uses platform process APIs
+where available (`kill(2)` on Unix with `sysinfo` fallback,
+`sysinfo`/TerminateProcess-backed behavior on Windows). Network isolation
+currently records auditable intent only; host firewall rule backends remain a
+planned platform increment.
+
+The agent also exposes narrow quarantine management primitives through the
+existing `/agent/actions` queue: list and restore. Remote `quarantine`, `kill`,
+and `isolate` actions are normalized into the same `ResponseEvidence` shape as
+local policy-driven actions, emitted back via heartbeat as `response_action` EDR
+events, and dangerous actions are denied unless the active policy already
+promotes the matching detector kind. This keeps operator-queued actions inside
+the same self-protection and evidence pipeline as autonomous endpoint response.
+
 #### Deterministic-before-probabilistic, restated for this design
 
 Every module ships its deterministic baseline first. AI capabilities (semantic
@@ -344,7 +365,7 @@ Implemented console foundation:
 - Companies + Licensing page: paged `/companies/summary`, customer creation through `/customers/quick-create`, hard delete and soft lifecycle bulk actions, license editing, AI provider settings/testing, policy assignment, installer generation, Core + add-ons packaging view, AI Efficiency Score, and white-label entry point.
 - Accounts page: API-backed account list, filters, bulk hard delete, add/edit modal, invitation link/email delivery modes, role-based company assignment, module permissions, 2FA enforcement state, password policy, and permission matrix.
 - Policy Engine v2 page: API-backed create/list/detail, effective policy preview, simulation, destructive promotion approval, assignment, and entitlement-aware locked sections.
-- Antimalware & Behavior page: front-end triage workspace backed by effective-policy lookup and local sample detections; response staging is UI-level until endpoint AV/EDR collectors and response APIs exist.
+- Antimalware & Behavior page: front-end triage workspace backed by effective-policy lookup and EDR detections; staged response actions can now be distinguished from agent-attempted/executed actions through heartbeat `response` evidence and `action_state`.
 
 Planned console hardening:
 
@@ -609,9 +630,9 @@ A full STRIDE pass belongs in its own document. The headline assumptions:
 | Control plane API | [apps/api/app/main.py](../apps/api/app/main.py) | Core routes present |
 | Data contracts | [apps/api/app/schemas.py](../apps/api/app/schemas.py) | Tenant, customer, policy, installer, enrollment, heartbeat, and alert contracts defined |
 | Deterministic DLP | [apps/api/app/services/dlp.py](../apps/api/app/services/dlp.py) | Implemented |
-| Semantic DLP (reasoning plane edge) | [apps/api/app/services/semantic.py](../apps/api/app/services/semantic.py) | Stub |
+| Semantic DLP (reasoning plane edge) | [apps/api/app/services/semantic.py](../apps/api/app/services/semantic.py) | Implemented deterministic context scoring with optional external LLM enrichment hooks; enforcement remains deterministic-first |
 | Classification + labeling service | — | Planned: sensitivity-label model + label-propagation rules + endpoint enforcement |
-| Anti-malware / EDR module | — | Planned: YARA + behaviour + anti-ransomware (canary + entropy + rollback) + IOC matching in `agent/` with control-plane analytics |
+| Anti-malware / EDR module | [agent/src/edr](../agent/src/edr), [apps/api/app/services/state.py](../apps/api/app/services/state.py) | Implemented first slice: YARA-X scanning/cache, IOC matching, process tree rules, ransomware canary/entropy/mass-write detection, Argon2id-backed reversible quarantine with list/restore primitives, process kill, isolation-intent evidence, remote action evidence, and heartbeat-to-alert mapping. Rollback, firewall enforcement, and richer OS telemetry remain planned. |
 | SIEM / HIDS collectors | — | Planned: log + FIM + syscall/eBPF + vuln-inventory collectors in `agent/`, parser + correlation + MITRE mapping in `apps/api` |
 | Compliance Evidence Engine | [apps/api/app/services/compliance.py](../apps/api/app/services/compliance.py), [apps/api/app/db.py](../apps/api/app/db.py) | v0 implemented: seeded control catalogue, `evidence_controls` tags on audit / alert / policy-document writes, and signed JSON export via `/compliance/export` |
 | DRP / EASM contracts | — | Planned: add `monitored_assets`, `drp_findings`, `easm_assets`, `easm_findings`, `intelligence_items`, `takedown_requests` |
@@ -640,12 +661,12 @@ Ordered by risk-reduction, not by feature appeal.
    encrypted customer keys, license-tier gates, quota counters, redaction, and
    semantic DLP integration. Next: prompt audit, vector store, richer structured
    output validation, and broader provider health telemetry.
-7. **Tenant model.** Implemented for customer enrollment, installers, enrolled agents, heartbeats, alerts, accounts, roles, licensing, and policy assignments. Next: replace dev header auth with production sessions and enforce recursive tenant scoping on every query.
+7. **Tenant model.** Implemented for customer enrollment, installers, enrolled agents, heartbeats, alerts, accounts, roles, licensing, and policy assignments. Next: enforce recursive tenant scoping on every query and fully retire the API dev-auth fallback path.
 8. **MSP console foundation.** Done in the console/API: Companies + Licensing, Accounts hierarchy, subscriptions/licenses, AI settings, full navigation, role matrix, and implementation roadmap panels. Next: white-label persistence, impersonation start/end/action UX, and server-confirmed action visibility.
 9. **Simulation event store.** Implemented first slice: `telemetry_events`, `security_alerts`, `incident_cases`, and `/simulate/scenario`. Next: more scenarios, console timeline workspace, and DRP/EASM-linked incidents.
 10. **External risk foundation.** Next: monitored assets, DRP findings, EASM asset discovery, finding normalization, and tenant-scoped rollups.
 11. **Agentic correlation.** Next: convert endpoint, DLP, DRP, EASM, and intelligence events into one incident graph with human-approved response actions.
-12. **Native AV / EDR module v0.** Next: YARA + IOC scanner in the agent, anti-ransomware canary-file detector with entropy-delta heuristic, quarantine + isolate response actions through the existing policy + audit path.
+12. **Native AV / EDR module v0.** First slice implemented: YARA-X + IOC scanner, process tree monitoring, ransomware canary/entropy/mass-write heuristics, policy-gated reversible quarantine with Argon2id KDF metadata and list/restore primitives, process kill, isolation-intent evidence, remote action evidence, and control-plane action-state visibility. Next: rollback, platform firewall enforcement, richer OS telemetry, and broader signature/reputation feeds.
 13. **Native SIEM / HIDS module v0.** Next: log + FIM collectors in the agent, parser library + correlation rule engine in the control plane, MITRE ATT&CK tag on every detection, software-inventory + CVE matching with EPSS/KEV.
 14. **Classification + labeling service.** Next: sensitivity-label model (Public / Internal / Confidential / Restricted, customer-extensible), label propagation rules on copy/move/rename, endpoint enforcement of label-aware destination policy.
 15. **Compliance Evidence Engine v0.** Done for the first slice: control catalogue tables, event→control tagging at write time on audit / alert / policy-document paths, and signed JSON auditor export via `/compliance/export?customer_id=...&framework=iso27001-2022`. Next: scheduled control reviews, attestation workflow, PDF export, and broader per-framework catalogue coverage.

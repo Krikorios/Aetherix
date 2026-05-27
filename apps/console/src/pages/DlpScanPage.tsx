@@ -43,7 +43,7 @@ export function DlpScanPage() {
     mountedRef.current = true;
     void loadContext();
     return () => { mountedRef.current = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const resolvedEndpointId = endpoints.some((e) => e.id === scanEndpointId) ? scanEndpointId : "";

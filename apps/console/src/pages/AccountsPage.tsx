@@ -17,7 +17,6 @@ import {
   apiDelete,
   apiGet,
   apiPost,
-  getAccountId,
   type Account,
   type BulkActionResult,
   type AccountCreated,
@@ -34,6 +33,7 @@ import {
   type TwoFactorState,
 } from "../api";
 import {
+  ConfirmModal,
   EmptyState,
   ErrorBanner,
   LoadingRow,
@@ -63,6 +63,58 @@ const TWOFA_LABEL: Record<TwoFactorState, string> = {
   enforced: "Enforced",
 };
 
+type PermissionLevel = "none" | "view" | "edit" | "manage";
+
+const PERMISSION_RANK: Record<PermissionLevel, number> = {
+  none: 0,
+  view: 1,
+  edit: 2,
+  manage: 3,
+};
+
+const ROLE_PERMISSIONS: Record<RoleCode, Record<string, PermissionLevel>> = {
+  platform_owner: {
+    accounts: "manage",
+    policies: "manage",
+    companies: "manage",
+    incidents: "manage",
+    licensing: "manage",
+    impersonate: "manage",
+  },
+  msp_partner: {
+    accounts: "manage",
+    policies: "manage",
+    companies: "manage",
+    incidents: "manage",
+    licensing: "manage",
+    impersonate: "edit",
+  },
+  company_admin: {
+    accounts: "manage",
+    policies: "edit",
+    companies: "view",
+    incidents: "manage",
+    licensing: "view",
+    impersonate: "none",
+  },
+  company_tech: {
+    accounts: "none",
+    policies: "edit",
+    companies: "view",
+    incidents: "edit",
+    licensing: "none",
+    impersonate: "none",
+  },
+  company_viewer: {
+    accounts: "none",
+    policies: "view",
+    companies: "view",
+    incidents: "view",
+    licensing: "view",
+    impersonate: "none",
+  },
+};
+
 const COMPANY_FILTER_ALL = "__all__";
 
 export function AccountsPage() {
@@ -80,10 +132,13 @@ export function AccountsPage() {
   const [roleFilter, setRoleFilter] = useState<RoleCode | "all">("all");
   const [statusFilter, setStatusFilter] = useState<AccountStatus | "all">("all");
   const [companyFilter, setCompanyFilter] = useState<string>(COMPANY_FILTER_ALL);
+  const [twoFactorFilter, setTwoFactorFilter] = useState<TwoFactorState | "all">("all");
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<Account | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const mountedRef = useRef(true);
 
   const load = useCallback(async () => {
@@ -109,12 +164,6 @@ export function AccountsPage() {
   }, []);
 
   const loadMe = useCallback(async () => {
-    if (!getAccountId()) {
-      setMe(null);
-      setError("Sign in on the Companies page first — accounts requires a tenant context.");
-      setIsLoading(false);
-      return;
-    }
     try {
       const next = await apiGet<MeResponse>("/me");
       if (!mountedRef.current) return;
@@ -151,6 +200,7 @@ export function AccountsPage() {
       if (q && !`${account.full_name} ${account.email}`.toLowerCase().includes(q)) return false;
       if (statusFilter !== "all" && account.status !== statusFilter) return false;
       if (roleFilter !== "all" && !account.roles.some((r) => r.role_code === roleFilter)) return false;
+      if (twoFactorFilter !== "all" && account.two_factor !== twoFactorFilter) return false;
       if (companyFilter !== COMPANY_FILTER_ALL) {
         const scopeMatches = account.roles.some((r) => {
           if (r.customer_id === companyFilter) return true;
@@ -162,17 +212,18 @@ export function AccountsPage() {
       }
       return true;
     });
-  }, [accounts, query, statusFilter, roleFilter, companyFilter, companyMap]);
+  }, [accounts, query, statusFilter, roleFilter, companyFilter, twoFactorFilter, companyMap]);
 
   // ---------- actions ----------
-  async function deleteSelected() {
+  async function executeBulkDelete() {
     if (!canManage || selectedIds.length === 0) return;
     const ids = selectedIds.filter((id) => id !== me?.account.id);
     if (ids.length === 0) {
       setError("You cannot delete your own account.");
+      setBulkDeleteModal(false);
       return;
     }
-    if (!confirm(`Permanently delete ${ids.length} account(s)? This removes all of their role assignments and cannot be undone.`)) return;
+    setIsBulkDeleting(true);
     try {
       const result = await apiPost<BulkActionResult>("/accounts/bulk-delete", { ids });
       setSelectedIds([]);
@@ -185,6 +236,9 @@ export function AccountsPage() {
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bulk action failed");
+    } finally {
+      setIsBulkDeleting(false);
+      setBulkDeleteModal(false);
     }
   }
 
@@ -201,9 +255,13 @@ export function AccountsPage() {
               role="button"
               tabIndex={0}
               onClick={() => window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "companies" } }))}
-              onKeyDown={(e) => { if (e.key === "Enter") window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "companies" } })); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  window.dispatchEvent(new CustomEvent("aetherix:navigate", { detail: { page: "companies" } }));
+                }
+              }}
             >
-              sign in on the Companies page
+              sign in
             </span>{" "}
             to view accounts.
           </EmptyState>
@@ -222,41 +280,51 @@ export function AccountsPage() {
       {error ? <ErrorBanner message={error} /> : null}
       {success ? <SuccessBanner message={success} /> : null}
 
-      <section className="panel accountToolbar">
-        <div className="searchBox">
-          <Search size={16} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Full name or email" />
+      <section className="accountToolbar">
+        <div className="accountFiltersGroup">
+          <div className="searchBox">
+            <Search size={16} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Full name or email" />
+          </div>
+          <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as RoleCode | "all")} aria-label="Role filter">
+            <option value="all">All roles</option>
+            {roles.map((r) => (
+              <option key={r.code} value={r.code}>{ROLE_LABEL[r.code]}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as AccountStatus | "all")} aria-label="Status filter">
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="invited">Invited</option>
+            <option value="locked">Locked</option>
+            <option value="suspended">Suspended</option>
+          </select>
+          <select value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} aria-label="Company filter">
+            <option value={COMPANY_FILTER_ALL}>All recursively</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <select value={twoFactorFilter} onChange={(event) => setTwoFactorFilter(event.target.value as TwoFactorState | "all")} aria-label="2FA filter">
+            <option value="all">All 2FA states</option>
+            <option value="missing">2FA: Missing</option>
+            <option value="enabled">2FA: Enabled</option>
+            <option value="enforced">2FA: Enforced</option>
+          </select>
         </div>
-        <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as RoleCode | "all")} aria-label="Role filter">
-          <option value="all">All roles</option>
-          {roles.map((r) => (
-            <option key={r.code} value={r.code}>{ROLE_LABEL[r.code]}</option>
-          ))}
-        </select>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as AccountStatus | "all")} aria-label="Status filter">
-          <option value="all">All statuses</option>
-          <option value="active">Active</option>
-          <option value="invited">Invited</option>
-          <option value="locked">Locked</option>
-          <option value="suspended">Suspended</option>
-        </select>
-        <select value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} aria-label="Company filter">
-          <option value={COMPANY_FILTER_ALL}>All recursively</option>
-          {companies.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <button type="button" className="btnGhost" onClick={() => void load()}><RefreshCw size={16} /> Refresh</button>
-        {canManage ? (
-          <>
-            <button type="button" className="btnDanger" disabled={selectedIds.length === 0} onClick={() => void deleteSelected()}>
-              <Trash2 size={16} /> Delete ({selectedIds.length})
-            </button>
-            <button type="button" className="btnPrimary" onClick={() => setShowCreate(true)}>
-              <UserPlus size={16} /> Add account
-            </button>
-          </>
-        ) : null}
+        <div className="accountActionsGroup">
+          <button type="button" className="btnGhost" onClick={() => void load()}><RefreshCw size={16} /> Refresh</button>
+          {canManage ? (
+            <>
+              <button type="button" className="btnDanger" disabled={selectedIds.length === 0} onClick={() => setBulkDeleteModal(true)}>
+                <Trash2 size={16} /> Delete ({selectedIds.length})
+              </button>
+              <button type="button" className="btnPrimary" onClick={() => setShowCreate(true)}>
+                <UserPlus size={16} /> Add account
+              </button>
+            </>
+          ) : null}
+        </div>
       </section>
 
       <section className="panel accountTablePanel">
@@ -305,6 +373,144 @@ export function AccountsPage() {
         })}
       </section>
 
+      <section className="panel matrixPanel">
+        <header className="matrixPanelHeader">
+          <ShieldCheck size={18} style={{ color: "var(--primary)" }} /> 
+          <div>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>Platform Permissions &amp; Role Matrix Reference</h3>
+            <p className="muted" style={{ margin: "2px 0 0 0", fontSize: "13px" }}>Unified overview of role capability thresholds across all Aetherix resources.</p>
+          </div>
+        </header>
+
+        {/* Desktop responsive matrix table */}
+        <div className="matrixTableWrapper">
+          <table className="matrixTable">
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Scope</th>
+                <th>Accounts</th>
+                <th>Policies</th>
+                <th>Companies</th>
+                <th>Incidents</th>
+                <th>Licensing</th>
+                <th>Impersonation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Platform Owner</strong></td>
+                <td><span className="matrixScope">Global (All)</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+              </tr>
+              <tr>
+                <td><strong>MSP Partner</strong></td>
+                <td><span className="matrixScope">Partner level</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-edit">edit</span></td>
+              </tr>
+              <tr>
+                <td><strong>Company Administrator</strong></td>
+                <td><span className="matrixScope">Company scope</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-edit">edit</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-manage">manage</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-none">none</span></td>
+              </tr>
+              <tr>
+                <td><strong>Company Technician</strong></td>
+                <td><span className="matrixScope">Assigned companies</span></td>
+                <td><span className="statusPill status-none">none</span></td>
+                <td><span className="statusPill status-edit">edit</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-edit">edit</span></td>
+                <td><span className="statusPill status-none">none</span></td>
+                <td><span className="statusPill status-none">none</span></td>
+              </tr>
+              <tr>
+                <td><strong>Company Viewer</strong></td>
+                <td><span className="matrixScope">Read-only view</span></td>
+                <td><span className="statusPill status-none">none</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-view">view</span></td>
+                <td><span className="statusPill status-none">none</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile responsive cards view */}
+        <div className="matrixMobileCards">
+          {[
+            {
+              role: "Platform Owner",
+              scope: "Global (All)",
+              perms: { accounts: "manage", policies: "manage", companies: "manage", incidents: "manage", licensing: "manage", impersonate: "manage" }
+            },
+            {
+              role: "MSP Partner",
+              scope: "Partner level",
+              perms: { accounts: "manage", policies: "manage", companies: "manage", incidents: "manage", licensing: "manage", impersonate: "edit" }
+            },
+            {
+              role: "Company Administrator",
+              scope: "Company scope",
+              perms: { accounts: "manage", policies: "edit", companies: "view", incidents: "manage", licensing: "view", impersonate: "none" }
+            },
+            {
+              role: "Company Technician",
+              scope: "Assigned companies",
+              perms: { accounts: "none", policies: "edit", companies: "view", incidents: "edit", licensing: "none", impersonate: "none" }
+            },
+            {
+              role: "Company Viewer",
+              scope: "Read-only view",
+              perms: { accounts: "none", policies: "view", companies: "view", incidents: "view", licensing: "view", impersonate: "none" }
+            }
+          ].map((item) => (
+            <div key={item.role} className="matrixCard">
+              <div className="matrixCardHead">
+                <strong style={{ fontSize: "14px", fontWeight: 700 }}>{item.role}</strong>
+                <span className="matrixCardScope">{item.scope}</span>
+              </div>
+              <div className="matrixCardBody">
+                {Object.entries(item.perms).map(([res, lvl]) => (
+                  <div key={res} className="matrixCardRow">
+                    <span className="matrixCardRowLabel">{res}</span>
+                    <span className={`statusPill status-${lvl}`}>{lvl}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <ConfirmModal
+        open={bulkDeleteModal}
+        title="Permanently Delete Accounts"
+        message={`You are about to delete ${selectedIds.length} ${selectedIds.length === 1 ? "account" : "accounts"}. This removes all of their role assignments and login challenges. This cannot be undone.`}
+        confirmLabel="Delete"
+        isDanger
+        isBusy={isBulkDeleting}
+        requireReason
+        onConfirm={(reason) => void executeBulkDelete()}
+        onCancel={() => setBulkDeleteModal(false)}
+      />
+
       <CreateAccountSheet
         open={showCreate}
         roles={roles}
@@ -314,14 +520,7 @@ export function AccountsPage() {
         onClose={() => setShowCreate(false)}
         onCreated={(result) => {
           setAccounts((current) => [result.account, ...current]);
-          if (result.delivery === "email") {
-            setShowCreate(false);
-            setSuccess(`Invitation email queued for ${result.account.email}.`);
-          } else {
-            // Keep the sheet open so the creator can copy the invite link
-            // and dismiss it themselves.
-            setSuccess(null);
-          }
+          setSuccess(null);
         }}
         onError={(message) => setError(message)}
       />
@@ -420,10 +619,7 @@ function CreateAccountSheet({
         created_by: "console",
       };
       const created = await apiPost<AccountCreated>("/accounts", payload);
-      if (created.delivery === "link" && created.invite_url) {
-        // Keep the sheet open so the creator can copy/share the link.
-        setInviteResult(created);
-      }
+      setInviteResult(created);
       onCreated(created);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to create account");
@@ -448,36 +644,69 @@ function CreateAccountSheet({
 
   return (
     <SideSheet open={open} onClose={onClose} title="Add account" subtitle="Invite a user and assign their first role" width={560}>
-      {inviteResult?.invite_url ? (
-        <div className="formStack">
-          <div className="successBanner" role="status">
-            <strong>Account created for {inviteResult.account.email}.</strong>
-            <span>Share the one-time setup link below so they can set their password.</span>
-          </div>
-          <div className="formRow">
-            <label htmlFor="inviteLinkValue">One-time setup link</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                id="inviteLinkValue"
-                readOnly
-                value={inviteResult.invite_url}
-                onFocus={(event) => event.currentTarget.select()}
-                style={{ flex: 1 }}
-              />
-              <button type="button" className="btnSecondary" onClick={() => void copyInviteUrl()}>
-                <Copy size={16} /> {copied ? "Copied" : "Copy"}
-              </button>
+      {inviteResult ? (
+        inviteResult.delivery === "email" ? (
+          <div className="inviteSuccessWrapper emailInviteSuccess">
+            <div className="inviteSuccessIcon emailIconContainer">
+              <Mail size={42} style={{ color: "var(--success)" }} />
             </div>
-            {inviteResult.invite_expires_at ? (
-              <small className="muted">
-                Expires {new Date(inviteResult.invite_expires_at).toLocaleString()}. The link can only be used once.
-              </small>
-            ) : null}
+            <h3>Invitation Email Queued</h3>
+            <p className="inviteSuccessDesc">
+              We&rsquo;ve successfully queued an invitation email for <strong>{inviteResult.account.email}</strong>. 
+              The system emails them a secure setup link directly.
+            </p>
+            <div className="inviteDetailFields">
+              <div className="formRow">
+                <label className="muted">Recipient Name</label>
+                <strong>{inviteResult.account.full_name}</strong>
+              </div>
+              <div className="formRow">
+                <label className="muted">Delivery Method</label>
+                <span>Aetherix SMTP Mailer</span>
+              </div>
+              <div className="formRow">
+                <label className="muted">Token State</label>
+                <code style={{ fontSize: "11px" }}>SHA-256 Hashed & Persisted</code>
+              </div>
+            </div>
+            <div className="formActions" style={{ justifyContent: "center" }}>
+              <button type="button" className="btnPrimary" onClick={onClose}>Done</button>
+            </div>
           </div>
-          <div className="formActions">
-            <button type="button" className="btnPrimary" onClick={onClose}>Done</button>
+        ) : (
+          <div className="inviteSuccessWrapper linkInviteSuccess">
+            <div className="inviteSuccessIcon linkIconContainer">
+              <Link2 size={42} style={{ color: "var(--primary)" }} />
+            </div>
+            <h3>Manual Setup Link Active</h3>
+            <p className="inviteSuccessDesc">
+              A one-time registration link is ready for manual distribution to <strong>{inviteResult.account.email}</strong>.
+            </p>
+            <div className="formRow">
+              <label htmlFor="inviteLinkValue">Secure Setup URL</label>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <input
+                  id="inviteLinkValue"
+                  readOnly
+                  value={inviteResult.invite_url || ""}
+                  onFocus={(event) => event.currentTarget.select()}
+                  style={{ flex: 1 }}
+                />
+                <button type="button" className="btnSecondary" onClick={() => void copyInviteUrl()}>
+                  <Copy size={16} /> {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              {inviteResult.invite_expires_at ? (
+                <small className="muted" style={{ display: "block", marginTop: 6 }}>
+                  Expires {new Date(inviteResult.invite_expires_at).toLocaleString()}. The link can only be used once. Do not share via insecure public channels.
+                </small>
+              ) : null}
+            </div>
+            <div className="formActions" style={{ justifyContent: "center", marginTop: 24 }}>
+              <button type="button" className="btnPrimary" onClick={onClose}>Done</button>
+            </div>
           </div>
-        </div>
+        )
       ) : (
         <form className="formStack" onSubmit={submit}>
           <div className="formGrid2">
@@ -519,33 +748,44 @@ function CreateAccountSheet({
             </div>
           ) : null}
           <fieldset className="deliveryChoice">
-            <legend>How should they receive the invite?</legend>
-            <label className="deliveryOption">
-              <input
-                type="radio"
-                name="acctDelivery"
-                value="email"
-                checked={delivery === "email"}
-                onChange={() => setDelivery("email")}
-              />
-              <span>
-                <strong><Mail size={14} aria-hidden="true" /> Send invitation email</strong>
-                <small className="muted">The system emails them a setup link directly.</small>
-              </span>
-            </label>
-            <label className="deliveryOption">
-              <input
-                type="radio"
-                name="acctDelivery"
-                value="link"
-                checked={delivery === "link"}
-                onChange={() => setDelivery("link")}
-              />
-              <span>
-                <strong><Link2 size={14} aria-hidden="true" /> Generate a link I&rsquo;ll send manually</strong>
-                <small className="muted">You&rsquo;ll receive a one-time setup link to forward through your own channel.</small>
-              </span>
-            </label>
+            <legend>Invitation Delivery Channels</legend>
+            <div className="deliveryOptionsGrid">
+              <label className={`deliveryOptionCard ${delivery === "email" ? "active" : ""}`} onClick={() => setDelivery("email")}>
+                <input
+                  type="radio"
+                  name="acctDelivery"
+                  value="email"
+                  checked={delivery === "email"}
+                  onChange={() => setDelivery("email")}
+                  aria-describedby="emailDesc"
+                />
+                <div className="deliveryOptionContent">
+                  <div className="deliveryOptionHeader">
+                    <Mail size={16} style={{ color: delivery === "email" ? "var(--primary)" : "var(--muted)" }} />
+                    <strong>Send invitation email</strong>
+                  </div>
+                  <span id="emailDesc" className="deliveryOptionSub">The system emails them a secure setup link directly.</span>
+                </div>
+              </label>
+
+              <label className={`deliveryOptionCard ${delivery === "link" ? "active" : ""}`} onClick={() => setDelivery("link")}>
+                <input
+                  type="radio"
+                  name="acctDelivery"
+                  value="link"
+                  checked={delivery === "link"}
+                  onChange={() => setDelivery("link")}
+                  aria-describedby="linkDesc"
+                />
+                <div className="deliveryOptionContent">
+                  <div className="deliveryOptionHeader">
+                    <Link2 size={16} style={{ color: delivery === "link" ? "var(--primary)" : "var(--muted)" }} />
+                    <strong>Manual Link Generation</strong>
+                  </div>
+                  <span id="linkDesc" className="deliveryOptionSub">Get a setup link to copy and forward manually offband.</span>
+                </div>
+              </label>
+            </div>
           </fieldset>
           <div className="formActions">
             <button type="button" className="btnGhost" onClick={onClose}>Cancel</button>
@@ -599,6 +839,33 @@ function AccountEditSheet({
   const [newPartnerId, setNewPartnerId] = useState("");
   const [newCustomerId, setNewCustomerId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [revokeModal, setRevokeModal] = useState<string | null>(null);
+  const [deleteModal, setDeleteModal] = useState(false);
+
+  const effectivePermissions = useMemo(() => {
+    const result: Record<string, PermissionLevel> = {
+      accounts: "none",
+      policies: "none",
+      companies: "none",
+      incidents: "none",
+      licensing: "none",
+      impersonate: "none",
+    };
+
+    if (!account) return result;
+
+    for (const r of account.roles) {
+      const rolePerms = ROLE_PERMISSIONS[r.role_code];
+      if (!rolePerms) continue;
+      for (const [key, level] of Object.entries(rolePerms)) {
+        const currentVal = result[key] || "none";
+        if (PERMISSION_RANK[level] > PERMISSION_RANK[currentVal]) {
+          result[key] = level;
+        }
+      }
+    }
+    return result;
+  }, [account]);
 
   useEffect(() => {
     if (!account) return;
@@ -643,27 +910,27 @@ function AccountEditSheet({
     }
   }
 
-  async function revoke(assignmentId: string) {
-    if (!canManage || !account) return;
-    if (!confirm("Revoke this role assignment?")) return;
+  async function executeRevoke() {
+    if (!canManage || !account || !revokeModal) return;
     setBusy(true);
     try {
-      await apiDelete(`/accounts/${account.id}/roles/${assignmentId}`);
+      await apiDelete(`/accounts/${account.id}/roles/${revokeModal}`);
       await reloadAccount();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to revoke role");
     } finally {
       setBusy(false);
+      setRevokeModal(null);
     }
   }
 
-  async function deleteAccount() {
+  async function executeDelete() {
     if (!canManage || !account) return;
     if (account.id === meId) {
       onError("You cannot delete your own account.");
+      setDeleteModal(false);
       return;
     }
-    if (!confirm(`Permanently delete ${account.full_name} (${account.email})? This removes all of their role assignments and cannot be undone.`)) return;
     setBusy(true);
     try {
       await apiDelete(`/accounts/${account.id}`);
@@ -672,6 +939,7 @@ function AccountEditSheet({
       onError(err instanceof Error ? err.message : "Failed to delete account");
     } finally {
       setBusy(false);
+      setDeleteModal(false);
     }
   }
 
@@ -718,7 +986,7 @@ function AccountEditSheet({
                     </div>
                     <span className="muted">Granted {formatDate(r.granted_at)}</span>
                     {canManage ? (
-                      <button type="button" className="iconBtn" onClick={() => void revoke(r.id)} disabled={busy} aria-label="Revoke role">
+                      <button type="button" className="iconBtn" onClick={() => setRevokeModal(r.id)} disabled={busy} aria-label="Revoke role">
                         <X size={14} />
                       </button>
                     ) : null}
@@ -726,6 +994,34 @@ function AccountEditSheet({
                 );
               })
             )}
+          </div>
+        </section>
+
+        <section className="rolePanel permissionsSummaryPanel">
+          <header>
+            <ShieldCheck size={14} style={{ color: "var(--primary)" }} /> <strong>Maximum Merged Permissions Map</strong>
+            <em className="muted">Effective privileges for this user</em>
+          </header>
+          <div className="mergedPermissionsGrid">
+            {Object.entries(effectivePermissions).map(([key, value]) => {
+              const rank = PERMISSION_RANK[value];
+              return (
+                <div key={key} className="mergedPermissionItem">
+                  <div className="permissionInfo">
+                    <span className="permissionResourceName">{key}</span>
+                    <span className={`statusPill status-${value} permissionLevelLabel`}>{value}</span>
+                  </div>
+                  <div className="permissionGauge" title={`${key}: ${value}`}>
+                    {[1, 2, 3].map((step) => (
+                      <div
+                        key={step}
+                        className={`gaugeStep ${step <= rank ? `filled-${value}` : ""}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -786,13 +1082,36 @@ function AccountEditSheet({
             </header>
             <p className="muted">Permanently delete this account. All role assignments and impersonation history will be removed.</p>
             <div className="formActions">
-              <button type="button" className="btnDanger" onClick={() => void deleteAccount()} disabled={busy}>
+              <button type="button" className="btnDanger" onClick={() => setDeleteModal(true)} disabled={busy}>
                 <Trash2 size={16} /> Delete account
               </button>
             </div>
           </section>
         ) : null}
       </div>
+
+      <ConfirmModal
+        open={revokeModal !== null}
+        title="Revoke Role Assignment"
+        message="Are you sure you want to revoke this role assignment? This immediately removes associated access privileges."
+        confirmLabel="Revoke"
+        isDanger
+        isBusy={busy}
+        onConfirm={() => void executeRevoke()}
+        onCancel={() => setRevokeModal(null)}
+      />
+
+      <ConfirmModal
+        open={deleteModal}
+        title="Delete Account"
+        message={`Permanently delete account ${account.full_name} (${account.email})? This removes all of their role assignments and login challenges. This cannot be undone.`}
+        confirmLabel="Delete"
+        isDanger
+        isBusy={busy}
+        requireReason
+        onConfirm={(reason) => void executeDelete()}
+        onCancel={() => setDeleteModal(false)}
+      />
     </SideSheet>
   );
 }

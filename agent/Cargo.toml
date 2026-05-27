@@ -4,10 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aes-gcm = "0.10"
 anyhow = "1"
 arboard = "3"
+argon2 = "0.5"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 hmac = "0.12"
+notify = "7"
+notify-debouncer-mini = "0.4"
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -15,6 +21,9 @@ sha2 = "0.10"
 sysinfo = "0.33"
 tiny_http = "0.12"
 url = "2"
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
+yara-x = "1.16.0"
 
 [dev-dependencies]
 tempfile = "3"
+mockito = "1.4"

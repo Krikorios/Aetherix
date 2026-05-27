@@ -50,15 +50,15 @@ def _make_customer(partner_id: uuid.UUID, name: str = "Acme") -> uuid.UUID:
 # --- Subscription catalog --------------------------------------------------
 
 
-def test_default_catalog_seeded_via_endpoint():
+def test_default_catalog_seeded_via_endpoint(auth_headers):
     owner_id = _platform_owner()
-    response = client.get("/subscriptions", headers={"X-Aetherix-Account": owner_id})
+    response = client.get("/subscriptions", headers=auth_headers(owner_id))
     assert response.status_code == 200
     skus = {s["sku"] for s in response.json()}
     assert {"core", "core-plus-xdr", "enterprise"}.issubset(skus)
 
 
-def test_subscription_creation_requires_licensing_manage():
+def test_subscription_creation_requires_licensing_manage(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -78,14 +78,14 @@ def test_subscription_creation_requires_licensing_manage():
     }
     deny = client.post(
         "/subscriptions",
-        headers={"X-Aetherix-Account": str(viewer.id)},
+        headers=auth_headers(str(viewer.id)),
         json=payload,
     )
     assert deny.status_code == 403
 
     allow = client.post(
         "/subscriptions",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json=payload,
     )
     assert allow.status_code == 201, allow.text
@@ -94,7 +94,7 @@ def test_subscription_creation_requires_licensing_manage():
 # --- Companies scope filtering ---------------------------------------------
 
 
-def test_companies_list_scope_for_platform_owner():
+def test_companies_list_scope_for_platform_owner(auth_headers):
     owner_id = _platform_owner()
     licensing.ensure_default_catalog()
     p1 = _make_partner("p1")
@@ -102,13 +102,13 @@ def test_companies_list_scope_for_platform_owner():
     c1 = _make_customer(p1, "Alpha")
     c2 = _make_customer(p2, "Beta")
 
-    response = client.get("/companies", headers={"X-Aetherix-Account": owner_id})
+    response = client.get("/companies", headers=auth_headers(owner_id))
     assert response.status_code == 200
     ids = {c["id"] for c in response.json()}
     assert str(c1) in ids and str(c2) in ids
 
 
-def test_company_summary_includes_license_without_per_company_route():
+def test_company_summary_includes_license_without_per_company_route(auth_headers):
     owner_id = _platform_owner()
     licensing.ensure_default_catalog()
     partner_id = _make_partner("summary")
@@ -119,7 +119,7 @@ def test_company_summary_includes_license_without_per_company_route():
         actor=owner_id,
     )
 
-    response = client.get("/companies/summary", headers={"X-Aetherix-Account": owner_id})
+    response = client.get("/companies/summary", headers=auth_headers(owner_id))
     assert response.status_code == 200, response.text
     body = response.json()
     rows = body["items"]
@@ -130,20 +130,20 @@ def test_company_summary_includes_license_without_per_company_route():
     assert summary["license"]["products"]
 
 
-def test_company_summary_applies_search_status_and_pagination():
+def test_company_summary_applies_search_status_and_pagination(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner("summary-page")
     first = _make_customer(partner_id, "Page Alpha")
     second = _make_customer(partner_id, "Page Beta")
     client.post(
         "/companies/bulk-status",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"ids": [str(second)], "status": "archived"},
     )
 
     response = client.get(
         "/companies/summary?q=Page&status=active&limit=1&offset=0",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -153,7 +153,7 @@ def test_company_summary_applies_search_status_and_pagination():
     assert [row["customer"]["id"] for row in body["items"]] == [str(first)]
 
 
-def test_bulk_company_status_updates_visible_companies():
+def test_bulk_company_status_updates_visible_companies(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner("bulk-status")
     first = _make_customer(partner_id, "Bulk One")
@@ -161,7 +161,7 @@ def test_bulk_company_status_updates_visible_companies():
 
     response = client.post(
         "/companies/bulk-status",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"ids": [str(first), str(second)], "status": "suspended"},
     )
     assert response.status_code == 200, response.text
@@ -169,13 +169,13 @@ def test_bulk_company_status_updates_visible_companies():
 
     statuses = {
         row["id"]: row["status"]
-        for row in client.get("/companies", headers={"X-Aetherix-Account": owner_id}).json()
+        for row in client.get("/companies", headers=auth_headers(owner_id)).json()
     }
     assert statuses[str(first)] == "suspended"
     assert statuses[str(second)] == "suspended"
 
 
-def test_companies_list_scope_for_msp_partner():
+def test_companies_list_scope_for_msp_partner(auth_headers):
     p1 = _make_partner("alpha")
     p2 = _make_partner("beta")
     c1 = _make_customer(p1, "AlphaCo")
@@ -189,14 +189,14 @@ def test_companies_list_scope_for_msp_partner():
             ),
         )
     )
-    response = client.get("/companies", headers={"X-Aetherix-Account": str(msp.id)})
+    response = client.get("/companies", headers=auth_headers(str(msp.id)))
     assert response.status_code == 200
     ids = {c["id"] for c in response.json()}
     assert str(c1) in ids
     assert str(c2) not in ids
 
 
-def test_msp_cannot_access_company_outside_partner():
+def test_msp_cannot_access_company_outside_partner(auth_headers):
     p1 = _make_partner("a")
     p2 = _make_partner("b")
     foreign_customer = _make_customer(p2)
@@ -211,7 +211,7 @@ def test_msp_cannot_access_company_outside_partner():
     )
     response = client.get(
         f"/companies/{foreign_customer}",
-        headers={"X-Aetherix-Account": str(msp.id)},
+        headers=auth_headers(str(msp.id)),
     )
     assert response.status_code == 403
 
@@ -219,7 +219,7 @@ def test_msp_cannot_access_company_outside_partner():
 # --- License assignment ----------------------------------------------------
 
 
-def test_assign_license_creates_products_and_records_audit():
+def test_assign_license_creates_products_and_records_audit(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -237,7 +237,7 @@ def test_assign_license_creates_products_and_records_audit():
 
     response = client.put(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json=payload,
     )
     assert response.status_code == 200, response.text
@@ -251,7 +251,7 @@ def test_assign_license_creates_products_and_records_audit():
     assert body["license_key"].startswith("AETHX-")
 
 
-def test_assign_license_rejects_unknown_addon():
+def test_assign_license_rejects_unknown_addon(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -264,25 +264,25 @@ def test_assign_license_rejects_unknown_addon():
     ).model_dump()
     response = client.put(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json=payload,
     )
     assert response.status_code == 400
 
 
-def test_get_license_null_when_unassigned():
+def test_get_license_null_when_unassigned(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
     response = client.get(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 200
     assert response.json() is None
 
 
-def test_get_license_contract_returns_json_null_when_unassigned():
+def test_get_license_contract_returns_json_null_when_unassigned(auth_headers):
     """Contract: unassigned license returns JSON null (HTTP 200), not 404."""
 
     owner_id = _platform_owner()
@@ -291,7 +291,7 @@ def test_get_license_contract_returns_json_null_when_unassigned():
 
     response = client.get(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
 
     assert response.status_code == 200
@@ -299,7 +299,7 @@ def test_get_license_contract_returns_json_null_when_unassigned():
     assert response.text.strip() == "null"
 
 
-def test_get_license_contract_returns_license_object_when_assigned():
+def test_get_license_contract_returns_license_object_when_assigned(auth_headers):
     """Contract: assigned license returns a JSON object with key fields."""
 
     owner_id = _platform_owner()
@@ -308,13 +308,13 @@ def test_get_license_contract_returns_license_object_when_assigned():
     licensing.ensure_default_catalog()
     client.put(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json=CompanyLicenseAssign(subscription_sku="core", total_seats=25).model_dump(),
     ).raise_for_status()
 
     response = client.get(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
 
     assert response.status_code == 200
@@ -326,7 +326,7 @@ def test_get_license_contract_returns_license_object_when_assigned():
     assert isinstance(body["products"], list)
 
 
-def test_company_viewer_cannot_modify_license_but_can_view():
+def test_company_viewer_cannot_modify_license_but_can_view(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -335,7 +335,7 @@ def test_company_viewer_cannot_modify_license_but_can_view():
     # Owner assigns the license
     client.put(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json=CompanyLicenseAssign(subscription_sku="core", total_seats=10).model_dump(),
     ).raise_for_status()
 
@@ -350,19 +350,19 @@ def test_company_viewer_cannot_modify_license_but_can_view():
     )
     view = client.get(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": str(viewer.id)},
+        headers=auth_headers(str(viewer.id)),
     )
     assert view.status_code == 200
 
     modify = client.put(
         f"/companies/{customer_id}/license",
-        headers={"X-Aetherix-Account": str(viewer.id)},
+        headers=auth_headers(str(viewer.id)),
         json=CompanyLicenseAssign(subscription_sku="core", total_seats=20).model_dump(),
     )
     assert modify.status_code == 403
 
 
-def test_usage_endpoint_returns_recorded_rows():
+def test_usage_endpoint_returns_recorded_rows(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -381,7 +381,7 @@ def test_usage_endpoint_returns_recorded_rows():
 
     response = client.get(
         f"/companies/{customer_id}/license/usage?since=2026-05-01&until=2026-05-31",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 200
     rows = response.json()

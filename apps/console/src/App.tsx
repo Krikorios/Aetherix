@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   LogOut,
   Mail,
+  Network,
   Package,
   Plug,
   Search,
@@ -45,16 +46,17 @@ import { CompaniesPage } from "./pages/CompaniesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SetupAccountPage } from "./pages/SetupAccountPage";
 import { CompliancePage } from "./pages/CompliancePage";
-import { DRPPage } from "./pages/DrpPage";
-import { EASMPage } from "./pages/EasmPage";
+import { DigitalRiskPage } from "./pages/DigitalRiskPage";
+import { EASMPage } from "./pages/EASMPage";
 import {
   apiGet,
-  getAccountId,
+  getAccessToken,
   logout as apiLogout,
   type Branding,
   type MeResponse,
   type PermissionLevel,
 } from "./api";
+import { hasPermission as sharedHasPermission } from "./permissions";
 import { ExecutiveSummaryPage } from "./pages/ExecutiveSummaryPage";
 import { EndpointHealthPage } from "./pages/EndpointHealthPage";
 import { BlocklistPage } from "./pages/BlocklistPage";
@@ -72,12 +74,13 @@ import { IntegrationsPage } from "./pages/IntegrationsPage";
 import { SandboxPage } from "./pages/SandboxPage";
 import { EmailSecurityPage } from "./pages/EmailSecurityPage";
 import { MobileSecurityPage } from "./pages/MobileSecurityPage";
+import { NetworkPage } from "./pages/NetworkPage";
 
 const DEFAULT_BRANDING: Branding = {
   product_name: "Aetherix",
   tagline: "MSP Console",
-  primary_color: "#0f5a6e",
-  accent_color: "#0f5a6e",
+  primary_color: "#1d4ed8",
+  accent_color: "#1d4ed8",
   logo_url: null,
   support_email: null,
   support_url: null,
@@ -104,6 +107,7 @@ type Page =
   | "easm"
   | "reports"
   | "quarantine"
+  | "network"
   | "companies"
   | "accounts"
   | "compliance"
@@ -169,6 +173,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "MSP CONTROL",
     items: [
+      { id: "network", label: "Network", icon: <Network size={18} />, requires: { resource: "companies", level: "view" } },
       { id: "companies", label: "Companies", icon: <Building2 size={18} />, requires: { resource: "companies", level: "view" } },
       { id: "accounts", label: "Accounts", icon: <Users size={18} />, requires: { resource: "accounts", level: "view" } },
       { id: "installers", label: "Installers", icon: <Package size={18} />, requires: { resource: "companies", level: "edit" } },
@@ -198,10 +203,9 @@ function hasPermission(
   me: MeResponse | null,
   req: { resource: string; level: PermissionLevel } | null | undefined,
 ): boolean {
-  if (!req) return true;
-  if (!me) return false;
-  const have = me.permissions[req.resource] ?? "none";
-  return LEVEL_RANK[have] >= LEVEL_RANK[req.level];
+  // Delegate to the shared helper so individual page components and the
+  // sidebar always evaluate permissions the same way.
+  return sharedHasPermission(me, req ?? null);
 }
 
 function pickInitialPage(me: MeResponse | null): Page {
@@ -253,7 +257,7 @@ export function App() {
   }, []);
 
   const loadMe = useCallback(async () => {
-    if (!getAccountId()) {
+    if (!getAccessToken()) {
       setMe(null);
       setBranding(DEFAULT_BRANDING);
       setAuthStatus("signedOut");
@@ -266,7 +270,7 @@ export function App() {
       setAuthStatus("signedIn");
       setPage((current) => (hasPermission(next, navItemFor(current)?.requires) ? current : pickInitialPage(next)));
     } catch {
-      // Stored account id is stale/invalid — drop it and force re-login.
+      // Stored token is stale/invalid — drop it and force re-login.
       apiLogout();
       setMe(null);
       setBranding(DEFAULT_BRANDING);
@@ -276,14 +280,14 @@ export function App() {
 
   useEffect(() => {
     queueMicrotask(() => void loadMe());
-    const onAccountChange = () => {
+    const onAuthChange = () => {
       void loadMe();
     };
-    window.addEventListener("aetherix:account-changed", onAccountChange);
-    window.addEventListener("storage", onAccountChange);
+    window.addEventListener("aetherix:auth-changed", onAuthChange);
+    window.addEventListener("storage", onAuthChange);
     return () => {
-      window.removeEventListener("aetherix:account-changed", onAccountChange);
-      window.removeEventListener("storage", onAccountChange);
+      window.removeEventListener("aetherix:auth-changed", onAuthChange);
+      window.removeEventListener("storage", onAuthChange);
     };
   }, [loadMe]);
 
@@ -424,7 +428,7 @@ export function App() {
          {page === "companies" && <CompaniesPage />}
          {page === "accounts" && <AccountsPage />}
          {page === "compliance" && <CompliancePage />}
-         {page === "digitalRisk" && <DRPPage me={me} />}
+         {page === "digitalRisk" && <DigitalRiskPage me={me} />}
          {page === "easm" && <EASMPage me={me} />}
          {page === "executiveSummary" && <ExecutiveSummaryPage me={me} />}
          {page === "healthAttackSurface" && <EndpointHealthPage me={me} />}
@@ -435,6 +439,7 @@ export function App() {
          {page === "deviceControl" && <DeviceControlPage me={me} />}
          {page === "reports" && <ReportsPage me={me} />}
          {page === "policyAssignments" && <PolicyAssignmentsPage me={me} />}
+         {page === "network" && <NetworkPage me={me} />}
          {page === "configuration" && <ConfigurationPage me={me} />}
          {page === "agenticAi" && <AgenticAiPage me={me} />}
          {page === "dataInsights" && <DataInsightsPage me={me} />}
@@ -496,7 +501,7 @@ type PlaceholderMeta = {
   depends: string[];
 };
 
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm">, PlaceholderMeta> = {
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm" | "network">, PlaceholderMeta> = {
   executiveSummary: {
     title: "Executive Summary",
     eyebrow: "Partner reporting",
@@ -667,5 +672,3 @@ function PlaceholderPage({ page }: { page: Page }) {
     </section>
   );
 }
-
-

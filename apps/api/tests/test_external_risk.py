@@ -48,27 +48,27 @@ def _make_customer(partner_id: uuid.UUID, name: str = "DRPCo") -> uuid.UUID:
 
 # --- DRP Findings -----------------------------------------------------------
 
-def test_drp_findings_list_empty() -> None:
+def test_drp_findings_list_empty(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
 
     resp = client.get(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert resp.status_code == 200, resp.text
     assert resp.json() == []
 
 
-def test_drp_finding_create_and_list() -> None:
+def test_drp_finding_create_and_list(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
 
     created = client.post(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "aetherix-security.com",
             "asset_type": "domain",
@@ -93,20 +93,20 @@ def test_drp_finding_create_and_list() -> None:
 
     listed = client.get(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert listed.status_code == 200, listed.text
     assert [f["id"] for f in listed.json()] == [finding["id"]]
 
 
-def test_drp_finding_validate() -> None:
+def test_drp_finding_validate(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("drpval")
     customer_id = _make_customer(partner_id, "DRPValCo")
 
     created = client.post(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "@Aetherix_Official",
             "asset_type": "social_account",
@@ -124,20 +124,20 @@ def test_drp_finding_validate() -> None:
 
     validated = client.post(
         f"/drp/findings/{finding_id}/validate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert validated.status_code == 200, validated.text
     assert validated.json()["status"] == "reviewing"
 
 
-def test_drp_finding_takedown() -> None:
+def test_drp_finding_takedown(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("drptd")
     customer_id = _make_customer(partner_id, "DRPTdCo")
 
     created = client.post(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "aetherix-phish.com",
             "asset_type": "domain",
@@ -155,22 +155,22 @@ def test_drp_finding_takedown() -> None:
 
     takedown = client.post(
         f"/drp/findings/{finding_id}/takedown",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert takedown.status_code == 200, takedown.text
     assert takedown.json()["status"] == "confirmed"
 
 
-def test_drp_finding_not_found() -> None:
+def test_drp_finding_not_found(auth_headers) -> None:
     owner_id = _platform_owner()
     resp = client.post(
         f"/drp/findings/{uuid.uuid4()}/validate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert resp.status_code == 400
 
 
-def test_drp_findings_status_filter() -> None:
+def test_drp_findings_status_filter(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("drpflt")
     customer_id = _make_customer(partner_id, "DRPFltCo")
@@ -179,7 +179,7 @@ def test_drp_findings_status_filter() -> None:
     for i in range(2):
         client.post(
             f"/drp/findings?customer_id={customer_id}",
-            headers={"X-Aetherix-Account": owner_id},
+            headers=auth_headers(owner_id),
             json={
                 "asset_display_name": f"brand-{i}.com",
                 "asset_type": "domain",
@@ -195,7 +195,7 @@ def test_drp_findings_status_filter() -> None:
 
     all_findings = client.get(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert all_findings.status_code == 200
     assert len(all_findings.json()) == 2
@@ -204,12 +204,12 @@ def test_drp_findings_status_filter() -> None:
     finding_id = all_findings.json()[0]["id"]
     client.post(
         f"/drp/findings/{finding_id}/validate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
 
     reviewing = client.get(
         f"/drp/findings?customer_id={customer_id}&status=reviewing",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert reviewing.status_code == 200
     assert len(reviewing.json()) == 1
@@ -218,27 +218,27 @@ def test_drp_findings_status_filter() -> None:
 
 # --- EASM Exposures ---------------------------------------------------------
 
-def test_easm_exposures_list_empty() -> None:
+def test_easm_exposures_list_empty(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("easm")
     customer_id = _make_customer(partner_id, "EASMCo")
 
     resp = client.get(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert resp.status_code == 200, resp.text
     assert resp.json() == []
 
 
-def test_easm_exposure_create_and_list() -> None:
+def test_easm_exposure_create_and_list(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("easmcr")
     customer_id = _make_customer(partner_id, "EASMCrCo")
 
     created = client.post(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "webmail.example-corp.net",
             "asset_type": "subdomain",
@@ -266,20 +266,20 @@ def test_easm_exposure_create_and_list() -> None:
 
     listed = client.get(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert listed.status_code == 200, listed.text
     assert [e["id"] for e in listed.json()] == [exp["id"]]
 
 
-def test_easm_exposure_investigate() -> None:
+def test_easm_exposure_investigate(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("easminv")
     customer_id = _make_customer(partner_id, "EASMInvCo")
 
     created = client.post(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "ftp.backup.corp.net",
             "asset_type": "subdomain",
@@ -299,20 +299,20 @@ def test_easm_exposure_investigate() -> None:
 
     investigated = client.post(
         f"/easm/exposures/{exposure_id}/investigate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert investigated.status_code == 200, investigated.text
     assert investigated.json()["status"] == "investigating"
 
 
-def test_easm_exposure_remediate() -> None:
+def test_easm_exposure_remediate(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("easmrem")
     customer_id = _make_customer(partner_id, "EASMRemCo")
 
     created = client.post(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "admin.legacy.corp.net",
             "asset_type": "subdomain",
@@ -330,22 +330,22 @@ def test_easm_exposure_remediate() -> None:
 
     remediated = client.post(
         f"/easm/exposures/{exposure_id}/remediate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert remediated.status_code == 200, remediated.text
     assert remediated.json()["status"] == "remediated"
 
 
-def test_easm_exposure_not_found() -> None:
+def test_easm_exposure_not_found(auth_headers) -> None:
     owner_id = _platform_owner()
     resp = client.post(
         f"/easm/exposures/{uuid.uuid4()}/investigate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert resp.status_code == 400
 
 
-def test_easm_exposure_status_filter() -> None:
+def test_easm_exposure_status_filter(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("easmflt")
     customer_id = _make_customer(partner_id, "EASMFltCo")
@@ -353,7 +353,7 @@ def test_easm_exposure_status_filter() -> None:
     for i in range(3):
         client.post(
             f"/easm/exposures?customer_id={customer_id}",
-            headers={"X-Aetherix-Account": owner_id},
+            headers=auth_headers(owner_id),
             json={
                 "asset_display_name": f"host{i}.corp.net",
                 "asset_type": "subdomain",
@@ -368,7 +368,7 @@ def test_easm_exposure_status_filter() -> None:
 
     all_exp = client.get(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert len(all_exp.json()) == 3
 
@@ -376,26 +376,26 @@ def test_easm_exposure_status_filter() -> None:
     exposure_id = all_exp.json()[0]["id"]
     client.post(
         f"/easm/exposures/{exposure_id}/investigate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
 
     investigating = client.get(
         f"/easm/exposures?customer_id={customer_id}&status=investigating",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert investigating.status_code == 200
     assert len(investigating.json()) == 1
     assert investigating.json()[0]["id"] == exposure_id
 
 
-def test_drp_and_easm_audit_logged() -> None:
+def test_drp_and_easm_audit_logged(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("drpaudit")
     customer_id = _make_customer(partner_id, "AuditCo")
 
     finding_resp = client.post(
         f"/drp/findings?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "brand.example.com",
             "asset_type": "domain",
@@ -412,7 +412,7 @@ def test_drp_and_easm_audit_logged() -> None:
 
     exposure_resp = client.post(
         f"/easm/exposures?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "asset_display_name": "api.example.com",
             "asset_type": "domain",

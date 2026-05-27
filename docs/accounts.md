@@ -2,8 +2,8 @@
 
 The Accounts page is the local identity and authorization foundation for the
 platform: persisted accounts, role-scoped permissions, company assignments,
-invites, password setup, and delete workflows. It is API-backed, but the console
-still uses the local dev account header instead of production sessions.
+invites, password setup, and delete workflows. It is API-backed and now uses
+the login + TOTP bearer-session flow in the console.
 
 ## Role hierarchy
 
@@ -55,12 +55,13 @@ the database). Delivery is selected at create time:
 
 ## Hard delete
 
-`DELETE /accounts/{id}` permanently removes an account, its role assignments,
-its login challenges, and any impersonation history. The signed-in operator
-cannot delete their own account.
+`DELETE /accounts/{id}` permanently removes an account and its active auth/role
+state. The current implementation also removes role assignments, login
+challenges, and any rows in `impersonation_sessions` where the deleted account
+was actor or target. The signed-in operator cannot delete their own account.
 
 ## Current boundary
 
-Authorization data is persisted and tested, but production authentication,
-session management, recursive MSP hierarchy filtering, and full impersonation
-start/end/action UX remain hardening work.
+Authorization data is persisted and tested. Remaining hardening work is
+recursive MSP hierarchy filtering and full impersonation
+start/end/action UX.

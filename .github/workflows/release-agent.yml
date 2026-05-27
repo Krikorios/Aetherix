@@ -1,0 +1,157 @@
+name: Release Agent Installers
+
+on:
+  push:
+    tags:
+      - "agent-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.4.1). Required for manual runs."
+        required: true
+        type: string
+      dry_run:
+        description: "If true, skip signing/notarization."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write    # for creating GitHub Releases
+  id-token: write    # for GitHub OIDC → Azure federation (Windows signing)
+
+env:
+  CARGO_TERM_COLOR: always
+  AETHERIX_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  AETHERIX_INSTALLER_DRY_RUN: ${{ github.event.inputs.dry_run && '1' || '0' }}
+
+jobs:
+
+  # ───────────────────────── macOS ─────────────────────────
+  macos:
+    name: macOS PKG (signed + notarized)
+    runs-on: macos-14
+    environment: release-macos    # gates Apple secrets to the release env
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust targets
+        run: |
+          rustup target add x86_64-apple-darwin
+          rustup target add aarch64-apple-darwin
+
+      - name: Build agent (x86_64 + arm64)
+        run: |
+          cargo build --release --manifest-path agent/Cargo.toml --target x86_64-apple-darwin
+          cargo build --release --manifest-path agent/Cargo.toml --target aarch64-apple-darwin
+          mkdir -p agent/dist/macos_pkg
+          cp agent/target/x86_64-apple-darwin/release/aetherix-agent  agent/dist/macos_pkg/aetherix-agent
+          cp agent/target/aarch64-apple-darwin/release/aetherix-agent agent/dist/macos_pkg/aetherix-agent-arm64
+
+      - name: Package, sign, notarize
+        env:
+          APPLE_DEVELOPER_ID_APPLICATION: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION }}
+          APPLE_DEVELOPER_ID_INSTALLER:   ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER }}
+          APPLE_CERT_PASSWORD:            ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD:        ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_TEAM_ID:                  ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_APPLE_ID:          ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_PASSWORD:          ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: bash agent/packaging/macos-package-and-notarize.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aetherix-agent-macos
+          path: |
+            agent/dist/macos_pkg/*.pkg
+            agent/dist/macos_pkg/*.pkg.sha256
+
+  # ───────────────────────── Windows ─────────────────────────
+  windows:
+    name: Windows MSI (signed via Azure Key Vault)
+    runs-on: windows-2022
+    environment: release-windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Build agent
+        run: |
+          cargo build --release --manifest-path agent/Cargo.toml --target x86_64-pc-windows-msvc
+          mkdir agent\dist\windows_exe
+          copy agent\target\x86_64-pc-windows-msvc\release\aetherix-agent.exe agent\dist\windows_exe\aetherix-agent.exe
+
+      - name: Build + sign MSI
+        shell: pwsh
+        env:
+          AETHERIX_AZURE_KV_URI:        ${{ vars.AETHERIX_AZURE_KV_URI }}
+          AETHERIX_AZURE_KV_CERT_NAME:  ${{ vars.AETHERIX_AZURE_KV_CERT_NAME }}
+          AETHERIX_AZURE_CLIENT_ID:     ${{ vars.AETHERIX_AZURE_CLIENT_ID }}
+          AETHERIX_AZURE_TENANT_ID:     ${{ vars.AETHERIX_AZURE_TENANT_ID }}
+        run: powershell -ExecutionPolicy Bypass -File agent\packaging\windows-sign.ps1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aetherix-agent-windows
+          path: |
+            agent/dist/windows_exe/*.msi
+            agent/dist/windows_exe/*.msi.sha256
+
+  # ───────────────────────── Linux ─────────────────────────
+  linux:
+    name: Linux .deb (GPG-signed)
+    runs-on: ubuntu-22.04
+    environment: release-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-sig
+
+      - name: Build agent
+        run: |
+          cargo build --release --manifest-path agent/Cargo.toml --target x86_64-unknown-linux-gnu
+          mkdir -p agent/dist/linux_deb
+          cp agent/target/x86_64-unknown-linux-gnu/release/aetherix-agent agent/dist/linux_deb/aetherix-agent
+
+      - name: Build + sign .deb
+        env:
+          AETHERIX_GPG_PRIVATE_KEY: ${{ secrets.AETHERIX_GPG_PRIVATE_KEY }}
+          AETHERIX_GPG_KEY_ID:      ${{ secrets.AETHERIX_GPG_KEY_ID }}
+          AETHERIX_GPG_PASSPHRASE:  ${{ secrets.AETHERIX_GPG_PASSPHRASE }}
+        run: bash agent/packaging/linux-package-and-sign.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aetherix-agent-linux
+          path: |
+            agent/dist/linux_deb/*.deb
+            agent/dist/linux_deb/*.deb.sha256
+
+  # ───────────────────── Publish release ─────────────────────
+  publish:
+    name: Publish GitHub Release
+    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/agent-v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Aetherix Agent ${{ env.AETHERIX_VERSION }}
+          generate_release_notes: true
+          files: |
+            artifacts/aetherix-agent-macos/*
+            artifacts/aetherix-agent-windows/*
+            artifacts/aetherix-agent-linux/*

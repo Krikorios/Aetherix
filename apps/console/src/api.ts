@@ -474,6 +474,112 @@ export type MeResponse = {
   branding: Branding;
 };
 
+export type SystemBannerSeverity = "info" | "warning" | "critical";
+
+export type SystemBanner = {
+  id: string;
+  message: string;
+  link_label: string | null;
+  link_url: string | null;
+  severity: SystemBannerSeverity;
+  starts_at: string;
+  ends_at: string | null;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+};
+
+export type SystemBannerCreate = {
+  message: string;
+  link_label?: string | null;
+  link_url?: string | null;
+  severity?: SystemBannerSeverity;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  active?: boolean;
+};
+
+// ---------------------------------------------------------------------------
+// External risk: DRP findings + EASM exposures + customer security alerts
+// ---------------------------------------------------------------------------
+
+export type FindingSeverity = "low" | "medium" | "high" | "critical";
+
+export type EASMExposureStatus =
+  | "new"
+  | "investigating"
+  | "confirmed"
+  | "remediated"
+  | "false_positive";
+
+export type EASMExposure = {
+  id: string;
+  customer_id: string;
+  asset_id: string | null;
+  asset_display_name: string;
+  asset_type: string;
+  exposure_type: string;
+  title: string;
+  summary: string;
+  severity: FindingSeverity;
+  status: EASMExposureStatus;
+  risk_score: number;
+  confidence_score: number;
+  ip_address: string | null;
+  fqdn: string | null;
+  cloud_provider: string | null;
+  open_ports: number[];
+  tags: string[];
+  metadata: Record<string, unknown>;
+  first_seen: string;
+  last_seen: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DRPFindingStatus =
+  | "new"
+  | "reviewing"
+  | "validated"
+  | "false_positive"
+  | "confirmed";
+
+export type DRPFinding = {
+  id: string;
+  customer_id: string;
+  asset_id: string | null;
+  asset_display_name: string;
+  asset_type: string | null;
+  finding_type: string;
+  title: string;
+  summary: string;
+  source: string;
+  severity: FindingSeverity;
+  status: DRPFindingStatus;
+  risk_score: number;
+  confidence_score: number;
+  llm_validation: string | null;
+  screenshot_url: string | null;
+  evidence_links: string[];
+  related_easm_asset_id: string | null;
+  detected_at: string;
+  created_at: string;
+};
+
+export type SecurityAlert = {
+  id: string;
+  customer_id: string;
+  agent_id: string | null;
+  category: string;
+  severity: FindingSeverity;
+  status: string;
+  confidence?: number | null;
+  payload?: Record<string, any> | null;
+  ai_summary?: string | null;
+  recommended_action?: string | null;
+  created_at: string;
+};
+
 export type Subscription = {
   id: string;
   sku: string;
@@ -596,22 +702,50 @@ export type AiProbeResult = {
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-const ACCOUNT_STORAGE_KEY = "aetherix.account_id";
+const ACCESS_TOKEN_STORAGE_KEY = "aetherix.access_token";
+const AUTH_CHANGED_EVENT = "aetherix:auth-changed";
 
-export function getAccountId(): string | null {
+export function isTokenExpired(token: string): boolean {
   try {
-    return typeof window === "undefined" ? null : window.localStorage.getItem(ACCOUNT_STORAGE_KEY);
+    const parts = token.split(".");
+    if (parts.length < 2) return true;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    const payload = JSON.parse(jsonPayload) as { exp?: number };
+    if (!payload.exp) return false;
+    const now = Math.floor(Date.now() / 1000);
+    return payload.exp < now;
+  } catch {
+    return true;
+  }
+}
+
+export function getAccessToken(): string | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const token = window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    if (token && isTokenExpired(token)) {
+      logout();
+      return null;
+    }
+    return token;
   } catch {
     return null;
   }
 }
 
-export function setAccountId(id: string | null): void {
+export function setAccessToken(token: string | null): void {
   try {
     if (typeof window === "undefined") return;
-    if (id) window.localStorage.setItem(ACCOUNT_STORAGE_KEY, id);
-    else window.localStorage.removeItem(ACCOUNT_STORAGE_KEY);
-    window.dispatchEvent(new CustomEvent("aetherix:account-changed", { detail: id }));
+    if (token) window.localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+    else window.localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT, { detail: token }));
   } catch {
     // ignore
   }
@@ -619,12 +753,15 @@ export function setAccountId(id: string | null): void {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  const accountId = getAccountId();
-  if (accountId) headers.set("X-Aetherix-Account", accountId);
+  const token = getAccessToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   if (init?.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   const res = await fetch(`${API}${path}`, { ...init, headers });
+  if (res.status === 401) {
+    logout();
+  }
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
@@ -667,5 +804,5 @@ export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
 }
 
 export function logout(): void {
-  setAccountId(null);
+  setAccessToken(null);
 }

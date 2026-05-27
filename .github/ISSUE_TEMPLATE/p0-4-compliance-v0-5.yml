@@ -1,0 +1,43 @@
+name: P0-4 — Compliance Evidence Engine v0.5
+description: Attestations, evidence reviews, signed PDF export, object-store references.
+title: "[P0-4] Compliance Evidence Engine v0.5"
+labels: ["P0", "backend", "compliance", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-4,
+        [docs/native-security-gap-review.md](../../docs/native-security-gap-review.md) Priority 1.
+
+        Alembic skeleton already landed:
+        `apps/api/alembic/versions/20260524_0003_compliance_attestations.py`
+        (creates `compliance_attestations` and `evidence_reviews`).
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        - Control-review workflow API (mark evidence item reviewed).
+        - Attestation record API (signed sign-off).
+        - PDF export rendered server-side from existing signed JSON
+          bundle; signature visible in PDF metadata.
+        - Object-store reference for large artefacts (filesystem in
+          POC, S3/Blob in Phase 1).
+        - Console pages wired to the new endpoints.
+  - type: textarea
+    id: touches
+    attributes:
+      label: Files touched
+      value: |
+        - `apps/api/app/services/compliance.py`
+        - new `apps/api/app/services/compliance_pdf.py`
+        - new routes under `apps/api/app/main.py`
+        - `apps/console/src/pages/` Compliance page
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - Demo tenant exports a signed PDF for `iso27001-2022` and
+          `soc2-2017` over a 30-day window with at least one reviewed
+          evidence item and one attestation row.

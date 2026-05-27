@@ -1,0 +1,40 @@
+name: P0-1 — Production auth & session model
+description: Replace dev X-Aetherix-Account header with production sessions, enforce MFA, prepare SSO flag.
+title: "[P0-1] Production auth & session model"
+labels: ["P0", "backend", "security", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-1,
+        [docs/architecture.md §3.2.1](../../docs/architecture.md) "Current state".
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        - Replace `X-Aetherix-Account` dev header with signed sessions
+          (JWT or opaque + Redis).
+        - Enforce TOTP MFA on the existing invite/redeem flow.
+        - Add SSO/SAML/OIDC behind a feature flag (Phase 1 activation).
+        - Audit-log every impersonation start/end.
+    validations:
+      required: true
+  - type: textarea
+    id: touches
+    attributes:
+      label: Files touched
+      value: |
+        - `apps/api/app/main.py` (scope helpers `_require_*`)
+        - new `apps/api/app/services/sessions.py`
+        - `apps/console/src/auth/`
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - All existing tests pass without the dev header path.
+        - Impersonation flow writes audit records.
+        - Console login uses real sessions; no `X-Aetherix-Account`
+          remaining in the codebase except in deprecated dev fallbacks
+          gated by an env flag.

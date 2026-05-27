@@ -44,14 +44,14 @@ def _make_customer(partner_id: uuid.UUID, name: str = "RulesCo") -> uuid.UUID:
     return customer_id
 
 
-def test_detection_rule_create_simulate_promote_and_list() -> None:
+def test_detection_rule_create_simulate_promote_and_list(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
 
     created = client.post(
         "/detection-rules",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "customer_id": str(customer_id),
             "name": "Suspicious PowerShell DownloadString",
@@ -69,20 +69,20 @@ def test_detection_rule_create_simulate_promote_and_list() -> None:
 
     listed = client.get(
         f"/detection-rules?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert listed.status_code == 200, listed.text
     assert [item["id"] for item in listed.json()] == [rule["id"]]
 
     blocked_promotion = client.post(
         f"/detection-rules/{rule['id']}/promote",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert blocked_promotion.status_code == 400
 
     simulation = client.post(
         f"/detection-rules/{rule['id']}/simulate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert simulation.status_code == 200, simulation.text
     assert simulation.json()["rule"]["status"] == "simulated"
@@ -90,7 +90,7 @@ def test_detection_rule_create_simulate_promote_and_list() -> None:
 
     promotion = client.post(
         f"/detection-rules/{rule['id']}/promote",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert promotion.status_code == 200, promotion.text
     assert promotion.json()["rule"]["status"] == "active"

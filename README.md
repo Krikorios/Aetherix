@@ -136,4 +136,4 @@ See [docs/development.md](docs/development.md) for the development checklist, AP
 3. Keep the agent contract small enough to replace mock telemetry with OS-specific collectors later.
 4. Establish the **native coverage spine**: one signed agent + one control plane covering anti-malware / EDR, SIEM / HIDS, and DLP classification + labeling + policy — wired into a built-in Compliance Evidence Engine that maps every event to ISO 27001 / SOC 2 / NIST CSF / GDPR / HIPAA controls at write time. See [docs/architecture.md §3.4.2](docs/architecture.md).
 
-See [docs/poc-plan.md](docs/poc-plan.md) for the full platform proposal, roadmap, MSP strategy, risk register, and proof-of-concept slice.
+See [docs/poc-plan.md](docs/poc-plan.md) for the full platform proposal, roadmap, MSP strategy, risk register, and proof-of-concept slice. See [docs/roadmap-2026.md](docs/roadmap-2026.md) for the prioritized P0–P3 engineering backlog and go-to-market sequencing.

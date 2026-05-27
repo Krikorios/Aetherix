@@ -1,0 +1,38 @@
+name: P0-2 — Signed installer pipeline
+description: Authenticode (Windows), notarized .pkg (macOS), signed .deb/.rpm (Linux).
+title: "[P0-2] Signed installer pipeline"
+labels: ["P0", "agent", "release", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-2,
+        [docs/installers.md](../../docs/installers.md),
+        [docs/native-security-gap-review.md](../../docs/native-security-gap-review.md) "Single agent" row.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        - Windows: Authenticode-sign the `.msi`.
+        - macOS: notarize the `.pkg` via `notarytool`.
+        - Linux: detached signatures for `.deb` and `.rpm`.
+        - CI signing job via GitHub Actions OIDC to a code-signing
+          key vault (no long-lived secrets).
+  - type: textarea
+    id: touches
+    attributes:
+      label: Files touched
+      value: |
+        - `agent/build-all.sh`
+        - new `agent/packaging/`
+        - new GitHub Actions workflow under `.github/workflows/`
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - Fresh install on Win/macOS/Linux completes with no OS
+          security warnings.
+        - Install profile + bootstrap-token flow from README "Current
+          Implemented Flows" still works.

@@ -3,6 +3,13 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services import policy as policy_service
 from app.schemas import PolicyDocument
+from app.services import jwt_tokens, tenancy
+
+
+def _owner_headers() -> dict[str, str]:
+    owner = tenancy.ensure_platform_owner("policy-doc-owner@aetherix.test", "Policy Doc Owner")
+    token, _ = jwt_tokens.issue(str(owner.id))
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _signed_draft() -> dict:
@@ -21,7 +28,8 @@ def test_promotion_creates_signed_versioned_document(monkeypatch) -> None:
     monkeypatch.setenv("AETHERIX_POLICY_SIGNING_KEY", "unit-test-key")
 
     client = TestClient(app)
-    response = client.post("/policies/document", json=_signed_draft())
+    headers = _owner_headers()
+    response = client.post("/policies/document", headers=headers, json=_signed_draft())
     assert response.status_code == 201
     body = response.json()
     assert body["version"] == 1
@@ -29,11 +37,11 @@ def test_promotion_creates_signed_versioned_document(monkeypatch) -> None:
     assert body["signature"]
     assert body["signed_by"] == "control-plane-dev"
 
-    response2 = client.post("/policies/document", json=_signed_draft())
+    response2 = client.post("/policies/document", headers=headers, json=_signed_draft())
     assert response2.status_code == 201
     assert response2.json()["version"] == 2
 
-    history = client.get("/policies/documents").json()
+    history = client.get("/policies/documents", headers=headers).json()
     assert [d["version"] for d in history] == [2, 1]
 
 
@@ -41,7 +49,7 @@ def test_signature_verifies_with_matching_key(monkeypatch) -> None:
     monkeypatch.setenv("AETHERIX_POLICY_SIGNING_KEY", "unit-test-key")
 
     client = TestClient(app)
-    raw = client.post("/policies/document", json=_signed_draft()).json()
+    raw = client.post("/policies/document", headers=_owner_headers(), json=_signed_draft()).json()
     document = PolicyDocument.model_validate(raw)
 
     assert policy_service.verify_document(document) is True
@@ -54,9 +62,10 @@ def test_active_policy_derives_from_document(monkeypatch) -> None:
     monkeypatch.setenv("AETHERIX_POLICY_SIGNING_KEY", "unit-test-key")
 
     client = TestClient(app)
-    client.post("/policies/document", json=_signed_draft())
+    headers = _owner_headers()
+    client.post("/policies/document", headers=headers, json=_signed_draft())
 
-    active = client.get("/policies/active").json()
+    active = client.get("/policies/active", headers=headers).json()
     assert active["mode"] == "block"
     assert active["protected_entities"] == ["EMAIL_ADDRESS"]
     assert active["id"].startswith("policy-")
@@ -66,7 +75,8 @@ def test_scan_uses_promoted_document(monkeypatch) -> None:
     monkeypatch.setenv("AETHERIX_POLICY_SIGNING_KEY", "unit-test-key")
 
     client = TestClient(app)
-    client.post("/policies/document", json=_signed_draft())
+    headers = _owner_headers()
+    client.post("/policies/document", headers=headers, json=_signed_draft())
 
     scan = client.post(
         "/dlp/scan",
@@ -80,11 +90,14 @@ def test_promotion_writes_audit_record(monkeypatch) -> None:
     monkeypatch.setenv("AETHERIX_POLICY_SIGNING_KEY", "unit-test-key")
 
     client = TestClient(app)
-    client.post("/policies/document", json=_signed_draft())
+    headers = _owner_headers()
+    client.post("/policies/document", headers=headers, json=_signed_draft())
 
-    records = client.get("/audit", params={"action": "policy.promote"}).json()
+    records = client.get("/audit", params={"action": "policy.promote"}, headers=headers).json()
     assert len(records) == 1
-    assert records[0]["actor"] == "operator"
+    token = headers["Authorization"].split(" ", 1)[1]
+    claims = jwt_tokens.verify(token)
+    assert records[0]["actor"] == claims["sub"]
     assert records[0]["resource"].startswith("policy:policy-")
     assert records[0]["before_hash"] is None
     assert records[0]["after_hash"] is not None

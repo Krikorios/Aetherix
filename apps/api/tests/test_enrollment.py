@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.enrollment import enrolled_heartbeat_signature
 from app.schemas import AgentHeartbeat
+from app.services import jwt_tokens, tenancy
 
 
 def _client(monkeypatch) -> TestClient:
@@ -14,8 +15,14 @@ def _client(monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+def _owner_headers() -> dict[str, str]:
+    owner = tenancy.ensure_platform_owner("enroll-owner@aetherix.test", "Enroll Owner")
+    token, _ = jwt_tokens.issue(str(owner.id))
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _enroll(client: TestClient) -> dict:
-    token_response = client.post("/enrollment/tokens", json={"note": "lab", "ttl_seconds": 600})
+    token_response = client.post("/enrollment/tokens", headers=_owner_headers(), json={"note": "lab", "ttl_seconds": 600})
     assert token_response.status_code == 201, token_response.text
     token = token_response.json()["token"]
 
@@ -48,7 +55,7 @@ def _signed_heartbeat(agent_id: str, secret: str, *, nonce: int, collected_at: d
 
 def test_enrollment_token_is_single_use(monkeypatch) -> None:
     client = _client(monkeypatch)
-    token = client.post("/enrollment/tokens", json={}).json()["token"]
+    token = client.post("/enrollment/tokens", headers=_owner_headers(), json={}).json()["token"]
 
     first = client.post(
         "/agent/enroll",
@@ -72,7 +79,7 @@ def test_enroll_returns_agent_secret_exactly_once(monkeypatch) -> None:
     assert len(enrolled["agent_secret"]) >= 32
     assert "enrolled_at" in enrolled
 
-    endpoints = client.get("/endpoints").json()
+    endpoints = client.get("/endpoints", headers=_owner_headers()).json()
     assert all("agent_secret" not in str(e) for e in endpoints)
 
 
@@ -158,7 +165,7 @@ def test_enroll_writes_audit_record_without_leaking_secret(monkeypatch) -> None:
     client = _client(monkeypatch)
     enrolled = _enroll(client)
 
-    records = client.get("/audit", params={"action": "agent.enroll"}).json()
+    records = client.get("/audit", params={"action": "agent.enroll"}, headers=_owner_headers()).json()
     assert len(records) == 1
     record = records[0]
     assert record["resource"] == f"agent:{enrolled['agent_id']}"

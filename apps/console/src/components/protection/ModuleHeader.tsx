@@ -19,6 +19,7 @@ interface ModuleHeaderProps {
   status: ModuleStatus;
   policyVersion: string;
   policyLastSynced: string;
+  policyMode?: string;
   quickActions?: QuickAction[];
   onRefresh?: () => void;
   isRefreshing?: boolean;
@@ -31,6 +32,7 @@ export function ModuleHeader({
   status,
   policyVersion,
   policyLastSynced,
+  policyMode,
   quickActions = [],
   onRefresh,
   isRefreshing = false,
@@ -81,6 +83,7 @@ export function ModuleHeader({
       <PolicySyncBanner
         version={policyVersion}
         lastSynced={policyLastSynced}
+        mode={policyMode}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
       />

@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
+use crate::edr::EdrAction;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub const DEFAULT_SENSITIVITY_LABELS: &[&str] = &["public", "internal", "confidential", "restricted"];
 pub const DEFAULT_GENAI_DESTINATIONS: &[&str] = &["copilot", "claude", "gemini", "chatgpt"];
@@ -71,11 +73,55 @@ pub struct GenaiGuardrailsPolicy {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AntimalwarePolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub response_action: Option<String>,
+    #[serde(default)]
+    pub response: Option<AntimalwareResponsePolicy>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AntimalwareResponsePolicy {
+    #[serde(default)]
+    pub action: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct BehaviorMonitoringPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub high_confidence_action: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct RansomwareMitigationPolicy {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub response_action: Option<String>,
+    #[serde(default)]
+    pub high_confidence_action: Option<String>,
+    #[serde(default)]
+    pub auto_isolate_on_high_confidence: bool,
+    #[serde(default)]
+    pub rollback_approval: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ResolvedPolicy {
     #[serde(default)]
     pub semantic_dlp: SemanticDlpPolicy,
     #[serde(default)]
     pub genai_guardrails: GenaiGuardrailsPolicy,
+    #[serde(default)]
+    pub antimalware: AntimalwarePolicy,
+    #[serde(default)]
+    pub behavior_monitoring: BehaviorMonitoringPolicy,
+    #[serde(default)]
+    pub ransomware_mitigation: RansomwareMitigationPolicy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +190,28 @@ pub fn runtime_from_response(payload: AgentPolicyResponse) -> Result<RuntimePoli
     let mut guardrails: GenaiGuardrailsPolicy = serde_json::from_value(guardrails_value)
         .context("invalid genai_guardrails module")?;
 
+    let antimalware: AntimalwarePolicy = serde_json::from_value(
+        modules
+            .get("antimalware")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    )
+    .context("invalid antimalware module")?;
+    let behavior_monitoring: BehaviorMonitoringPolicy = serde_json::from_value(
+        modules
+            .get("behavior_monitoring")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    )
+    .context("invalid behavior_monitoring module")?;
+    let ransomware_mitigation: RansomwareMitigationPolicy = serde_json::from_value(
+        modules
+            .get("ransomware_mitigation")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    )
+    .context("invalid ransomware_mitigation module")?;
+
     if guardrails.destinations.is_empty() {
         guardrails.destinations = semantic.genai_destinations.clone();
     }
@@ -158,8 +226,77 @@ pub fn runtime_from_response(payload: AgentPolicyResponse) -> Result<RuntimePoli
         resolved: ResolvedPolicy {
             semantic_dlp: semantic,
             genai_guardrails: guardrails,
+            antimalware,
+            behavior_monitoring,
+            ransomware_mitigation,
         },
     })
+}
+
+impl RuntimePolicy {
+    /// Resolve an EDR detector into an enforceable action. Unknown and legacy
+    /// UI values intentionally fall back to review/monitor rather than enforce.
+    pub fn edr_action_for_kind(&self, kind: &crate::edr::EdrDetectionKind) -> EdrAction {
+        match kind {
+            crate::edr::EdrDetectionKind::YaraMatch | crate::edr::EdrDetectionKind::IocMatch => {
+                if !self.resolved.antimalware.enabled {
+                    return EdrAction::Monitor;
+                }
+                parse_edr_action(
+                    self.resolved
+                        .antimalware
+                        .response
+                        .as_ref()
+                        .and_then(|response| response.action.as_deref())
+                        .or(self.resolved.antimalware.response_action.as_deref()),
+                )
+            }
+            crate::edr::EdrDetectionKind::RansomwareCanary => {
+                if !self.resolved.ransomware_mitigation.enabled {
+                    return EdrAction::Monitor;
+                }
+                let configured = self
+                    .resolved
+                    .ransomware_mitigation
+                    .response_action
+                    .as_deref()
+                    .or(self.resolved.ransomware_mitigation.high_confidence_action.as_deref());
+                if configured.is_none()
+                    && self
+                        .resolved
+                        .ransomware_mitigation
+                        .auto_isolate_on_high_confidence
+                {
+                    return EdrAction::Isolate;
+                }
+                parse_edr_action(configured)
+            }
+            crate::edr::EdrDetectionKind::SuspiciousProcessChain => {
+                if !self.resolved.behavior_monitoring.enabled {
+                    return EdrAction::Monitor;
+                }
+                parse_edr_action(
+                    self.resolved
+                        .behavior_monitoring
+                        .high_confidence_action
+                        .as_deref(),
+                )
+            }
+            crate::edr::EdrDetectionKind::ResponseAction => EdrAction::Monitor,
+        }
+    }
+}
+
+fn parse_edr_action(value: Option<&str>) -> EdrAction {
+    match value.unwrap_or("review").trim().to_ascii_lowercase().as_str() {
+        "quarantine" | "remediate" => EdrAction::Quarantine,
+        "quarantine_list" | "list_quarantine" | "list_quarantines" => EdrAction::QuarantineList,
+        "quarantine_restore" | "restore_quarantine" | "release_from_quarantine" => EdrAction::QuarantineRestore,
+        "kill" | "kill_process" => EdrAction::Kill,
+        "isolate" | "isolate_endpoint" => EdrAction::Isolate,
+        "monitor" | "allow" => EdrAction::Monitor,
+        _ => EdrAction::Review,
+    }
 }
 
 pub fn load_policy_cache(path: &Path) -> Result<Option<RuntimePolicy>> {
@@ -200,6 +337,182 @@ fn default_review() -> DlpAction {
 
 fn default_block() -> DlpAction {
     DlpAction::Block
+}
+
+/// Default policy hot-reload poll interval (30 s) per the agent
+/// hot-reload contract. Overridable via
+/// `AETHERIX_POLICY_REFRESH_SECONDS`.
+pub const DEFAULT_POLICY_REFRESH_SECONDS: u64 = 30;
+/// Lower bound for the poll interval so a misconfigured env-var can't
+/// hammer the control plane. Tests can opt into zero via
+/// [`PolicyHotReloader::with_refresh_interval`].
+pub const MIN_POLICY_REFRESH_SECONDS: u64 = 5;
+
+/// Live policy hot-reloader.
+///
+/// Owns the credentials and refresh cadence for `GET /agent/policy`,
+/// transparently falls back to the on-disk last-known-good cache
+/// when the control plane is unreachable, and exposes a single
+/// `tick()` entrypoint the main DLP loop calls on every iteration.
+/// A swap only occurs when the freshly-fetched policy carries a new
+/// `policy_version_hash`; otherwise `tick` returns `None` and the
+/// caller keeps using its existing policy.
+pub struct PolicyHotReloader {
+    client: Client,
+    api_url: String,
+    agent_id: String,
+    agent_secret: String,
+    cache_path: PathBuf,
+    refresh_interval: Duration,
+    last_refresh: Option<Instant>,
+    current_hash: Option<String>,
+}
+
+impl PolicyHotReloader {
+    pub fn new(
+        client: Client,
+        api_url: String,
+        agent_id: String,
+        agent_secret: String,
+        cache_path: PathBuf,
+        refresh_interval: Duration,
+    ) -> Self {
+        Self {
+            client,
+            api_url,
+            agent_id,
+            agent_secret,
+            cache_path,
+            refresh_interval,
+            last_refresh: None,
+            current_hash: None,
+        }
+    }
+
+    /// Builds a reloader that honours the `AETHERIX_POLICY_REFRESH_SECONDS`
+    /// env-var (defaulted to 30 s, floored at 5 s).
+    pub fn from_env(
+        client: Client,
+        api_url: String,
+        agent_id: String,
+        agent_secret: String,
+        cache_path: PathBuf,
+    ) -> Self {
+        let secs = std::env::var("AETHERIX_POLICY_REFRESH_SECONDS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_POLICY_REFRESH_SECONDS)
+            .max(MIN_POLICY_REFRESH_SECONDS);
+        Self::new(
+            client,
+            api_url,
+            agent_id,
+            agent_secret,
+            cache_path,
+            Duration::from_secs(secs),
+        )
+    }
+
+    /// Test-only escape hatch: allow setting the refresh interval to
+    /// anything (including zero) so integration tests can simulate
+    /// a hot-reload without sleeping.
+    pub fn with_refresh_interval(mut self, interval: Duration) -> Self {
+        self.refresh_interval = interval;
+        self
+    }
+
+    pub fn refresh_interval(&self) -> Duration {
+        self.refresh_interval
+    }
+
+    /// Initial fetch + cache seeding. The agent cannot run without a
+    /// policy, so this returns an error only when both the control
+    /// plane is unreachable AND no cached policy exists on disk.
+    pub fn bootstrap(&mut self) -> Result<RuntimePolicy> {
+        let policy = match fetch_effective_policy(
+            &self.client,
+            &self.api_url,
+            &self.agent_id,
+            &self.agent_secret,
+        ) {
+            Ok(fetched) => {
+                let _ = save_policy_cache(&self.cache_path, &fetched);
+                fetched
+            }
+            Err(fetch_error) => load_policy_cache(&self.cache_path)
+                .context("unable to load cached policy after fetch failure")?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no policy from api and no last-known-good cache: {fetch_error}"
+                    )
+                })?,
+        };
+        self.current_hash = Some(policy.policy_version_hash.clone());
+        self.last_refresh = Some(Instant::now());
+        println!(
+            "aetherix-agent: policy hot-reloader bootstrapped at version {} (refresh every {}s)",
+            policy.policy_version_hash,
+            self.refresh_interval.as_secs()
+        );
+        Ok(policy)
+    }
+
+    /// Poll the control plane if the refresh interval has elapsed.
+    ///
+    /// * Returns `Some(new_policy)` only when the fetched policy
+    ///   carries a different `policy_version_hash` than the one
+    ///   currently active — atomic swap is the caller's
+    ///   responsibility.
+    /// * Returns `None` when the interval has not yet elapsed, when
+    ///   the policy is unchanged, or when the control plane is
+    ///   unreachable. In the unreachable case the last-known-good
+    ///   policy stays in force — the agent keeps enforcing.
+    pub fn tick(&mut self) -> Option<RuntimePolicy> {
+        let due = match self.last_refresh {
+            Some(at) => at.elapsed() >= self.refresh_interval,
+            None => true,
+        };
+        if !due {
+            return None;
+        }
+        self.last_refresh = Some(Instant::now());
+
+        let fetched = match fetch_effective_policy(
+            &self.client,
+            &self.api_url,
+            &self.agent_id,
+            &self.agent_secret,
+        ) {
+            Ok(p) => p,
+            Err(err) => {
+                eprintln!(
+                    "aetherix-agent: policy refresh failed, continuing on last-known-good ({err})"
+                );
+                return None;
+            }
+        };
+
+        let changed = self
+            .current_hash
+            .as_ref()
+            .map(|h| h != &fetched.policy_version_hash)
+            .unwrap_or(true);
+
+        if !changed {
+            return None;
+        }
+
+        let previous = self.current_hash.clone().unwrap_or_else(|| "<none>".into());
+        self.current_hash = Some(fetched.policy_version_hash.clone());
+        if let Err(err) = save_policy_cache(&self.cache_path, &fetched) {
+            eprintln!("aetherix-agent: failed to persist policy cache: {err}");
+        }
+        println!(
+            "aetherix-agent: policy hot-reload applied {} -> {}",
+            previous, fetched.policy_version_hash
+        );
+        Some(fetched)
+    }
 }
 
 #[cfg(test)]

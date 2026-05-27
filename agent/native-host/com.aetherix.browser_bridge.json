@@ -1,0 +1,9 @@
+{
+  "name": "com.aetherix.browser_bridge",
+  "description": "Aetherix DLP GenAI Guardrails — native bridge host",
+  "path": "__AETHERIX_AGENT_BINARY__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__AETHERIX_EXTENSION_ID__/"
+  ]
+}

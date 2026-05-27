@@ -1,5 +1,6 @@
 import React from "react";
-import { Inbox, LoaderCircle } from "lucide-react";
+import { Inbox } from "lucide-react";
+import { LoadingRow } from "../../components";
 
 interface EmptyStateProps {
   title?: string;
@@ -9,53 +10,16 @@ interface EmptyStateProps {
 
 export function EmptyState({ title = "No Data Available", message, icon: Icon = Inbox }: EmptyStateProps) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "48px 24px",
-        textAlign: "center",
-        background: "var(--panel)",
-        border: "1px dashed var(--line)",
-        borderRadius: "12px",
-      }}
-    >
-      <div style={{ color: "var(--muted)", marginBottom: "16px" }}>
+    <div className="emptyStateCard">
+      <div className="emptyStateIconWrap">
         <Icon size={40} />
       </div>
-      <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", fontWeight: 600, color: "var(--ink)" }}>{title}</h3>
-      <p style={{ margin: 0, fontSize: "14px", color: "var(--muted)", maxWidth: "320px" }}>{message}</p>
+      <h3 className="emptyStateTitle">{title}</h3>
+      <p className="emptyStateMessage">{message}</p>
     </div>
   );
 }
 
-interface LoadingStateProps {
-  message?: string;
-}
-
-export function LoadingState({ message = "Loading module data..." }: LoadingStateProps) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "48px 24px",
-        textAlign: "center",
-      }}
-    >
-      <LoaderCircle
-        style={{
-          color: "var(--accent)",
-          marginBottom: "16px",
-          animation: "spin 1s linear infinite",
-        }}
-        size={36}
-      />
-      <p style={{ margin: 0, fontSize: "14px", color: "var(--muted)" }}>{message}</p>
-    </div>
-  );
+export function LoadingState({ message = "Loading module data..." }: { message?: string }) {
+  return <LoadingRow label={message} />;
 }

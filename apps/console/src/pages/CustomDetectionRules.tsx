@@ -44,7 +44,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
   const [success, setSuccess] = useState<string | null>(null);
 
   // Effective policy summary
-  const [policy, setPolicy] = useState<EffectivePolicy>({
+  const [policy, setPolicy] = useState<EffectivePolicy>(() => ({
     policy_version: "v2.10.4",
     last_updated: new Date(Date.now() - 3600000).toISOString(),
     status: "protected",
@@ -53,7 +53,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
       "audit_custom_detections": true,
       "enforce_sandbox_rules": false,
     },
-  });
+  }));
 
   const [rules, setRules] = useState<CustomDetectionRule[]>([]);
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
@@ -115,42 +115,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
           setSelectedAction(data[0].status === "active" ? "maintain_active" : "run_promotion");
         }
       } catch (err) {
-        // Fallback demo data
-        const localDefaults: CustomDetectionRule[] = [
-          {
-            id: "custom-rule-01",
-            customer_id: me.scope.customer_ids[0] || null,
-            name: "Suspicious Powershell DownloadString Pattern",
-            description: "Detects PowerShell executions containing download strings typically associated with staging scripts.",
-            severity: "high",
-            status: "simulated",
-            query: "process.name == 'powershell.exe' && (process.command_line.contains('.DownloadString') || process.command_line.contains('iex'))",
-            author: "secops-operator@aetherix-msp.com",
-            mitre_attacks: ["T1059.001", "T1105"],
-            last_modified: new Date(Date.now() - 3600 * 2000).toISOString(),
-            last_simulation_run: new Date(Date.now() - 3600 * 1000).toISOString(),
-            scanned_agents_count: 140,
-          },
-          {
-            id: "custom-rule-02",
-            customer_id: me.scope.customer_ids[0] || null,
-            name: "Unauthorized Administrative RDP Remote Port Access",
-            description: "Matches RDP connection attempts from non-corporate IP CIDR networks.",
-            severity: "critical",
-            status: "draft",
-            query: "connection.port == 3389 && !connection.remote_address.startswith('10.')",
-            author: "lead-engineer@aetherix-network.internal",
-            mitre_attacks: ["T1133", "T1021.001"],
-            last_modified: new Date(Date.now() - 3600 * 21000).toISOString(),
-            last_simulation_run: null,
-            scanned_agents_count: 140,
-          },
-        ];
-        setRules(localDefaults);
-        if (localDefaults.length > 0) {
-          setSelectedRuleId(localDefaults[0].id);
-          setSelectedAction(localDefaults[0].status === "active" ? "maintain_active" : "run_promotion");
-        }
+        setError(err instanceof Error ? err.message : "Failed to load custom detection rules.");
       } finally {
         setIsLoading(false);
       }
@@ -162,7 +127,7 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
     setIsSyncing(true);
     setError(null);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await apiGet("/detection-rules");
       setPolicy((prev) => ({
         ...prev,
         last_updated: new Date().toISOString(),
@@ -200,26 +165,8 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
       setSimulation(preview);
       setRules(prev => prev.map(r => r.id === selectedRule.id ? result.rule : r));
       setSuccess(`Simulated dry-run completed successfully for '${selectedRule.name}'.`);
-    } catch {
-      // Offline fallback simulations
-      const fallbackSim: SimulationPreview = {
-        id: `sim-rule-${selectedRule.id}-${Date.now()}`,
-        detection_id: selectedRule.id,
-        action: selectedAction,
-        destructive: false,
-        approval_required: policy.approval_required,
-        affected_systems: selectedRule.severity === "critical" ? 8 : 2,
-        estimated_impact: [
-          `Custom Detection Rule engine successfully compiled '${selectedRule.name}'.`,
-          `Rule Query validated successfully.`,
-          `Run scoped on ${selectedRule.scanned_agents_count ?? 140} online agents. Matches identified: ${selectedRule.severity === "critical" ? "8 events" : "2 events"}.`,
-        ],
-        evidence_controls: ["nist-csf-2.0:DE.CM", "iso27001-2022:A.8.16"],
-        created_at: new Date().toISOString(),
-      };
-      setSimulation(fallbackSim);
-      setRules(prev => prev.map(r => r.id === selectedRule.id ? { ...r, status: "simulated", last_simulation_run: new Date().toISOString() } : r));
-      setSuccess("Rule simulation succeeded. Rule promoted to 'Simulated' state.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rule simulation failed.");
     } finally {
       setIsWorking(false);
     }
@@ -259,9 +206,8 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
       const result = await apiPost<DetectionRulePromotionResponse>(`/detection-rules/${selectedRule.id}/promote`, {});
       setRules(prev => prev.map(r => r.id === selectedRule.id ? result.rule : r));
       setSuccess(`Staged promotion of '${selectedRule.name}' to production engine.`);
-    } catch {
-      setRules(prev => prev.map(r => r.id === selectedRule.id ? { ...r, status: "active" } : r));
-      setSuccess("Rule successfully promoted to live production engine locally.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rule promotion failed.");
     } finally {
       setIsWorking(false);
       setConfirmRequest(null);
@@ -289,24 +235,8 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
       setSelectedRuleId(res.id);
       setIsCreateModalOpen(false);
       setSuccess(`Custom rule '${res.name}' created successfully.`);
-    } catch {
-      const offlineRes: CustomDetectionRule = {
-        id: `offline-rule-${Date.now()}`,
-        customer_id: me.scope.customer_ids[0] || null,
-        name: newRuleForm.name,
-        description: newRuleForm.description,
-        severity: newRuleForm.severity,
-        status: "draft",
-        query: newRuleForm.query,
-        author: me.account.email,
-        mitre_attacks: newRuleForm.mitre ? [newRuleForm.mitre] : [],
-        last_modified: new Date().toISOString(),
-        scanned_agents_count: 140,
-      };
-      setRules((prev) => [offlineRes, ...prev]);
-      setSelectedRuleId(offlineRes.id);
-      setIsCreateModalOpen(false);
-      setSuccess(`Custom rule '${offlineRes.name}' drafted locally.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create custom rule.");
     } finally {
       setIsWorking(false);
     }

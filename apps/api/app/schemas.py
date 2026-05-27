@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DlpScanRequest(BaseModel):
@@ -159,12 +159,97 @@ class AgentCaseActionResult(BaseModel):
     actioned_at: datetime
 
 
+# --- System banners --------------------------------------------------------
+
+SystemBannerSeverity = Literal["info", "warning", "critical"]
+
+
+class SystemBannerCreate(BaseModel):
+    message: str = Field(min_length=1, max_length=280)
+    link_label: str | None = Field(default=None, max_length=80)
+    link_url: str | None = Field(default=None, max_length=500)
+    severity: SystemBannerSeverity = "warning"
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    active: bool = True
+
+
+class SystemBanner(BaseModel):
+    id: UUID
+    message: str
+    link_label: str | None = None
+    link_url: str | None = None
+    severity: SystemBannerSeverity
+    starts_at: datetime
+    ends_at: datetime | None = None
+    active: bool
+    created_by: UUID | None = None
+    created_at: datetime
+
+
 class AgentSignals(BaseModel):
     blocked_events: int = Field(default=0, ge=0)
     dlp_events: int = Field(default=0, ge=0)
     pending_updates: int = Field(default=0, ge=0)
     cpu_percent: float | None = Field(default=None, ge=0, le=100)
     memory_percent: float | None = Field(default=None, ge=0, le=100)
+
+
+class SystemInventory(BaseModel):
+    hostname: str
+    os_name: str
+    os_version: str
+    kernel_version: str
+    total_memory: int
+    used_memory: int
+    total_swap: int
+    used_swap: int
+    cpu_count: int
+    processes_count: int
+    networks: dict[str, dict[str, Any]]
+    timestamp: str
+
+
+class FimEvent(BaseModel):
+    event_type: Literal["added", "modified", "deleted"]
+    file_path: str
+    sha256_hash: str | None = None
+    timestamp: str
+
+
+class YaraStringMatch(BaseModel):
+    identifier: str
+    matched_data: str | None = None
+    offset: int | None = None
+    length: int | None = None
+
+
+class EdrEvent(BaseModel):
+    kind: Literal["yara_match", "ioc_match", "ransomware_canary", "suspicious_process_chain", "response_action"]
+    rule_id: str
+    action: Literal["monitor", "review", "quarantine", "quarantine_list", "quarantine_restore", "kill", "isolate"]
+    process_path: str | None = None
+    process_pid: int | None = None
+    parent_pid: int | None = None
+    file_path: str | None = None
+    file_sha256: str | None = None
+    matched_indicator: str | None = None
+    policy_version: str
+    collected_at: str
+    tags: list[str] = []
+    matched_strings: list[YaraStringMatch] = []
+    rule_metadata: dict[str, str] = {}
+    scan_duration_ms: int | None = None
+    matched_rules: list[str] = []
+    evidence_controls: list[str] = []
+    response: dict[str, Any] | None = None
+
+
+class CisCheckResult(BaseModel):
+    rule_id: str
+    title: str
+    status: Literal["pass", "fail", "error"]
+    actual_value: str
 
 
 class AgentHeartbeat(BaseModel):
@@ -177,6 +262,11 @@ class AgentHeartbeat(BaseModel):
     signature: str | None = None
     nonce: int | None = Field(default=None, ge=1)
     signals: AgentSignals = Field(default_factory=AgentSignals)
+    inventory: SystemInventory | None = None
+    fim_events: list[FimEvent] = Field(default_factory=list)
+    edr_events: list[EdrEvent] = Field(default_factory=list)
+    cis_results: list[CisCheckResult] = Field(default_factory=list)
+
 
 
 class Endpoint(BaseModel):
@@ -188,6 +278,113 @@ class Endpoint(BaseModel):
     last_seen: datetime
     policy_version: str
     agent_version: str
+
+
+class EndpointHealthRecord(BaseModel):
+    id: str
+    customer_id: UUID | None = None
+    endpoint_name: str
+    hostname: str
+    os: str
+    agent_version: str
+    latest_agent_version: str
+    policy_version: str
+    active_policy_version: str
+    status: Literal["healthy", "attention", "offline", "drifted"]
+    last_heartbeat: datetime
+    risk_score: int = Field(ge=0, le=100)
+    open_alerts: int = Field(default=0, ge=0)
+    pending_actions: int = Field(default=0, ge=0)
+    tags: list[str] = Field(default_factory=list)
+
+
+class ModuleActionRequest(BaseModel):
+    action: str = Field(min_length=1, max_length=120)
+    payload: dict[str, Any] | None = None
+
+
+class ModuleSimulationResult(BaseModel):
+    id: str
+    detection_id: str
+    action: str
+    destructive: bool = False
+    approval_required: bool = False
+    affected_systems: int = Field(default=1, ge=0)
+    estimated_impact: list[str] = Field(default_factory=list)
+    evidence_controls: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class ModuleActionResult(BaseModel):
+    id: str
+    target_id: str
+    action: str
+    status: Literal["queued", "awaiting_approval", "completed"] = "queued"
+    approval_required: bool = False
+    payload: dict[str, Any] | None = None
+    evidence_controls: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+DeviceType = Literal["usb_storage", "usb_other", "printer", "bluetooth", "optical", "thunderbolt", "clipboard"]
+
+
+class DeviceEvent(BaseModel):
+    id: str
+    customer_id: UUID | None = None
+    hostname: str
+    user: str
+    device_type: DeviceType
+    device_name: str
+    vendor_id: str
+    product_id: str
+    serial: str | None = None
+    action: Literal["connected", "blocked", "allowed_once", "read_attempted", "write_attempted", "paste_attempted", "print_job"]
+    severity: RiskBand
+    status: Literal["blocked", "pending_approval", "allowed", "review"]
+    timestamp: datetime
+    bytes_written: int | None = None
+    destination: str | None = None
+    policy_rule: str | None = None
+    approval_required: bool = False
+
+
+QuarantineItemKind = Literal["file", "email", "process", "network_connection"]
+
+
+class QuarantineItem(BaseModel):
+    id: str
+    customer_id: UUID | None = None
+    hostname: str
+    kind: QuarantineItemKind
+    name: str
+    path: str | None = None
+    hash: str | None = None
+    quarantine_reason: str
+    severity: RiskBand
+    status: Literal["quarantined", "restore_requested", "restored", "deleted"]
+    quarantined_at: datetime
+    quarantined_by: str
+    detection_id: str | None = None
+
+
+class PatchItem(BaseModel):
+    id: str
+    customer_id: UUID | None = None
+    hostname: str
+    os: str
+    cve_id: str | None = None
+    kb_id: str | None = None
+    title: str
+    description: str
+    severity: RiskBand
+    status: Literal["missing", "pending", "applied", "failed", "excluded"]
+    category: Literal["os", "application", "driver", "security"]
+    vendor: str
+    release_date: datetime
+    installed_at: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    cvss_score: float | None = None
 
 
 class Policy(BaseModel):
@@ -1001,6 +1198,77 @@ class SecurityAlert(BaseModel):
     created_at: datetime
 
 
+class CustomerRiskSummary(BaseModel):
+    customer_id: UUID
+    company_name: str
+    risk_score: int = Field(ge=0, le=100)
+    risk_band: RiskBand
+    open_alerts: int = Field(default=0, ge=0)
+    enrolled_agents: int = Field(default=0, ge=0)
+    license_status: Literal["active", "trial", "expired", "suspended"]
+    last_seen: datetime
+    policy_version: str
+    ai_efficiency_score: int = Field(default=0, ge=0, le=100)
+
+
+class ReportRecord(BaseModel):
+    id: UUID
+    type: Literal["executive_summary", "ransomware_readiness", "integrity_report", "compliance_export", "incident_timeline", "ai_efficiency"]
+    title: str
+    description: str
+    status: Literal["ready", "generating", "failed", "scheduled"]
+    customer_id: UUID | None = None
+    generated_at: datetime | None = None
+    scheduled_for: datetime | None = None
+    size_bytes: int | None = None
+    confidence: int | None = Field(default=None, ge=0, le=100)
+    source_event_count: int | None = None
+    download_url: str | None = None
+
+
+class ReportGenerateRequest(BaseModel):
+    type: Literal["executive_summary", "ransomware_readiness", "integrity_report", "compliance_export", "incident_timeline", "ai_efficiency"]
+    customer_id: UUID | None = None
+
+
+class UsageMetrics(BaseModel):
+    customer_id: UUID
+    customer_name: str
+    endpoint_count: int = 0
+    events_30d: int = 0
+    ai_calls_30d: int = 0
+    ai_efficiency_score: int = Field(default=0, ge=0, le=100)
+    dlp_events_30d: int = 0
+    alerts_30d: int = 0
+    blocked_30d: int = 0
+    storage_gb: float = 0
+    trend_events: int = 0
+    trend_ai: int = 0
+
+
+class PlatformUsage(BaseModel):
+    total_endpoints: int = 0
+    total_events_30d: int = 0
+    total_ai_calls_30d: int = 0
+    avg_ai_efficiency_score: int = 0
+    total_dlp_events_30d: int = 0
+    total_blocked_30d: int = 0
+    total_storage_gb: float = 0
+    customers: list[UsageMetrics] = Field(default_factory=list)
+
+
+class Connector(BaseModel):
+    id: str
+    name: str
+    category: Literal["psa", "rmm", "siem", "identity", "billing", "email"]
+    description: str
+    status: Literal["connected", "disconnected", "error", "configuring"]
+    icon_emoji: str
+    last_sync: datetime | None = None
+    error_message: str | None = None
+    config_fields: list[str] = Field(default_factory=list)
+
+
 class IncidentCase(BaseModel):
     id: UUID
     customer_id: UUID
@@ -1134,6 +1402,32 @@ class EASMExposureCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ExternalRiskPolicyView(BaseModel):
+    """Effective policy snapshot for an EASM or DRP module, sized to UI shape."""
+
+    policy_version: str
+    last_updated: datetime
+    status: Literal["protected", "monitor_only", "off"]
+    approval_required: bool
+    controls: dict[str, bool] = Field(default_factory=dict)
+
+
+class ExternalRiskSimulateRequest(BaseModel):
+    action: str
+
+
+class ExternalRiskSimulationPreview(BaseModel):
+    id: str
+    detection_id: str
+    action: str
+    destructive: bool
+    approval_required: bool
+    estimated_impact: list[str]
+    affected_systems: int = 1
+    evidence_controls: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
 # --- Companies + Licensing + Accounts module --------------------------------
 
 RoleCode = Literal[
@@ -1198,26 +1492,92 @@ class TotpVerifyRequest(BaseModel):
     code: str = Field(min_length=6, max_length=8)
 
 
+class RecoveryCodeVerifyRequest(BaseModel):
+    challenge_id: UUID
+    code: str = Field(min_length=8, max_length=24)
+
+
 class TotpChallenge(BaseModel):
     """Returned by /auth/login when 2FA is required.
 
     ``status`` is the discriminator the frontend uses:
     - ``totp_setup_required`` — first login: ``otpauth_url`` + ``secret`` are
       included so the client can render the QR code for enrollment.
+      ``recovery_codes`` are returned on first setup only.
     - ``totp_required`` — subsequent logins: only the challenge id is
       returned; the client just asks for the 6-digit code.
     """
 
-    status: Literal["totp_setup_required", "totp_required"]
+    status: Literal["totp_setup_required", "totp_required", "recovery_code_accepted"]
     challenge_id: UUID
     email: str
     otpauth_url: str | None = None
     secret: str | None = None
     issuer: str | None = None
+    recovery_codes: list[str] | None = None
+
+
+class RecoveryCodeList(BaseModel):
+    codes: list[str]
+    remaining: int
 
 
 class PasswordSetRequest(BaseModel):
     password: str = Field(min_length=8, max_length=200)
+
+
+# --- OAuth2 / SSO ------------------------------------------------------------
+
+OAuth2ProviderType = Literal["google", "microsoft", "github", "oidc_generic"]
+
+
+class OAuth2ProviderCreate(BaseModel):
+    partner_id: UUID | None = None
+    name: str = Field(min_length=1, max_length=80)
+    provider_type: OAuth2ProviderType = "oidc_generic"
+    client_id: str = Field(min_length=1)
+    client_secret: str = Field(min_length=1)
+    issuer_url: str | None = None
+    authorization_url: str | None = None
+    token_url: str | None = None
+    userinfo_url: str | None = None
+    scopes: str = "openid email profile"
+
+
+class OAuth2Provider(BaseModel):
+    id: UUID
+    partner_id: UUID | None = None
+    name: str
+    provider_type: OAuth2ProviderType
+    client_id: str
+    issuer_url: str | None = None
+    authorization_url: str | None = None
+    token_url: str | None = None
+    userinfo_url: str | None = None
+    scopes: str
+    enabled: bool
+    created_at: datetime
+
+
+class OAuth2ProviderUpdate(BaseModel):
+    name: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    issuer_url: str | None = None
+    authorization_url: str | None = None
+    token_url: str | None = None
+    userinfo_url: str | None = None
+    scopes: str | None = None
+    enabled: bool | None = None
+
+
+class OAuth2Identity(BaseModel):
+    id: UUID
+    account_id: UUID
+    provider_id: UUID
+    provider_subject: str
+    email: str | None = None
+    created_at: datetime
 
 
 class Account(BaseModel):
@@ -1283,6 +1643,21 @@ class MeResponse(BaseModel):
     permissions: dict[str, PermissionLevel]
     scope: TenantScope
     branding: Branding = Field(default_factory=Branding)
+
+
+class LoginResult(BaseModel):
+    """Returned by ``/auth/totp/verify`` once both factors succeed.
+
+    The client persists ``access_token`` and sends it as
+    ``Authorization: Bearer <token>`` on subsequent requests. ``me``
+    carries the same payload as ``/me`` so the console does not need a
+    second round trip after login.
+    """
+
+    access_token: str
+    token_type: Literal["Bearer"] = "Bearer"
+    expires_at: datetime
+    me: MeResponse
 
 
 # --- Subscriptions + Licensing ---------------------------------------------
@@ -1365,6 +1740,69 @@ class LicenseUsageDay(BaseModel):
     peak_seats: int
 
 
+# --- Subscription lifecycle (P1 #5) ----------------------------------------
+
+SubscriptionStatus = Literal[
+    "trialing", "active", "past_due", "canceled", "paused", "incomplete"
+]
+BillingProvider = Literal["stripe", "manual", "mock"]
+
+
+class BillingCustomer(BaseModel):
+    customer_id: UUID
+    provider: BillingProvider
+    external_id: str
+    default_payment_method: str | None = None
+    status: str = "active"
+    created_at: datetime
+    updated_at: datetime
+
+
+class SubscriptionInstance(BaseModel):
+    id: UUID
+    customer_id: UUID
+    subscription_id: UUID
+    subscription_sku: str
+    status: SubscriptionStatus
+    trial_ends_at: datetime | None = None
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+    canceled_at: datetime | None = None
+    provider: BillingProvider | None = None
+    provider_subscription_id: str | None = None
+    seats: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class SubscriptionEvent(BaseModel):
+    id: UUID
+    subscription_instance_id: UUID
+    kind: str
+    payload: dict = Field(default_factory=dict)
+    source: Literal["internal", "webhook"]
+    received_at: datetime
+
+
+class StartTrialRequest(BaseModel):
+    subscription_sku: str = Field(min_length=1, max_length=80)
+    trial_days: int = Field(default=14, ge=1, le=180)
+    seats: int = Field(default=0, ge=0)
+
+
+class SubscribeRequest(BaseModel):
+    subscription_sku: str = Field(min_length=1, max_length=80)
+    seats: int = Field(default=0, ge=0)
+    provider: BillingProvider = "manual"
+    provider_subscription_id: str | None = None
+
+
+class CancelSubscriptionRequest(BaseModel):
+    at_period_end: bool = True
+    reason: str | None = Field(default=None, max_length=500)
+
+
 # --- AI provider catalog + per-company AI settings -------------------------
 
 AiProviderKind = Literal["classifier", "chat", "embedding"]
@@ -1418,38 +1856,85 @@ class AiProbeResult(BaseModel):
 
 # --- Compliance Evidence Engine v0.5 --------------------------------------
 
+ComplianceFramework = Literal["iso27001-2022", "soc2-2017", "nist-csf-2.0", "gdpr", "hipaa-security-rule"]
+ComplianceSourceTable = Literal["compliance_controls", "policy_documents", "evidence_events", "security_alerts", "audit_log"]
+ComplianceReviewDecision = Literal["accept", "reject", "needs_more"]
+
+
 class ComplianceReviewCreate(BaseModel):
-    framework: str = Field(min_length=1, max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+    source_table: ComplianceSourceTable
+    source_id: str = Field(min_length=1, max_length=160)
+    framework: ComplianceFramework
     control_id: str = Field(min_length=1, max_length=100)
-    status: Literal["pending", "reviewed", "flagged"]
-    notes: str | None = Field(default=None, max_length=2000)
+    decision: ComplianceReviewDecision
+    note: str | None = Field(default=None, max_length=2000)
+    reviewed_by_role: str = Field(min_length=1, max_length=120)
+    reviewed_by_name: str = Field(min_length=1, max_length=160)
 
 
 class ComplianceReview(BaseModel):
     id: UUID
     customer_id: UUID
+    source_table: str
+    source_id: str
     framework: str
     control_id: str
-    status: str
-    reviewed_by: str
-    notes: str | None = None
+    reviewed_by_account_id: UUID | None = None
+    reviewed_by_role: str
+    reviewed_by_name: str
+    decision: str
+    note: str | None = None
     reviewed_at: datetime
 
 
+class ComplianceReviewQueueItem(BaseModel):
+    source_table: str
+    source_id: str
+    framework: str
+    control_id: str
+    evidence_summary: str
+    evidence_created_at: datetime | None = None
+    review_status: Literal["pending", "completed"]
+    latest_review: ComplianceReview | None = None
+
+
 class ComplianceAttestationCreate(BaseModel):
-    framework: str = Field(min_length=1, max_length=100)
-    notes: str | None = Field(default=None, max_length=2000)
+    model_config = ConfigDict(extra="forbid")
+
+    framework: ComplianceFramework
+    period_start: date
+    period_end: date
+    attested_role: str = Field(min_length=1, max_length=120)
+    attested_name: str = Field(min_length=1, max_length=160)
+    statement: str = Field(min_length=1, max_length=4000)
+    bundle_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    signature: str = Field(min_length=16, max_length=2048)
+    signature_algo: str = Field(min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def validate_period(self) -> "ComplianceAttestationCreate":
+        if self.period_end < self.period_start:
+            raise ValueError("period_end must be on or after period_start")
+        return self
 
 
 class ComplianceAttestation(BaseModel):
     id: UUID
     customer_id: UUID
     framework: str
-    attested_by: str
-    notes: str | None = None
-    bundle_hash: str
-    status: str
-    attested_at: datetime
+    period_start: date
+    period_end: date
+    attested_by_account_id: UUID | None = None
+    attested_role: str
+    attested_name: str
+    bundle_sha256: str
+    signature: str
+    signature_algo: str
+    statement: str
+    created_at: datetime
+    evidence_summary_count: int = Field(default=0, ge=0)
 
 
 class ComplianceVaultReference(BaseModel):
@@ -1461,4 +1946,3 @@ class ComplianceVaultReference(BaseModel):
     bundle_hash: str
     status: str
     exported_at: datetime
-

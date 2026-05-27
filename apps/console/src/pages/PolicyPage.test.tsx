@@ -265,7 +265,7 @@ beforeEach(() => {
   });
 
   apiPostMock.mockImplementation(async (path: string) => {
-    if (path === "/policies/policy-1/simulate") return simulationRecord();
+    if (path.endsWith("/simulate")) return simulationRecord();
     if (path === "/policies/assign") return { id: "assign-1" };
     if (path === "/policies") {
       return {
@@ -282,10 +282,10 @@ describe("PolicyPage", () => {
   it("renders the policy catalog with API-backed rows and filters", async () => {
     render(<PolicyPage />);
 
-    expect(await screen.findByRole("heading", { name: "Policies" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Policies" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Add/i })).toBeInTheDocument();
     expect(screen.getByLabelText("Filter by policy name")).toBeInTheDocument();
-    expect(screen.getByLabelText("Filter by owner")).toBeInTheDocument();
+    expect(screen.getByLabelText("Filter by status")).toBeInTheDocument();
     expect(screen.getByLabelText("Filter by company")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Default Policy v1.01" })).toBeInTheDocument();
     expect(screen.getByText("1 item")).toBeInTheDocument();
@@ -334,7 +334,7 @@ describe("PolicyPage", () => {
 
     await user.click(screen.getByRole("button", { name: "Agent Communication" }));
     expect(screen.getByRole("heading", { name: "Communication" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Communication name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Priority")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Aetherix modules" }));
     expect(screen.getByRole("heading", { name: "Policy engine modules" })).toBeInTheDocument();
@@ -423,7 +423,10 @@ describe("PolicyPage", () => {
 
     await user.click(screen.getByRole("button", { name: /Device Control/i }));
     expect(screen.getByRole("heading", { name: "Device Control" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Default access:" })).toBeInTheDocument();
+    
+    // We expect the new robust UI elements from DeviceControlSection
+    expect(screen.getByRole("button", { name: "Rules" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Exclusions" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Exchange Protection/i }));
     expect(screen.getByRole("heading", { name: "User groups" })).toBeInTheDocument();
@@ -475,5 +478,40 @@ describe("PolicyPage", () => {
     await waitFor(() => {
       expect(apiGetMock).toHaveBeenCalledWith("/policies");
     });
+  });
+
+  it("handles device control rule modifications and triggers simulation", async () => {
+    const user = userEvent.setup();
+    render(<PolicyPage />);
+    
+    // Select policy
+    await user.click(await screen.findByRole("button", { name: "Default Policy v1.01" }));
+
+    // Open Device Control
+    await user.click(screen.getByRole("button", { name: /Device Control/i }));
+    
+    // Enable policy
+    const enableCheckbox = screen.getByRole("checkbox", { name: "Enable device control policy" }) as HTMLInputElement;
+    if (!enableCheckbox.checked) {
+      await user.click(enableCheckbox);
+    }
+
+    // Verify rules tab
+    expect(screen.getByRole("button", { name: "Rules" })).toBeInTheDocument();
+
+    // Simulate clicking the save button inside the detail view
+    const saveButton = screen.getByRole("button", { name: /^Save$/i });
+    await user.click(saveButton);
+
+    // Wait for the success banner
+    expect(await screen.findByText(/Created draft new \(v1\)/i)).toBeInTheDocument();
+
+    // Go to Aetherix modules section to trigger simulation
+    await user.click(screen.getByRole("button", { name: "Aetherix modules" }));
+
+    // Click simulate
+    await user.click(screen.getByRole("button", { name: /Simulate selected/i }));
+
+    expect(await screen.findByText(/Simulation complete: 2 module\(s\) trigger approval gates/i)).toBeInTheDocument();
   });
 });

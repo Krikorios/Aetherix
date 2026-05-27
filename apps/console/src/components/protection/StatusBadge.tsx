@@ -7,37 +7,34 @@ interface StatusBadgeProps {
   size?: number;
 }
 
-export function StatusBadge({ status, size = 16 }: StatusBadgeProps) {
-  let bgClass = "bg-green-50 text-green-700 border-green-250";
-  let label = "Protected";
-  let Icon = Shield;
+const STATUS_STYLES: Record<ModuleStatus, { bg: string; text: string; border: string }> = {
+  protected: { bg: "#ecfdf5", text: "#065f46", border: "#a7f3d0" },
+  review_needed: { bg: "#fef3c7", text: "#92400e", border: "#fde68a" },
+  disabled: { bg: "#ffe4e6", text: "#9f1239", border: "#fecdd3" },
+  planned: { bg: "#cffafe", text: "#155e75", border: "#a5f3fc" },
+};
 
-  switch (status) {
-    case "protected":
-      bgClass = "bg-green-100 text-emerald-800 border-green-300";
-      label = "Protected";
-      Icon = Shield;
-      break;
-    case "review_needed":
-      bgClass = "bg-amber-100 text-amber-800 border-amber-300";
-      label = "Review Needed";
-      Icon = ShieldAlert;
-      break;
-    case "disabled":
-      bgClass = "bg-rose-100 text-rose-800 border-rose-300";
-      label = "Disabled";
-      Icon = ShieldOff;
-      break;
-    case "planned":
-      bgClass = "bg-cyan-100 text-cyan-800 border-cyan-300";
-      label = "Planned";
-      Icon = Calendar;
-      break;
-  }
+const STATUS_ICONS: Record<ModuleStatus, typeof Shield> = {
+  protected: Shield,
+  review_needed: ShieldAlert,
+  disabled: ShieldOff,
+  planned: Calendar,
+};
+
+const STATUS_LABELS: Record<ModuleStatus, string> = {
+  protected: "Protected",
+  review_needed: "Review Needed",
+  disabled: "Disabled",
+  planned: "Planned",
+};
+
+export function StatusBadge({ status, size = 16 }: StatusBadgeProps) {
+  const colors = STATUS_STYLES[status];
+  const Icon = STATUS_ICONS[status];
+  const label = STATUS_LABELS[status];
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-full border ${bgClass}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -47,6 +44,9 @@ export function StatusBadge({ status, size = 16 }: StatusBadgeProps) {
         fontSize: "12px",
         fontWeight: 600,
         textTransform: "capitalize",
+        background: colors.bg,
+        color: colors.text,
+        border: `1px solid ${colors.border}`,
       }}
     >
       <Icon size={size} />

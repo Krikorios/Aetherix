@@ -6,9 +6,10 @@ interface PolicySyncBannerProps {
   lastSynced: string;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  mode?: string;
 }
 
-export function PolicySyncBanner({ version, lastSynced, onRefresh, isRefreshing }: PolicySyncBannerProps) {
+export function PolicySyncBanner({ version, lastSynced, onRefresh, isRefreshing, mode }: PolicySyncBannerProps) {
   return (
     <div
       className="policySyncBanner"
@@ -25,13 +26,19 @@ export function PolicySyncBanner({ version, lastSynced, onRefresh, isRefreshing 
         color: "var(--muted)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, color: "var(--ink)" }}>Policy Version:</span>
         <code style={{ background: "rgba(11, 107, 87, 0.08)", padding: "2px 6px", borderRadius: "4px" }}>
           {version}
         </code>
         <span style={{ margin: "0 4px", color: "var(--line)" }}>|</span>
         <span>Synced: {lastSynced}</span>
+        {mode && (
+          <>
+            <span style={{ margin: "0 4px", color: "var(--line)" }}>|</span>
+            <span style={{ fontWeight: 500, color: "var(--accent)" }}>Mode: {mode}</span>
+          </>
+        )}
       </div>
       {onRefresh && (
         <button

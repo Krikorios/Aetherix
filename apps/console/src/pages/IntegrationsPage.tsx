@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Plug, RefreshCw, CheckCircle, AlertTriangle, Clock, Link, Loader2, Settings, X } from "lucide-react";
-import { ErrorBanner, SuccessBanner } from "../components";
+import { ConsolePage, ErrorBanner, PageHeader, SuccessBanner } from "../components";
 import { apiGet, apiPost, type MeResponse } from "../api";
 
 export type ConnectorStatus = "connected" | "disconnected" | "error" | "configuring";
@@ -16,75 +16,6 @@ export interface Connector {
   error_message?: string | null;
   config_fields: string[];
 }
-
-const DEMO_CONNECTORS: Connector[] = [
-  {
-    id: "connectwise",
-    name: "ConnectWise Manage",
-    category: "psa",
-    description: "Sync tickets, companies, and contacts. Auto-create incidents from Aetherix alerts.",
-    status: "connected",
-    icon_emoji: "🔗",
-    last_sync: new Date(Date.now() - 300000).toISOString(),
-    error_message: null,
-    config_fields: ["api_url", "company_id", "public_key", "private_key"],
-  },
-  {
-    id: "datto",
-    name: "Datto RMM",
-    category: "rmm",
-    description: "Pull endpoint inventory, push remediation scripts, and sync patch status.",
-    status: "connected",
-    icon_emoji: "🖥️",
-    last_sync: new Date(Date.now() - 600000).toISOString(),
-    error_message: null,
-    config_fields: ["api_url", "api_key", "secret_key"],
-  },
-  {
-    id: "splunk",
-    name: "Splunk",
-    category: "siem",
-    description: "Forward all Aetherix events to your Splunk SIEM via HTTP Event Collector.",
-    status: "disconnected",
-    icon_emoji: "📊",
-    last_sync: null,
-    error_message: null,
-    config_fields: ["hec_url", "hec_token", "index"],
-  },
-  {
-    id: "sentinel",
-    name: "Microsoft Sentinel",
-    category: "siem",
-    description: "Stream events and alerts to Microsoft Sentinel via Azure Monitor Data Collection Endpoint.",
-    status: "error",
-    icon_emoji: "🛡️",
-    last_sync: new Date(Date.now() - 86400000 * 2).toISOString(),
-    error_message: "OAuth token expired — re-authorize to resume streaming.",
-    config_fields: ["workspace_id", "dce_endpoint", "dcr_id", "tenant_id", "client_id", "client_secret"],
-  },
-  {
-    id: "azure_ad",
-    name: "Microsoft Entra ID",
-    category: "identity",
-    description: "Resolve user identities, group memberships, and risk signals for DLP and policy context.",
-    status: "connected",
-    icon_emoji: "🔐",
-    last_sync: new Date(Date.now() - 900000).toISOString(),
-    error_message: null,
-    config_fields: ["tenant_id", "client_id", "client_secret"],
-  },
-  {
-    id: "stripe",
-    name: "Stripe",
-    category: "billing",
-    description: "Sync per-customer usage metering to Stripe for automated MSP billing.",
-    status: "disconnected",
-    icon_emoji: "💳",
-    last_sync: null,
-    error_message: null,
-    config_fields: ["secret_key", "meter_event_name", "customer_id_mapping"],
-  },
-];
 
 const CATEGORY_LABEL: Record<Connector["category"], string> = {
   psa: "PSA",
@@ -125,8 +56,8 @@ export function IntegrationsPage({ me }: { me: MeResponse }) {
       try {
         const data = await apiGet<Connector[]>("/integrations");
         setConnectors(data);
-      } catch {
-        setConnectors(DEMO_CONNECTORS);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load integrations.");
       } finally {
         setIsLoading(false);
       }
@@ -143,29 +74,26 @@ export function IntegrationsPage({ me }: { me: MeResponse }) {
     if (!configuringConnector) return;
     setIsTesting(true);
     try {
-      await apiPost(`/integrations/${configuringConnector.id}/configure`, configValues);
-    } catch {
-      // offline
+      const configured = await apiPost<Connector>(`/integrations/${configuringConnector.id}/configure`, configValues);
+      setConnectors((prev) => prev.map((c) => (c.id === configured.id ? configured : c)));
+      setSuccess(`${configuringConnector.name} configured and connected.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to configure connector.");
+      setIsTesting(false);
+      return;
     }
-    setConnectors((prev) =>
-      prev.map((c) =>
-        c.id === configuringConnector.id
-          ? { ...c, status: "connected" as ConnectorStatus, last_sync: new Date().toISOString(), error_message: null }
-          : c,
-      ),
-    );
-    setSuccess(`${configuringConnector.name} configured and connected.`);
     setIsTesting(false);
     setConfiguringId(null);
   };
 
   const handleDisconnect = async (id: string) => {
     try {
-      await apiPost(`/integrations/${id}/disconnect`, {});
-    } catch { /* offline */ }
-    setConnectors((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, status: "disconnected" as ConnectorStatus, last_sync: null } : c)),
-    );
+      const disconnected = await apiPost<Connector>(`/integrations/${id}/disconnect`, {});
+      setConnectors((prev) => prev.map((c) => (c.id === disconnected.id ? disconnected : c)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect connector.");
+      return;
+    }
     setSuccess("Connector disconnected.");
   };
 
@@ -181,24 +109,8 @@ export function IntegrationsPage({ me }: { me: MeResponse }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
-      {/* Header */}
-      <div style={{ marginBottom: "20px" }}>
-        <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: "4px" }}>
-          Ecosystem Connectors
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
-          <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>Integrations</h1>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "4px", background: "rgba(100,116,139,0.15)", color: "var(--muted)", fontWeight: 600 }}>
-              PLANNED
-            </span>
-          </div>
-        </div>
-        <p style={{ margin: "8px 0 0 0", fontSize: "12px", color: "var(--muted)" }}>
-          PSA, RMM, SIEM, identity, and billing connectors. Each connector wraps the FastAPI control plane with per-tenant credentials.
-        </p>
-      </div>
+    <ConsolePage>
+      <PageHeader eyebrow="Ecosystem Connectors" title="Integrations" />
 
       {error && <ErrorBanner message={error} />}
       {success && <SuccessBanner message={success} />}
@@ -313,6 +225,6 @@ export function IntegrationsPage({ me }: { me: MeResponse }) {
           </div>
         </div>
       )}
-    </div>
+    </ConsolePage>
   );
 }

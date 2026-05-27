@@ -81,7 +81,7 @@ def _base_modules() -> dict[str, dict]:
     }
 
 
-def test_policy_v2_create_simulate_promote_gate() -> None:
+def test_policy_v2_create_simulate_promote_gate(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("gate")
     customer_id = _make_customer(partner_id)
@@ -91,7 +91,7 @@ def test_policy_v2_create_simulate_promote_gate() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Gate Test Policy",
@@ -106,7 +106,7 @@ def test_policy_v2_create_simulate_promote_gate() -> None:
 
     simulation = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert simulation.status_code == 200, simulation.text
     simulation_body = simulation.json()
@@ -115,14 +115,14 @@ def test_policy_v2_create_simulate_promote_gate() -> None:
 
     denied_promote = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"simulation_id": simulation_id, "operator_approved": False},
     )
     assert denied_promote.status_code == 400
 
     allowed_promote = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "simulation_id": simulation_id,
             "operator_approved": True,
@@ -147,7 +147,7 @@ def test_policy_v2_create_simulate_promote_gate() -> None:
     assert evidence_count == 3
 
 
-def test_policy_v2_assignment_and_effective_resolution() -> None:
+def test_policy_v2_assignment_and_effective_resolution(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("effective")
     customer_id = _make_customer(partner_id, "EffectiveCo")
@@ -160,7 +160,7 @@ def test_policy_v2_assignment_and_effective_resolution() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Effective Policy",
@@ -175,14 +175,14 @@ def test_policy_v2_assignment_and_effective_resolution() -> None:
 
     assign = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"policy_id": policy_id, "customer_id": str(customer_id)},
     )
     assert assign.status_code == 201, assign.text
 
     effective = client.get(
         f"/policies/effective?customer_id={customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert effective.status_code == 200, effective.text
     body = effective.json()
@@ -192,7 +192,7 @@ def test_policy_v2_assignment_and_effective_resolution() -> None:
     assert modules["digital_risk_protection"]["locked"] is True
 
 
-def test_agent_policy_fetch_returns_entitled_effective_policy() -> None:
+def test_agent_policy_fetch_returns_entitled_effective_policy(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("agent")
     customer_id = _make_customer(partner_id, "AgentFetchCo")
@@ -221,7 +221,7 @@ def test_agent_policy_fetch_returns_entitled_effective_policy() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Agent Effective Policy",
@@ -236,7 +236,7 @@ def test_agent_policy_fetch_returns_entitled_effective_policy() -> None:
 
     assign = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"policy_id": policy_id, "endpoint_id": endpoint_id, "customer_id": str(customer_id)},
     )
     assert assign.status_code == 201, assign.text
@@ -253,14 +253,14 @@ def test_agent_policy_fetch_returns_entitled_effective_policy() -> None:
     assert body["resolved_policy"]["modules"]["digital_risk_protection"]["locked"] is True
 
 
-def test_policy_v2_list_and_get_routes() -> None:
+def test_policy_v2_list_and_get_routes(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("list")
     customer_id = _make_customer(partner_id, "ListCo")
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "List/Get Policy",
@@ -273,16 +273,16 @@ def test_policy_v2_list_and_get_routes() -> None:
     assert create.status_code == 201, create.text
     policy_id = create.json()["policy"]["id"]
 
-    listing = client.get("/policies", headers={"X-Aetherix-Account": owner_id})
+    listing = client.get("/policies", headers=auth_headers(owner_id))
     assert listing.status_code == 200
     assert any(item["id"] == policy_id for item in listing.json()["items"])
 
-    detail = client.get(f"/policies/{policy_id}", headers={"X-Aetherix-Account": owner_id})
+    detail = client.get(f"/policies/{policy_id}", headers=auth_headers(owner_id))
     assert detail.status_code == 200, detail.text
     assert detail.json()["policy"]["id"] == policy_id
 
 
-def test_policy_v2_assignment_blocks_unlicensed_modules() -> None:
+def test_policy_v2_assignment_blocks_unlicensed_modules(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("lock")
     customer_id = _make_customer(partner_id, "LockedAddonCo")
@@ -298,7 +298,7 @@ def test_policy_v2_assignment_blocks_unlicensed_modules() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Unlicensed Add-on Policy",
@@ -313,21 +313,21 @@ def test_policy_v2_assignment_blocks_unlicensed_modules() -> None:
 
     assign = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"policy_id": policy_id, "customer_id": str(customer_id)},
     )
     assert assign.status_code == 400
     assert "required add-on entitlements" in assign.json()["detail"]
 
 
-def test_policy_v2_promote_requires_latest_simulation() -> None:
+def test_policy_v2_promote_requires_latest_simulation(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("stale-sim")
     customer_id = _make_customer(partner_id, "StaleSimCo")
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Stale Simulation",
@@ -342,13 +342,13 @@ def test_policy_v2_promote_requires_latest_simulation() -> None:
 
     first_sim = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert first_sim.status_code == 200, first_sim.text
 
     first_promote = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "simulation_id": first_sim.json()["id"],
             "operator_approved": True,
@@ -359,7 +359,7 @@ def test_policy_v2_promote_requires_latest_simulation() -> None:
 
     stale_promote = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "simulation_id": first_sim.json()["id"],
             "operator_approved": True,
@@ -370,7 +370,7 @@ def test_policy_v2_promote_requires_latest_simulation() -> None:
     assert "not in a promotable state" in stale_promote.json()["detail"]
 
 
-def test_policy_v2_simulation_full_envelope_under_500ms() -> None:
+def test_policy_v2_simulation_full_envelope_under_500ms(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("perf")
     customer_id = _make_customer(partner_id, "PerfCo")
@@ -411,7 +411,7 @@ def test_policy_v2_simulation_full_envelope_under_500ms() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Perf Envelope",
@@ -427,7 +427,7 @@ def test_policy_v2_simulation_full_envelope_under_500ms() -> None:
     started = time.perf_counter()
     simulation = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     elapsed = time.perf_counter() - started
 
@@ -435,7 +435,7 @@ def test_policy_v2_simulation_full_envelope_under_500ms() -> None:
     assert elapsed < 0.5
 
 
-def test_policy_v2_semantic_dlp_structure_normalized() -> None:
+def test_policy_v2_semantic_dlp_structure_normalized(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("semantic-structure")
     customer_id = _make_customer(partner_id, "SemanticStructureCo")
@@ -474,7 +474,7 @@ def test_policy_v2_semantic_dlp_structure_normalized() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Semantic DLP Structured Policy",
@@ -487,7 +487,7 @@ def test_policy_v2_semantic_dlp_structure_normalized() -> None:
     assert create.status_code == 201, create.text
     policy_id = create.json()["policy"]["id"]
 
-    detail = client.get(f"/policies/{policy_id}", headers={"X-Aetherix-Account": owner_id})
+    detail = client.get(f"/policies/{policy_id}", headers=auth_headers(owner_id))
     assert detail.status_code == 200, detail.text
     semantic = detail.json()["latest_version"]["payload"]["modules"]["semantic_dlp"]
     guardrails = detail.json()["latest_version"]["payload"]["modules"]["genai_guardrails"]
@@ -502,7 +502,7 @@ def test_policy_v2_semantic_dlp_structure_normalized() -> None:
     assert guardrails["actions"]["upload_restricted"] == "block"
 
 
-def test_policy_v2_semantic_dlp_simulation_reports_contextual_impact() -> None:
+def test_policy_v2_semantic_dlp_simulation_reports_contextual_impact(auth_headers) -> None:
     owner_id = _platform_owner()
     partner_id = _make_partner("semantic-sim")
     customer_id = _make_customer(partner_id, "SemanticSimCo")
@@ -547,7 +547,7 @@ def test_policy_v2_semantic_dlp_simulation_reports_contextual_impact() -> None:
 
     create = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "schema_version": "2.0",
             "name": "Semantic DLP Simulation Policy",
@@ -562,7 +562,7 @@ def test_policy_v2_semantic_dlp_simulation_reports_contextual_impact() -> None:
 
     simulation = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert simulation.status_code == 200, simulation.text
     body = simulation.json()
@@ -576,3 +576,214 @@ def test_policy_v2_semantic_dlp_simulation_reports_contextual_impact() -> None:
     assert "block" in semantic_outcome["destructive_actions"]
     assert any(note.startswith("semantic_action:upload_restricted:block") for note in semantic_outcome["notes"])
     assert any(note.startswith("guarded_destinations:") for note in guardrail_outcome["notes"])
+
+
+def test_policy_v2_edr_simulation_reports_detector_and_response_impact(auth_headers) -> None:
+    owner_id = _platform_owner()
+    partner_id = _make_partner("edr-sim")
+    customer_id = _make_customer(partner_id, "EdrSimCo")
+    licensing.ensure_default_catalog()
+    licensing.assign_license(
+        customer_id,
+        CompanyLicenseAssign(subscription_sku="enterprise", addons=[], total_seats=10),
+        actor=owner_id,
+    )
+
+    modules = _base_modules()
+    modules["edr"] = {
+        "enabled": True,
+        "detectors": {
+            "yara_scan": True,
+            "ioc_match": True,
+            "ransomware_canary": True,
+            "process_tree": True,
+            "suspicious_process_chain": True,
+        },
+        "responses": {
+            "yara_match": "quarantine",
+            "ioc_match": "quarantine",
+            "ransomware_canary": "rollback",
+            "suspicious_process_chain": "kill",
+        },
+        "auto_isolate": True,
+        "destructive_action_approval": "operator_required",
+    }
+
+    create = client.post(
+        "/policies",
+        headers=auth_headers(owner_id),
+        json={
+            "schema_version": "2.0",
+            "name": "EDR Simulation Policy",
+            "scope": {"partner_id": str(partner_id), "customer_id": str(customer_id)},
+            "lineage": {"parent_policy_id": None, "inheritance_mode": "inherit_with_overrides"},
+            "modules": modules,
+            "white_label_names": {},
+        },
+    )
+    assert create.status_code == 201, create.text
+    policy_id = create.json()["policy"]["id"]
+
+    simulation = client.post(
+        f"/policies/{policy_id}/simulate",
+        headers=auth_headers(owner_id),
+    )
+    assert simulation.status_code == 200, simulation.text
+    body = simulation.json()
+
+    edr_outcome = next(item for item in body["outcomes"] if item["module"] == "edr")
+    assert edr_outcome["enabled"] is True
+    assert edr_outcome["would_trigger_gate"] is True
+    assert edr_outcome["risk_delta"] > 0
+    # quarantine, rollback, and kill responses are destructive
+    assert "quarantine" in edr_outcome["destructive_actions"]
+    assert "rollback" in edr_outcome["destructive_actions"]
+    assert "kill" in edr_outcome["destructive_actions"]
+    # auto_isolate is a boolean flag — surfaced as a note, weighted
+    # into risk_delta, but not part of the destructive_actions list
+    assert any(note == "response:auto_isolate" for note in edr_outcome["notes"])
+    # Detector notes are surfaced for operator review
+    assert any(note.startswith("detector:yara_scan") for note in edr_outcome["notes"])
+    assert any(note.startswith("response:yara_match:quarantine") for note in edr_outcome["notes"])
+    assert any(note.startswith("response:ransomware_canary:rollback") for note in edr_outcome["notes"])
+    assert any(note.startswith("approval:operator_required") for note in edr_outcome["notes"])
+    # Evidence tags include the ISO/SOC/NIST mappings configured for EDR
+    assert any(tag.startswith("iso27001-2022:A.8.16") for tag in edr_outcome["evidence_tags"])
+    # Summary reflects gating
+    assert body["summary"]["approval_required"] is True
+    assert body["summary"]["would_rollback"] >= 1
+
+
+def test_policy_v2_easm_simulation_reports_discovery_and_enrichment_impact(auth_headers) -> None:
+    owner_id = _platform_owner()
+    partner_id = _make_partner("easm-sim")
+    customer_id = _make_customer(partner_id, "EasmSimCo")
+    licensing.ensure_default_catalog()
+    licensing.assign_license(
+        customer_id,
+        CompanyLicenseAssign(
+            subscription_sku="core",
+            addons=["external_attack_surface_management"],
+            total_seats=10,
+        ),
+        actor=owner_id,
+    )
+
+    modules = _base_modules()
+    modules["external_attack_surface_management"] = {
+        "enabled": True,
+        "discovery_sources": ["dns", "certificate_transparency", "search_engines", "passive_scan"],
+        "vulnerability_enrichment": ["cvss", "epss", "cisa_kev"],
+        "continuous_monitoring_enabled": True,
+        "change_detection_enabled": True,
+        "correlate_with_drp": True,
+        "default_action": "review",
+        "max_safe_ports_per_asset": 50,
+    }
+
+    create = client.post(
+        "/policies",
+        headers=auth_headers(owner_id),
+        json={
+            "schema_version": "2.0",
+            "name": "EASM Simulation Policy",
+            "scope": {"partner_id": str(partner_id), "customer_id": str(customer_id)},
+            "lineage": {"parent_policy_id": None, "inheritance_mode": "inherit_with_overrides"},
+            "modules": modules,
+            "white_label_names": {},
+        },
+    )
+    assert create.status_code == 201, create.text
+    policy_id = create.json()["policy"]["id"]
+
+    simulation = client.post(
+        f"/policies/{policy_id}/simulate",
+        headers=auth_headers(owner_id),
+    )
+    assert simulation.status_code == 200, simulation.text
+    body = simulation.json()
+
+    easm_outcome = next(
+        item for item in body["outcomes"]
+        if item["module"] == "external_attack_surface_management"
+    )
+    assert easm_outcome["enabled"] is True
+    assert easm_outcome["risk_delta"] > 0
+    assert any(note.startswith("discovery_sources:") for note in easm_outcome["notes"])
+    assert any(note == "enrichment:cisa_kev" for note in easm_outcome["notes"])
+    assert any(note == "continuous_monitoring" for note in easm_outcome["notes"])
+    assert any(note == "correlate_with_drp" for note in easm_outcome["notes"])
+    assert any(note.startswith("default_action:review") for note in easm_outcome["notes"])
+    assert any(note.startswith("max_safe_ports:50") for note in easm_outcome["notes"])
+    # EASM evidence tags include external risk control mappings
+    assert any(":" in tag for tag in easm_outcome["evidence_tags"])
+
+
+def test_policy_v2_drp_simulation_reports_autotakedown_as_destructive(auth_headers) -> None:
+    owner_id = _platform_owner()
+    partner_id = _make_partner("drp-sim")
+    customer_id = _make_customer(partner_id, "DrpSimCo")
+    licensing.ensure_default_catalog()
+    licensing.assign_license(
+        customer_id,
+        CompanyLicenseAssign(
+            subscription_sku="core",
+            addons=["digital_risk_protection"],
+            total_seats=10,
+        ),
+        actor=owner_id,
+    )
+
+    modules = _base_modules()
+    modules["digital_risk_protection"] = {
+        "enabled": True,
+        "detections_enabled": [
+            "brand_impersonation",
+            "credential_leak",
+            "executive_doxxing",
+            "lookalike_domain",
+        ],
+        "collection_sources": ["surface_web", "deep_web", "dark_web"],
+        "ai_llm_validation_enabled": True,
+        "auto_takedown_enabled": True,
+        "default_action": "block",
+        "confidence_threshold": 80,
+    }
+
+    create = client.post(
+        "/policies",
+        headers=auth_headers(owner_id),
+        json={
+            "schema_version": "2.0",
+            "name": "DRP Simulation Policy",
+            "scope": {"partner_id": str(partner_id), "customer_id": str(customer_id)},
+            "lineage": {"parent_policy_id": None, "inheritance_mode": "inherit_with_overrides"},
+            "modules": modules,
+            "white_label_names": {},
+        },
+    )
+    assert create.status_code == 201, create.text
+    policy_id = create.json()["policy"]["id"]
+
+    simulation = client.post(
+        f"/policies/{policy_id}/simulate",
+        headers=auth_headers(owner_id),
+    )
+    assert simulation.status_code == 200, simulation.text
+    body = simulation.json()
+
+    drp_outcome = next(
+        item for item in body["outcomes"] if item["module"] == "digital_risk_protection"
+    )
+    assert drp_outcome["enabled"] is True
+    # ``block`` appears via default_action — should trigger the gate
+    assert drp_outcome["would_trigger_gate"] is True
+    assert "block" in drp_outcome["destructive_actions"]
+    assert drp_outcome["risk_delta"] > 0
+    assert any(note.startswith("detections:") for note in drp_outcome["notes"])
+    assert any(note == "ai_validation" for note in drp_outcome["notes"])
+    assert any(note == "auto_takedown_enabled" for note in drp_outcome["notes"])
+    assert any(note.startswith("default_action:block") for note in drp_outcome["notes"])
+    assert body["summary"]["approval_required"] is True
+    assert body["summary"]["would_block"] >= 1
+

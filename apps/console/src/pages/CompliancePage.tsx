@@ -1,28 +1,23 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  FileCheck,
   CheckCircle,
   AlertOctagon,
   HelpCircle,
   Award,
   Database,
   Printer,
-  Plus,
   RefreshCw,
   Search,
   ExternalLink,
-  ShieldAlert,
-  Calendar,
-  User,
   Shield,
   ShieldCheck,
-  FileText,
-} from "lucide-react";
+  } from "lucide-react";
 import {
   apiGet,
   apiPost,
   type Customer,
 } from "../api";
+import { AttestationsList } from "../components/compliance/AttestationsList";
 import {
   EmptyState,
   ErrorBanner,
@@ -70,7 +65,6 @@ const FRAMEWORKS: { slug: FrameworkSlug; label: string; authority: string; descr
 type ControlReview = {
   id: string;
   customer_id: string;
-  framework: string;
   control_id: string;
   status: "unreviewed" | "reviewed" | "flagged";
   reviewed_by: string;
@@ -79,32 +73,29 @@ type ControlReview = {
 };
 
 type ControlReviewCreate = {
-  framework: string;
   control_id: string;
   status: "unreviewed" | "reviewed" | "flagged";
   notes: string | null;
 };
 
-type Attestation = {
+type ComplianceAttestation = {
   id: string;
   customer_id: string;
-  framework: string;
-  attested_by: string;
-  notes: string | null;
-  bundle_hash: string;
-  status: "active" | "revoked";
-  attested_at: string;
-};
-
-type AttestationCreate = {
-  framework: string;
-  notes: string;
+  period_start: string;
+  period_end: string;
+  attested_by_account_id: string | null;
+  attested_role: string;
+  attested_name: string;
+  statement: string;
+  bundle_sha256: string;
+  signature: string;
+  signature_algo: string;
+  created_at: string;
 };
 
 type VaultReference = {
   id: string;
   customer_id: string;
-  framework: string;
   vault_provider: string;
   reference_uri: string;
   bundle_hash: string;
@@ -131,7 +122,6 @@ type ControlDetail = {
 };
 
 type ComplianceExportBundle = {
-  framework: string;
   customer_id: string;
   generated_at: string;
   controls: ControlDetail[];
@@ -159,7 +149,7 @@ export function CompliancePage() {
   // Data lists
   const [bundle, setBundle] = useState<ComplianceExportBundle | null>(null);
   const [reviews, setReviews] = useState<ControlReview[]>([]);
-  const [attestations, setAttestations] = useState<Attestation[]>([]);
+  const [attestations, setAttestations] = useState<ComplianceAttestation[]>([]);
   const [vaultRefs, setVaultRefs] = useState<VaultReference[]>([]);
 
   // UI Flow states
@@ -174,9 +164,6 @@ export function CompliancePage() {
   const [reviewNotes, setReviewNotes] = useState("");
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
-  const [showAttestForm, setShowAttestForm] = useState(false);
-  const [attestNotes, setAttestNotes] = useState("");
-  const [isSubmittingAttest, setIsSubmittingAttest] = useState(false);
 
   // Load Companies list and initial data
   useEffect(() => {
@@ -209,7 +196,7 @@ export function CompliancePage() {
       const [expBundle, rvs, atts, vlt] = await Promise.all([
         apiGet<ComplianceExportBundle>(`/compliance/export?customer_id=${selectedCustomerId}&framework=${selectedFramework}`),
         apiGet<ControlReview[]>(`/compliance/reviews?customer_id=${selectedCustomerId}&framework=${selectedFramework}`),
-        apiGet<Attestation[]>(`/compliance/attestations?customer_id=${selectedCustomerId}&framework=${selectedFramework}`),
+        apiGet<ComplianceAttestation[]>(`/compliance/attestations?customer_id=${selectedCustomerId}&framework=${selectedFramework}`),
         apiGet<VaultReference[]>(`/compliance/vault?customer_id=${selectedCustomerId}&framework=${selectedFramework}`),
       ]);
       setBundle(expBundle);
@@ -259,7 +246,6 @@ export function CompliancePage() {
     setSuccess(null);
     try {
       const payload: ControlReviewCreate = {
-        framework: selectedFramework,
         control_id: updatingControl.control_id,
         status: newStatus,
         notes: reviewNotes.trim() || null,
@@ -273,30 +259,6 @@ export function CompliancePage() {
       setError(err?.message || "Failed to persist control status.");
     } finally {
       setIsSubmittingReview(false);
-    }
-  };
-
-  // Handle Formal Attestation Signing
-  const handleSignAttestation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCustomerId) return;
-    setIsSubmittingAttest(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const payload: AttestationCreate = {
-        framework: selectedFramework,
-        notes: attestNotes.trim(),
-      };
-      const att = await apiPost<Attestation>(`/compliance/attestations?customer_id=${selectedCustomerId}`, payload);
-      setSuccess(`Formal signature registered! Attestation Sealed: ${att.bundle_hash.substring(0, 16)}...`);
-      setShowAttestForm(false);
-      setAttestNotes("");
-      await loadComplianceData();
-    } catch (err: any) {
-      setError(err?.message || "Failed to log formal attestation block.");
-    } finally {
-      setIsSubmittingAttest(false);
     }
   };
 
@@ -599,72 +561,7 @@ export function CompliancePage() {
 
           {/* TAB 2: Formal Audit Sign-offs */}
           {activeTab === "attestations" && (
-            <div className="no-print">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                <p style={{ margin: "0", color: "var(--muted)", fontSize: "14px" }}>
-                  Sign and log a point-in-time snapshot certification. Signing locks the state of control reviews and logs a firm audit-trail hash mapping all live evidence deterministically.
-                </p>
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={() => setShowAttestForm(true)}
-                  style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
-                >
-                  <Plus size={16} /> Sign Formal Attestation
-                </button>
-              </div>
-
-              {attestations.length === 0 ? (
-                <EmptyState>No formal system attestations signed yet. Create your first point-in-time compliance report today.</EmptyState>
-              ) : (
-                <div className="panel" style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
-                  <table className="table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr style={{ background: "var(--bg-thead)", borderBottom: "1px solid var(--border)", textAlign: "left" }}>
-                        <th style={{ padding: "12px" }}>Signing Date</th>
-                        <th style={{ padding: "12px" }}>Attested By</th>
-                        <th style={{ padding: "12px" }}>Notes / Scope</th>
-                        <th style={{ padding: "12px" }}>Immutable Evidence Hash</th>
-                        <th style={{ padding: "12px" }}>Cryptographic Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {attestations.map((att) => (
-                        <tr key={att.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                          <td style={{ padding: "12px", fontSize: "13px" }}>
-                            <div style={{ fontWeight: "600" }}>{new Date(att.attested_at).toLocaleDateString()}</div>
-                            <div style={{ fontSize: "11px", color: "var(--muted)" }}>{new Date(att.attested_at).toLocaleTimeString()}</div>
-                          </td>
-                          <td style={{ padding: "12px", fontWeight: "600", fontSize: "13px" }}>
-                            {att.attested_by}
-                          </td>
-                          <td style={{ padding: "12px", fontSize: "13px", color: "var(--muted)" }}>
-                            {att.notes || "Official periodic compliance attestation"}
-                          </td>
-                          <td style={{ padding: "12px" }}>
-                            <code style={{ fontSize: "11px", color: "var(--brand-primary)", background: "rgba(11, 107, 87, 0.1)", padding: "4px 8px", borderRadius: "4px" }}>
-                              {att.bundle_hash}
-                            </code>
-                          </td>
-                          <td style={{ padding: "12px" }}>
-                            <span style={{
-                              padding: "4px 8px",
-                              borderRadius: "12px",
-                              background: "rgba(34, 197, 94, 0.15)",
-                              color: "#22c55e",
-                              fontWeight: "600",
-                              fontSize: "12px"
-                            }}>
-                              Sealed
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+            <AttestationsList customerId={selectedCustomerId} />
           )}
 
           {/* TAB 3: Secure Vault Backups */}
@@ -808,7 +705,7 @@ export function CompliancePage() {
                     <p style={{ margin: "0", color: "var(--muted)" }}>Automated Compliance Vault</p>
                   </div>
                   <div style={{ borderTop: "1px solid var(--border)", width: "200px", textAlign: "center", paddingTop: "8px", fontSize: "12px" }}>
-                    <p style={{ margin: "0", fontWeight: "bold" }}>{attestations[0]?.attested_by || "No Active Signee"}</p>
+                    <p style={{ margin: "0", fontWeight: "bold" }}>{attestations[0]?.attested_name || "No Active Signee"}</p>
                     <p style={{ margin: "0", color: "var(--muted)" }}>Attesting Auditor Signature</p>
                   </div>
                 </div>
@@ -911,66 +808,6 @@ export function CompliancePage() {
         )}
       </SideSheet>
 
-      {/* Log formal attestation sideSheet */}
-      <SideSheet
-        open={showAttestForm}
-        onClose={() => setShowAttestForm(false)}
-        title="Sign Formal Assessment Attestation"
-        subtitle="Appends a point-in-time assessment seal logged cryptographically on the compliance ledger."
-      >
-        <form onSubmit={handleSignAttestation} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-          <section className="banner" style={{ display: "flex", gap: "10px", padding: "16px", borderRadius: "8px" }}>
-            <FileText size={20} style={{ marginTop: "2px" }} />
-            <div>
-              <h4 style={{ margin: "0 0 4px", fontSize: "13px", fontWeight: "700" }}>Sealed Compliance Export Protocol</h4>
-              <p style={{ margin: "0", fontSize: "11px", color: "var(--muted)", lineHeight: "1.4" }}>
-                Creating a formal attestation compiles all active policy scopes, agent enforcement logs, custom rules, and control statuses into a canonical report package. It computes the SHA-256 HMAC hash of the export pack, registers the block on the immutable compliance vault, and anchors it perpetually. This flow is legally binding under strict compliance frameworks.
-              </p>
-            </div>
-          </section>
-
-          <div>
-            <label style={{ display: "block", marginBottom: "6px", fontWeight: "bold", fontSize: "14px" }}>Attesting Framework</label>
-            <input
-              type="text"
-              className="txt"
-              disabled
-              value={selectedFrameworkLabel}
-              style={{ width: "100%", borderRadius: "5px", opacity: 0.8 }}
-            />
-          </div>
-
-          <div>
-            <label style={{ display: "block", marginBottom: "6px", fontWeight: "bold", fontSize: "14px" }}>Signing Notes / Attestation Statement</label>
-            <textarea
-              className="txt"
-              rows={4}
-              required
-              value={attestNotes}
-              onChange={(e) => setAttestNotes(e.target.value)}
-              placeholder="e.g., We hereby certify that the current policies, DLP agent modules, and audits are fully aligned and verified for compliance."
-              style={{ width: "100%", borderRadius: "5px" }}
-            />
-          </div>
-
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => setShowAttestForm(false)}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn primary"
-              disabled={isSubmittingAttest}
-            >
-              {isSubmittingAttest ? "Sealing Attestation..." : "Sign & Seal Audit Trail"}
-            </button>
-          </div>
-        </form>
-      </SideSheet>
     </div>
   );
 }

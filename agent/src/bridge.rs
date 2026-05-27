@@ -230,6 +230,18 @@ fn handle_request(mut request: Request, state: &Arc<BridgeState>) -> Result<()> 
                 ))
                 .map_err(Into::into)
         }
+        (Method::Post, "/evaluate") => {
+            let body = read_body_capped(&mut request, MAX_BODY_BYTES)?;
+            let (status, body) = evaluate_event_request(state, &body);
+            request
+                .respond(json_response(
+                    &state.allowed_origins,
+                    origin.as_deref(),
+                    status,
+                    &body,
+                ))
+                .map_err(Into::into)
+        }
         _ => request
             .respond(text_response(StatusCode(404), "not found"))
             .map_err(Into::into),
@@ -338,8 +350,101 @@ fn pick_allowed_origin(origin: &str, allowed_origins: &[String]) -> Option<Strin
     None
 }
 
-// ---------- evidence forwarding ----------
+// ---------- preflight evaluation ----------
 
+#[derive(Deserialize)]
+struct EvaluateRequest {
+    event_type: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    destination: Option<String>,
+    #[serde(default)]
+    process_name: Option<String>,
+}
+
+/// Real BLOCK-or-allow verdict for the MV3 extension. The extension
+/// calls this *before* allowing a paste/upload and refuses the action
+/// when `decision == "block"`. Evaluation runs through the same
+/// `dlp::evaluate_event` used by the endpoint clipboard interceptor so
+/// the verdict is identical regardless of intercept origin.
+fn evaluate_event_request(state: &BridgeState, body: &[u8]) -> (StatusCode, Value) {
+    let parsed: EvaluateRequest = match serde_json::from_slice(body) {
+        Ok(p) => p,
+        Err(err) => {
+            return (
+                StatusCode(400),
+                serde_json::json!({"ok": false, "error": format!("invalid evaluate payload: {err}")}),
+            );
+        }
+    };
+
+    let event_type = match parsed.event_type.to_ascii_lowercase().as_str() {
+        "paste" => crate::dlp::DlpEventType::Paste,
+        "upload" => crate::dlp::DlpEventType::Upload,
+        "copy" => crate::dlp::DlpEventType::Copy,
+        other => {
+            return (
+                StatusCode(400),
+                serde_json::json!({"ok": false, "error": format!("unsupported event_type: {other}")}),
+            );
+        }
+    };
+
+    let policy = match state.policy.read().ok().and_then(|g| g.clone()) {
+        Some(p) => p,
+        None => {
+            // Fail closed for the browser path: without a policy we
+            // cannot prove the action is safe, so we tell the extension
+            // to review (soft block) and surface the reason.
+            return (
+                StatusCode(200),
+                serde_json::json!({
+                    "decision": "review",
+                    "reason": "policy_unavailable",
+                }),
+            );
+        }
+    };
+
+    let event = crate::dlp::DlpEvent {
+        event_type,
+        source: crate::dlp::EventSource::BrowserExtension,
+        content: parsed.content.clone().unwrap_or_default(),
+        destination: parsed.destination.clone(),
+        process_name: parsed.process_name.clone(),
+    };
+
+    match crate::dlp::evaluate_event(&policy, &event) {
+        Some(decision) => {
+            let decision_str = match decision.action {
+                crate::policy::DlpAction::Block => "block",
+                crate::policy::DlpAction::Review => "review",
+                crate::policy::DlpAction::Redact => "redact",
+                crate::policy::DlpAction::Allow => "allow",
+            };
+            (
+                StatusCode(200),
+                serde_json::json!({
+                    "decision": decision_str,
+                    "label_detected": decision.label_detected,
+                    "policy_action_field": decision.policy_field,
+                    "destination": decision.destination,
+                    "policy_version_hash": policy.policy_version_hash,
+                }),
+            )
+        }
+        None => (
+            StatusCode(200),
+            serde_json::json!({
+                "decision": "allow",
+                "policy_version_hash": policy.policy_version_hash,
+            }),
+        ),
+    }
+}
+
+// ---------- evidence forwarding ----------
 #[derive(Serialize)]
 struct ForwardEnvelope<'a> {
     action_type: &'a str,
@@ -374,24 +479,29 @@ struct BrowserEvidence {
     action: Option<String>,
 }
 
-fn forward_evidence(state: &BridgeState, payload: Value) -> (StatusCode, Value) {
+pub struct ForwardResult {
+    pub http_status: u16,
+    pub body: Value,
+}
+
+fn forward_evidence_inner(state: &BridgeState, payload: Value) -> Option<ForwardResult> {
     let parsed: BrowserEvidence = match serde_json::from_value(payload.clone()) {
         Ok(p) => p,
         Err(err) => {
-            return (
-                StatusCode(400),
-                serde_json::json!({"ok": false, "error": format!("invalid evidence: {err}")}),
-            );
+            return Some(ForwardResult {
+                http_status: 400,
+                body: serde_json::json!({"ok": false, "error": format!("invalid evidence: {err}")}),
+            });
         }
     };
 
     let event_type = match parsed.event_type.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(value) => value,
         None => {
-            return (
-                StatusCode(400),
-                serde_json::json!({"ok": false, "error": "event_type is required"}),
-            );
+            return Some(ForwardResult {
+                http_status: 400,
+                body: serde_json::json!({"ok": false, "error": "event_type is required"}),
+            });
         }
     };
     let decision = parsed.decision.as_deref().unwrap_or("review");
@@ -407,9 +517,6 @@ fn forward_evidence(state: &BridgeState, payload: Value) -> (StatusCode, Value) 
         .and_then(|g| g.as_ref().map(|p| p.policy_version_hash.clone()))
         .unwrap_or_else(|| "unknown".to_string());
 
-    // Content hash from the browser is already SHA-256; if missing,
-    // synthesize a deterministic hash from the JSON body so the backend
-    // still gets a non-empty identifier.
     let content_hash = parsed.content_hash.clone().unwrap_or_else(|| {
         let mut hasher = Sha256::new();
         hasher.update(serde_json::to_vec(&payload).unwrap_or_default());
@@ -422,7 +529,7 @@ fn forward_evidence(state: &BridgeState, payload: Value) -> (StatusCode, Value) 
         destination: parsed.destination.as_deref(),
         label_detected: parsed.label_detected.as_deref(),
         content_hash,
-        policy_version,
+        policy_version: policy_version.clone(),
         endpoint_id: &state.agent_id,
         event_type,
         policy_action_field: parsed
@@ -446,51 +553,119 @@ fn forward_evidence(state: &BridgeState, payload: Value) -> (StatusCode, Value) 
         .json(&envelope)
         .send();
 
+    let dlp_client = crate::dlp_client::DlpClient::new(
+        state.client.clone(),
+        state.api_url.clone(),
+        state.agent_id.clone(),
+        state.agent_secret.clone(),
+        state.queue_path.clone(),
+    );
+    
+    let event = crate::dlp::DlpEvent {
+        event_type: match event_type {
+            "paste" => crate::dlp::DlpEventType::Paste,
+            "upload" => crate::dlp::DlpEventType::Upload,
+            "copy" => crate::dlp::DlpEventType::Copy,
+            _ => crate::dlp::DlpEventType::Paste,
+        },
+        source: crate::dlp::EventSource::BrowserExtension,
+        content: parsed.content_hash.clone().unwrap_or_default(),
+        destination: parsed.destination.clone(),
+        process_name: parsed.process_name.clone(),
+    };
+    
+    let enf_decision = crate::dlp::EnforcementDecision {
+        action: match decision {
+            "block" => crate::policy::DlpAction::Block,
+            "redact" => crate::policy::DlpAction::Redact,
+            "review" => crate::policy::DlpAction::Review,
+            _ => crate::policy::DlpAction::Allow,
+        },
+        action_type: action_type.clone(),
+        policy_field: match parsed.policy_action_field.as_deref() {
+            Some("upload_sensitive") => "upload_sensitive",
+            Some("copy_sensitive") => "copy_sensitive",
+            _ => "paste_sensitive",
+        },
+        label_detected: parsed.label_detected.clone(),
+        destination: parsed.destination.clone(),
+    };
+    
+    if let Err(err) = dlp_client.create_compliance_review(&policy_version, &event, &enf_decision) {
+        eprintln!("aetherix-agent: failed to create compliance review for browser hook: {err}");
+    }
+    if matches!(enf_decision.action, crate::policy::DlpAction::Block) {
+        if let Err(err) = dlp_client.create_attestation(&policy_version, &event) {
+            eprintln!("aetherix-agent: failed to create compliance attestation for browser hook: {err}");
+        }
+    }
+
     match send_result {
-        Ok(resp) if resp.status().is_success() => (
-            StatusCode(202),
-            serde_json::json!({"ok": true, "forwarded": true}),
-        ),
+        Ok(resp) if resp.status().is_success() => Some(ForwardResult {
+            http_status: 202,
+            body: serde_json::json!({"ok": true, "forwarded": true}),
+        }),
         Ok(resp) => {
-            // 4xx from the backend means the payload itself is wrong —
-            // queueing won't help. Anything else, queue for retry.
             let status = resp.status();
             if status.is_client_error() {
-                (
-                    StatusCode(status.as_u16()),
-                    serde_json::json!({
+                Some(ForwardResult {
+                    http_status: status.as_u16(),
+                    body: serde_json::json!({
                         "ok": false,
                         "forwarded": false,
                         "backend_status": status.as_u16(),
                         "queued": false,
                     }),
-                )
+                })
             } else {
                 let _ = enqueue_for_retry(&state.queue_path, &payload);
-                (
-                    StatusCode(202),
-                    serde_json::json!({
+                Some(ForwardResult {
+                    http_status: 202,
+                    body: serde_json::json!({
                         "ok": true,
                         "forwarded": false,
                         "backend_status": status.as_u16(),
                         "queued": true,
                     }),
-                )
+                })
             }
         }
         Err(_) => {
             let _ = enqueue_for_retry(&state.queue_path, &payload);
-            (
-                StatusCode(202),
-                serde_json::json!({
+            Some(ForwardResult {
+                http_status: 202,
+                body: serde_json::json!({
                     "ok": true,
                     "forwarded": false,
                     "queued": true,
                 }),
-            )
+            })
         }
     }
 }
+
+pub fn forward_evidence(state: &BridgeState, payload: Value) -> (StatusCode, Value) {
+    let result = forward_evidence_inner(state, payload.clone());
+    match result {
+        Some(r) => (StatusCode(r.http_status), r.body),
+        None => {
+            let _ = enqueue_for_retry(&state.queue_path, &payload);
+            (StatusCode(202), serde_json::json!({"ok": true, "forwarded": false, "queued": true}))
+        }
+    }
+}
+
+pub fn forward_evidence_raw(state: &BridgeState, payload: Value) -> Value {
+    let result = forward_evidence_inner(state, payload.clone());
+    match result {
+        Some(r) => r.body,
+        None => {
+            let _ = enqueue_for_retry(&state.queue_path, &payload);
+            serde_json::json!({"ok": true, "forwarded": false, "queued": true})
+        }
+    }
+}
+
 
 fn enqueue_for_retry(queue_path: &PathBuf, payload: &Value) -> Result<()> {
     if let Some(parent) = queue_path.parent() {
@@ -628,6 +803,7 @@ mod tests {
                         copy_to_genai: DlpAction::Review,
                     },
                 },
+                ..Default::default()
             },
         }
     }
@@ -731,7 +907,7 @@ mod tests {
         assert!(status.is_success(), "got status {status} body {body}");
         assert_eq!(body["ok"], serde_json::json!(true));
         assert_eq!(body["forwarded"], serde_json::json!(true));
-        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(hits.load(Ordering::SeqCst), 3); // 1 for dlp-evidence, 1 for review, 1 for attestation
     }
 
     #[test]

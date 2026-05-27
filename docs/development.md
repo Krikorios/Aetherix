@@ -85,6 +85,16 @@ cd apps/api && .venv/bin/pytest tests/test_policy_v2.py tests/test_policy_simula
 cd apps/api && .venv/bin/pytest tests/test_companies_licensing.py tests/test_ai_settings.py -q
 ```
 
+## Multi-Agent Parallel Development Model
+
+Aetherix is developed using three specialized AI agents working in parallel under a central Task Coordinator. This is the primary execution model for feature development, hardening, and integration work.
+
+- See the full operating rules, roles, interaction protocol, and prompt generation process in [multi-agent-coordination-protocol.md](multi-agent-coordination-protocol.md).
+- The Coordinator reviews every agent response and issues synchronized, updated prompts for all three tracks.
+- When sending agent outputs for review, provide explicit references to previous work when relevant so the Coordinator can maintain coherence.
+
+This model is designed to accelerate progress while protecting cross-track integration points (especially around ResponseEvidence, autonomous actions, quarantine lifecycle, correlation, and console visibility).
+
 ## Implemented API Surface
 
 Customer and policy package flow:
@@ -275,7 +285,7 @@ Implemented pages and flows:
 Current implementation boundary:
 
 - Company creation, accounts, roles, subscriptions, company licenses, AI settings, Policy Engine v2, Quick Deploy, and compliance export are backed by the API.
-- The console still uses `X-Aetherix-Account` dev authentication. Do not treat this as production auth or expose it outside local/test environments.
+- The console and API use bearer session authentication (`Authorization: Bearer <jwt>`). The `X-Aetherix-Account` fallback path has been removed.
 - AI Efficiency Score, white-label controls, several sidebar destinations, and default landing-page recommendations are still console foundations or placeholders until their dedicated APIs exist.
 - Antimalware & Behavior currently demonstrates triage/staging UX and policy context; it does not yet collect process trees, quarantine files, kill processes, isolate endpoints, or run malware scans.
 

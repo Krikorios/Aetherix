@@ -231,6 +231,10 @@ Required invariants:
 
 ### 4.1.3 Prioritized MVP: Next 4 Weeks
 
+Note: this 4-week table is historical planning context from an earlier phase.
+For current sequencing and source-of-truth prioritization, follow
+[roadmap-2026.md](roadmap-2026.md).
+
 | Week | Priority | Deliverables | Acceptance signal |
 | --- | --- | --- | --- |
 | 1 | Tenancy, accounts, licensing enforcement | Persist account APIs, tenant-scoped auth/RBAC checks, `subscription_entitlements`, module visibility contract, partner/customer branding lookup | Platform Owner, MSP Partner, and Company roles can be represented and API tests prove cross-customer reads are blocked |

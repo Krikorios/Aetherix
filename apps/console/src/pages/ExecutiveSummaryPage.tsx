@@ -11,7 +11,6 @@ import {
   RefreshCw,
   FileText,
   CheckCircle,
-  XCircle,
   Clock,
 } from "lucide-react";
 import { ErrorBanner, SuccessBanner } from "../components";
@@ -43,93 +42,53 @@ interface PortfolioMetrics {
   license_utilization_pct: number;
 }
 
-const DEMO_METRICS: PortfolioMetrics = {
-  total_companies: 14,
-  healthy_companies: 9,
-  at_risk_companies: 3,
-  critical_companies: 2,
-  total_endpoints: 847,
-  total_open_alerts: 38,
-  alerts_resolved_7d: 112,
-  avg_risk_score: 34,
-  ai_calls_7d: 2841,
-  license_utilization_pct: 71,
+const EMPTY_METRICS: PortfolioMetrics = {
+  total_companies: 0,
+  healthy_companies: 0,
+  at_risk_companies: 0,
+  critical_companies: 0,
+  total_endpoints: 0,
+  total_open_alerts: 0,
+  alerts_resolved_7d: 0,
+  avg_risk_score: 0,
+  ai_calls_7d: 0,
+  license_utilization_pct: 0,
 };
 
-const DEMO_CUSTOMERS: CustomerRiskSummary[] = [
-  {
-    customer_id: "c1",
-    company_name: "Northgate Manufacturing",
-    risk_score: 82,
-    risk_band: "critical",
-    open_alerts: 12,
-    enrolled_agents: 104,
-    license_status: "active",
-    last_seen: new Date(Date.now() - 120000).toISOString(),
-    policy_version: "v2.10.4",
-    ai_efficiency_score: 91,
-  },
-  {
-    customer_id: "c2",
-    company_name: "Clearview Legal LLP",
-    risk_score: 64,
-    risk_band: "high",
-    open_alerts: 7,
-    enrolled_agents: 58,
-    license_status: "active",
-    last_seen: new Date(Date.now() - 480000).toISOString(),
-    policy_version: "v2.10.2",
-    ai_efficiency_score: 87,
-  },
-  {
-    customer_id: "c3",
-    company_name: "BrightPath Healthcare",
-    risk_score: 55,
-    risk_band: "high",
-    open_alerts: 5,
-    enrolled_agents: 211,
-    license_status: "active",
-    last_seen: new Date(Date.now() - 60000).toISOString(),
-    policy_version: "v2.10.4",
-    ai_efficiency_score: 95,
-  },
-  {
-    customer_id: "c4",
-    company_name: "Apex Financial Group",
-    risk_score: 29,
-    risk_band: "low",
-    open_alerts: 2,
-    enrolled_agents: 142,
-    license_status: "active",
-    last_seen: new Date(Date.now() - 30000).toISOString(),
-    policy_version: "v2.10.4",
-    ai_efficiency_score: 98,
-  },
-  {
-    customer_id: "c5",
-    company_name: "Coastal Logistics Co.",
-    risk_score: 41,
-    risk_band: "medium",
-    open_alerts: 4,
-    enrolled_agents: 67,
-    license_status: "trial",
-    last_seen: new Date(Date.now() - 900000).toISOString(),
-    policy_version: "v2.9.1",
-    ai_efficiency_score: 78,
-  },
-  {
-    customer_id: "c6",
-    company_name: "Redstone Education Trust",
-    risk_score: 18,
-    risk_band: "low",
-    open_alerts: 0,
-    enrolled_agents: 265,
-    license_status: "active",
-    last_seen: new Date(Date.now() - 180000).toISOString(),
-    policy_version: "v2.10.4",
-    ai_efficiency_score: 99,
-  },
-];
+function calculateMetrics(
+  rows: CustomerRiskSummary[],
+  alerts: any[],
+  usage: any
+): PortfolioMetrics {
+  const totalCompanies = rows.length;
+  const totalEndpoints = rows.reduce((sum, row) => sum + row.enrolled_agents, 0);
+  const totalOpenAlerts = rows.reduce((sum, row) => sum + row.open_alerts, 0);
+  const avgRiskScore = totalCompanies ? Math.round(rows.reduce((sum, row) => sum + row.risk_score, 0) / totalCompanies) : 0;
+  const licensed = rows.filter((row) => row.license_status === "active" || row.license_status === "trial").length;
+
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const resolved7d = alerts.filter(
+    (a) =>
+      a.status === "acknowledged" &&
+      new Date(a.created_at).getTime() >= sevenDaysAgo
+  ).length;
+
+  const aiCalls30d = usage?.total_ai_calls_30d ?? 0;
+  const aiCalls7d = Math.round(aiCalls30d / 4);
+
+  return {
+    total_companies: totalCompanies,
+    healthy_companies: rows.filter((row) => row.risk_band === "low").length,
+    at_risk_companies: rows.filter((row) => row.risk_band === "medium" || row.risk_band === "high").length,
+    critical_companies: rows.filter((row) => row.risk_band === "critical").length,
+    total_endpoints: totalEndpoints,
+    total_open_alerts: totalOpenAlerts,
+    alerts_resolved_7d: resolved7d,
+    avg_risk_score: avgRiskScore,
+    ai_calls_7d: aiCalls7d,
+    license_utilization_pct: totalCompanies ? Math.round((licensed / totalCompanies) * 100) : 0,
+  };
+}
 
 const RISK_COLOR: Record<string, string> = {
   low: "var(--success)",
@@ -157,19 +116,33 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<PortfolioMetrics>(DEMO_METRICS);
+  const [metrics, setMetrics] = useState<PortfolioMetrics>(EMPTY_METRICS);
   const [customers, setCustomers] = useState<CustomerRiskSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [endpoints, setEndpoints] = useState<any[]>([]);
+  const [patches, setPatches] = useState<any[]>([]);
+  const [usage, setUsage] = useState<any>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const data = await apiGet<CustomerRiskSummary[]>("/companies/risk-summary");
-        setCustomers(data);
-        if (data.length > 0) setSelectedId(data[0].customer_id);
-      } catch {
-        setCustomers(DEMO_CUSTOMERS);
-        setSelectedId(DEMO_CUSTOMERS[0].customer_id);
+        const [riskSummary, alertList, endpointList, patchList, usageSummary] = await Promise.all([
+          apiGet<CustomerRiskSummary[]>("/companies/risk-summary"),
+          apiGet<any[]>("/alerts"),
+          apiGet<any[]>("/endpoints/health"),
+          apiGet<any[]>("/risk/patches"),
+          apiGet<any>("/usage/summary").catch(() => null),
+        ]);
+        setCustomers(riskSummary);
+        setAlerts(alertList);
+        setEndpoints(endpointList);
+        setPatches(patchList);
+        setUsage(usageSummary);
+        setMetrics(calculateMetrics(riskSummary, alertList, usageSummary));
+        if (riskSummary.length > 0) setSelectedId(riskSummary[0].customer_id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load portfolio summary.");
       } finally {
         setIsLoading(false);
       }
@@ -181,8 +154,19 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
     setIsSyncing(true);
     setError(null);
     try {
-      await new Promise((r) => setTimeout(r, 700));
-      setMetrics((prev) => ({ ...prev }));
+      const [riskSummary, alertList, endpointList, patchList, usageSummary] = await Promise.all([
+        apiGet<CustomerRiskSummary[]>("/companies/risk-summary"),
+        apiGet<any[]>("/alerts"),
+        apiGet<any[]>("/endpoints/health"),
+        apiGet<any[]>("/risk/patches"),
+        apiGet<any>("/usage/summary").catch(() => null),
+      ]);
+      setCustomers(riskSummary);
+      setAlerts(alertList);
+      setEndpoints(endpointList);
+      setPatches(patchList);
+      setUsage(usageSummary);
+      setMetrics(calculateMetrics(riskSummary, alertList, usageSummary));
       setSuccess("Portfolio metrics refreshed successfully.");
     } catch {
       setError("Failed to refresh metrics.");
@@ -192,6 +176,34 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
   };
 
   const selected = customers.find((c) => c.customer_id === selectedId) ?? null;
+
+  const criticalCVEs = patches.filter(
+    (p) => p.status === "missing" && p.severity === "critical"
+  ).length;
+
+  const policyDrifts = endpoints.filter((e) => e.status === "drifted").length;
+
+  const staleAgents = endpoints.filter(
+    (e) => e.agent_version !== e.latest_agent_version
+  ).length;
+
+  const unresolvedHigh = alerts.filter(
+    (a) => a.severity === "high" && a.status === "open"
+  ).length;
+
+  const dlpViolations = alerts.filter(
+    (a) =>
+      a.entity_types?.length > 0 &&
+      new Date(a.created_at).getTime() >= Date.now() - 7 * 24 * 60 * 60 * 1000
+  ).length;
+
+  const contributors = [
+    { name: "Unpatched Critical CVEs", count: criticalCVEs, delta: criticalCVEs > 0 ? `+${criticalCVEs}` : "0", up: criticalCVEs > 0 },
+    { name: "Policy drift (agent skew)", count: policyDrifts, delta: policyDrifts > 0 ? `+${policyDrifts}` : "0", up: policyDrifts > 0 },
+    { name: "Stale agent versions", count: staleAgents, delta: staleAgents > 0 ? `+${staleAgents}` : "0", up: staleAgents > 0 },
+    { name: "Unresolved high alerts", count: unresolvedHigh, delta: unresolvedHigh > 0 ? `+${unresolvedHigh}` : "0", up: unresolvedHigh > 0 },
+    { name: "DLP policy violations (7d)", count: dlpViolations, delta: dlpViolations > 0 ? `+${dlpViolations}` : "0", up: dlpViolations > 0 },
+  ];
 
   if (isLoading) {
     return (
@@ -427,13 +439,7 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
             <FileText size={14} style={{ color: "var(--muted)" }} />
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "12px" }}>
-            {[
-              { name: "Unpatched Critical CVEs", count: 23, delta: "+4", up: true },
-              { name: "Policy drift (agent skew)", count: 8, delta: "-2", up: false },
-              { name: "Stale agent versions", count: 14, delta: "+1", up: true },
-              { name: "Unresolved high alerts", count: 12, delta: "-5", up: false },
-              { name: "DLP policy violations (7d)", count: 91, delta: "+12", up: true },
-            ].map(({ name, count, delta, up }) => (
+            {contributors.map(({ name, count, delta, up }) => (
               <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ color: "var(--text)", maxWidth: "60%" }}>{name}</span>
                 <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -481,7 +487,7 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
         <Clock size={16} style={{ color: "var(--muted)", flexShrink: 0, marginTop: "2px" }} />
         <div style={{ fontSize: "12px", color: "var(--muted)", lineHeight: 1.6 }}>
           <strong style={{ color: "var(--text)" }}>AI Report Generation</strong> — Templated AI executive reports backed by{" "}
-          <code>ai_reports</code> with structured confidence, source references, and deterministic fallbacks are planned. The
+          <code>ai_reports</code> with structured confidence, source references, and persisted source evidence are planned. The
           metrics above are computed live from <code>/companies</code>, <code>/alerts</code>, and heartbeat data.
           Scheduled weekly email delivery and PDF export require the{" "}
           <code>ai_reports</code> table and object storage for evidence.

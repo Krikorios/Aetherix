@@ -20,7 +20,7 @@ import pytest
 
 from app import db as app_db
 from app.schemas import AccountCreate, CompanyLicenseAssign, RoleAssignmentRequest
-from app.services import licensing, tenancy
+from app.services import jwt_tokens, licensing, tenancy
 
 
 _TEST_URL_DEFAULT = "postgresql://aetherix:aetherix@127.0.0.1:55432/aetherix_test"
@@ -33,6 +33,19 @@ def _configure_database_url() -> None:
     )
     app_db.reset_pool()
     app_db.init_schema()
+
+
+@pytest.fixture
+def auth_headers():
+    """Return helper that mints bearer-auth headers for a given account id."""
+
+    def _headers(account_id: str | uuid.UUID, **extra: str) -> dict[str, str]:
+        token, _ = jwt_tokens.issue(str(account_id))
+        headers = {"Authorization": f"Bearer {token}"}
+        headers.update(extra)
+        return headers
+
+    return _headers
 
 
 @pytest.fixture(autouse=True)
@@ -57,12 +70,18 @@ def _truncate_tables() -> None:
                 license_usage_daily,
                 license_products,
                 company_licenses,
+                subscription_events,
+                subscription_instances,
+                billing_customers,
                 subscriptions,
+                system_banners,
                 impersonation_sessions,
                 account_roles,
                 accounts,
                 customer_ai_settings,
                 customer_ai_usage_daily,
+                reports,
+                integrations,
                 customers,
                 partners,
                 policy_assignments_v2,
@@ -79,7 +98,12 @@ def _truncate_tables() -> None:
                 drp_assets,
                 easm_exposures,
                 easm_assets,
-                audit_log
+                audit_log,
+                recovery_codes,
+                login_challenges,
+                oauth2_states,
+                oauth2_identities,
+                oauth2_providers
             restart identity cascade
             """
         )

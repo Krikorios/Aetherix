@@ -91,6 +91,168 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
             ),
         )
 
+    # Compliance Evidence mapping for new FIM events
+    if heartbeat.fim_events and tenant["customer_id"]:
+        from app.services.compliance import _emit_compliance_event, controls_for_event
+        controls = controls_for_event("agent.fim_event")
+        for event in heartbeat.fim_events:
+            _emit_compliance_event(
+                customer_id=tenant["customer_id"],
+                action="agent.fim_event",
+                resource=f"file:{event.file_path}",
+                actor=f"agent:{heartbeat.agent_id}",
+                payload=event.model_dump(mode="json"),
+                evidence_controls=controls,
+            )
+
+    # Compliance Evidence mapping for new EDR events
+    if heartbeat.edr_events and tenant["customer_id"]:
+        import uuid
+        from app.services.compliance import _emit_compliance_event, controls_for_event
+        from app.services.ai_settings import summarize_alert
+        from app.services import policy_v2 as policy_v2_service
+
+        controls = controls_for_event("agent.edr_event")
+
+        # Look up the effective `edr` policy module for this customer
+        # exactly once per heartbeat. The module may contain a
+        # ``responses`` map keyed by event kind that overrides the
+        # hardcoded recommended_action below, and an ``enabled`` flag
+        # that, if explicitly False, downgrades responses to monitor.
+        try:
+            effective_modules = policy_v2_service.system_effective_modules_for_customer(
+                tenant["customer_id"],
+                endpoint_id=heartbeat.agent_id,
+            )
+        except Exception:
+            effective_modules = {}
+        edr_module = dict(effective_modules.get("edr") or {})
+        edr_enabled = bool(edr_module.get("enabled", True))
+        edr_responses = dict(edr_module.get("responses") or {})
+
+        for event in heartbeat.edr_events:
+            # Emit compliance event
+            _emit_compliance_event(
+                customer_id=tenant["customer_id"],
+                action="agent.edr_event",
+                resource=f"process:{event.process_path or event.file_path or 'unknown'}",
+                actor=f"agent:{heartbeat.agent_id}",
+                payload=event.model_dump(mode="json"),
+                evidence_controls=controls,
+            )
+
+            # Map category, recommended_action, and severity
+            kind = event.kind
+            category = "anomaly"
+            recommended_action = "review"
+            severity = "high"
+            if kind == "yara_match":
+                category = "malware"
+                recommended_action = "quarantine"
+                severity = "high"
+            elif kind == "ioc_match":
+                category = "malware"
+                recommended_action = "quarantine"
+                severity = "high"
+            elif kind == "ransomware_canary":
+                category = "behavior"
+                recommended_action = "rollback"
+                severity = "critical"
+            elif kind == "suspicious_process_chain":
+                category = "behavior"
+                recommended_action = "kill_process"
+                severity = "high"
+            elif kind == "response_action":
+                category = "response"
+                recommended_action = event.action
+                severity = "medium"
+
+            # Policy override: if the effective `edr` module declares
+            # a response action for this event kind, it wins. If the
+            # module is explicitly disabled, downgrade to monitor so
+            # operators see telemetry without staged enforcement.
+            policy_action_override: str | None = None
+            if not edr_enabled:
+                policy_action_override = "monitor"
+            else:
+                value = edr_responses.get(kind)
+                if isinstance(value, str) and value:
+                    policy_action_override = value
+            if policy_action_override:
+                recommended_action = policy_action_override
+
+            # Parse collected_at timestamp safely
+            try:
+                created_at = datetime.fromisoformat(event.collected_at)
+            except Exception:
+                created_at = datetime.now(UTC)
+
+            alert_id = uuid.uuid4()
+            payload_dict = event.model_dump(mode="json")
+            response_status = (payload_dict.get("response") or {}).get("status")
+            if response_status == "executed":
+                payload_dict["action_state"] = "executed"
+            elif response_status == "failed":
+                payload_dict["action_state"] = "attempt_failed"
+            elif event.action in {"monitor", "review"}:
+                payload_dict["action_state"] = "staged"
+            else:
+                payload_dict["action_state"] = "attempted"
+
+            # Try generating AI summary
+            try:
+                ai_summary = summarize_alert(
+                    tenant["customer_id"],
+                    {
+                        "category": category,
+                        "severity": severity,
+                        "confidence": 95,
+                        "recommended_action": recommended_action,
+                        "payload": payload_dict,
+                    },
+                )
+            except Exception:
+                ai_summary = None
+
+            # Insert alert into security_alerts
+            with connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    insert into security_alerts (
+                        id, customer_id, agent_id, category, severity, confidence, recommended_action, ai_summary, payload, status, created_at, evidence_controls
+                    ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        alert_id,
+                        tenant["customer_id"],
+                        heartbeat.agent_id,
+                        category,
+                        severity,
+                        95,
+                        recommended_action,
+                        ai_summary,
+                        json.dumps(payload_dict),
+                        "new",
+                        created_at,
+                        json.dumps(controls),
+                    ),
+                )
+
+    # Compliance Evidence mapping for CIS Benchmarking
+    if heartbeat.cis_results and tenant["customer_id"]:
+        from app.services.compliance import _emit_compliance_event, controls_for_event
+        controls = controls_for_event("agent.cis_check")
+        for result in heartbeat.cis_results:
+            if result.status == "fail":
+                _emit_compliance_event(
+                    customer_id=tenant["customer_id"],
+                    action="agent.cis_check",
+                    resource=f"cis_rule:{result.rule_id}",
+                    actor=f"agent:{heartbeat.agent_id}",
+                    payload=result.model_dump(mode="json"),
+                    evidence_controls=controls,
+                )
+
     return _endpoint_from_heartbeat(heartbeat, _open_alert_count(heartbeat.agent_id))
 
 

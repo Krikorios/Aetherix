@@ -151,7 +151,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
     }
 
     if (url.pathname === "/policies" && method === "GET") {
-      await fulfill(route, state.policies.map((p) => ({
+      const items = state.policies.map((p) => ({
         id: p.id,
         name: p.name,
         status: p.status,
@@ -160,7 +160,13 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
         scope: p.scope,
         created_at: "2026-05-23T00:00:00Z",
         updated_at: "2026-05-23T00:00:00Z",
-      })));
+      }));
+      await fulfill(route, {
+        items,
+        total: items.length,
+        limit: 50,
+        offset: 0,
+      });
       return;
     }
 
@@ -457,8 +463,25 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
   });
 
   await page.addInitScript(() => {
-    window.localStorage.setItem("aetherix.account_id", "account-1");
+    const header = btoa(JSON.stringify({ alg: "none", typ: "JWT" }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+    const payload = btoa(JSON.stringify({ sub: "account-1", exp: 4_102_444_800 }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+    window.localStorage.setItem("aetherix.access_token", `${header}.${payload}.sig`);
   });
+}
+
+
+async function approvePromotion(page: Page) {
+  const promotionSheet = page.getByRole("dialog", { name: "Production Promotion gate" });
+  await expect(promotionSheet).toBeVisible();
+  await promotionSheet.getByRole("checkbox").check();
+  await promotionSheet.getByRole("textbox").fill("Approved during policy E2E validation");
+  await promotionSheet.getByRole("button", { name: "Confirm & Promote" }).click();
 }
 
 
@@ -467,18 +490,22 @@ test("Flow A: MSP creates, simulates, promotes, assigns policy", async ({ page }
   await page.goto("/");
 
   await page.getByRole("button", { name: "Policies" }).click();
-  await page.getByLabel("Policy name").fill("Flow A Policy");
-  await page.getByRole("button", { name: "Save draft" }).click();
+  await page.getByRole("button", { name: /Add policy/i }).click();
+  await page.locator("label.policyNameField input").fill("Flow A Policy");
+  await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText(/Created draft/i)).toBeVisible();
 
+  await page.getByRole("button", { name: "Aetherix modules" }).click();
   await page.getByRole("button", { name: "Simulate selected" }).click();
-  await expect(page.getByText(/Approval gate active/i)).toBeVisible();
+  await expect(page.getByText(/Simulation complete:/i)).toBeVisible();
 
   await page.getByRole("button", { name: "Promote selected" }).click();
+  await approvePromotion(page);
   await expect(page.getByText("Policy promoted successfully.")).toBeVisible();
 
   await page.getByRole("button", { name: "Assign selected" }).click();
   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
+  await expect(assignDialog).toBeVisible();
   await assignDialog.getByLabel("Company").selectOption("customer-1");
   await page.getByRole("button", { name: "Assign policy" }).click();
   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
@@ -490,15 +517,19 @@ test("Flow B: Company Admin creates group override and preview resolves inherita
   await page.goto("/");
 
   await page.getByRole("button", { name: "Policies" }).click();
-  await page.getByLabel("Policy name").fill("Flow B Group Override");
+  await page.getByRole("button", { name: /Add policy/i }).click();
+  await page.locator("label.policyNameField input").fill("Flow B Group Override");
+  await page.getByRole("button", { name: "Aetherix modules" }).click();
   await page.getByLabel("Parent policy").selectOption("policy-1");
 
-  await page.getByRole("button", { name: "Save draft" }).click();
+  await page.getByRole("button", { name: "Save" }).click();
   await page.getByRole("button", { name: "Simulate selected" }).click();
   await page.getByRole("button", { name: "Promote selected" }).click();
+  await approvePromotion(page);
 
   await page.getByRole("button", { name: "Assign selected" }).click();
   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
+  await expect(assignDialog).toBeVisible();
   await page.getByRole("button", { name: "group" }).click();
   await assignDialog.getByLabel("Company").selectOption("customer-1");
   await assignDialog.getByLabel("Group").selectOption("group-1");
@@ -512,9 +543,13 @@ test("Flow C: Agent fetch includes semantic/genai modules and entitlement filter
   await page.goto("/");
 
   await page.getByRole("button", { name: "Policies" }).click();
+  await page.getByRole("button", { name: "Inherited Base" }).click();
+  await page.getByRole("button", { name: "Aetherix modules" }).click();
   await page.getByRole("button", { name: "Assign selected" }).click();
-  await page.getByRole("button", { name: "endpoint" }).click();
-  await page.getByLabel("Endpoint").selectOption("endpoint-1");
+  const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
+  await expect(assignDialog).toBeVisible();
+  await assignDialog.getByRole("button", { name: /^endpoint$/i }).click();
+  await assignDialog.locator("label").filter({ hasText: "Endpoint" }).locator("select").selectOption("endpoint-1");
   await page.getByRole("button", { name: "Assign policy" }).click();
   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
 
@@ -550,7 +585,10 @@ test("Flow D: Destructive gate rejects promotion before simulation, then accepts
   expect(deniedStatus).toBe(400);
 
   await page.getByRole("button", { name: "Policies" }).click();
+  await page.getByRole("button", { name: "Inherited Base" }).click();
+  await page.getByRole("button", { name: "Aetherix modules" }).click();
   await page.getByRole("button", { name: "Simulate selected" }).click();
   await page.getByRole("button", { name: "Promote selected" }).click();
+  await approvePromotion(page);
   await expect(page.getByText("Policy promoted successfully.")).toBeVisible();
 });

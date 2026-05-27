@@ -56,7 +56,7 @@ export function DashboardPage() {
       mountedRef.current = false;
       clearInterval(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function acknowledge(alertId: string) {

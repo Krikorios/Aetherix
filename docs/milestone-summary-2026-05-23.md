@@ -87,7 +87,8 @@ Performance:
 
 ## Next Priorities
 
-Recommended order:
+Recommended order (see [roadmap-2026.md](roadmap-2026.md) for the full
+P0–P3 backlog with exit criteria):
 
 1. Real-site browser extension testing on Claude, ChatGPT, Gemini, and Copilot.
 2. Custom Detection Rules UI page as the next planned protection module.

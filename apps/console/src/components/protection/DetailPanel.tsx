@@ -1,5 +1,5 @@
 import React from "react";
-import { Terminal, Shield, Network, User, Key, Cpu } from "lucide-react";
+import { Terminal, User, Cpu } from "lucide-react";
 import { Detection } from "./types";
 import { EmptyState } from "./EmptyState";
 

@@ -1,9 +1,6 @@
 import React, { useState, useEffect } from "react";
 import {
   Archive,
-  RefreshCw,
-  RotateCcw,
-  Trash2,
   AlertTriangle,
   CheckCircle,
   FileText,
@@ -15,7 +12,7 @@ import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
-import { LoadingState } from "../components/protection/EmptyState";
+import { EmptyState, LoadingState } from "../components/protection/EmptyState";
 import {
   Detection,
   StagedAction,
@@ -43,12 +40,6 @@ export interface QuarantineItem {
   detection_id?: string | null;
 }
 
-const KIND_ICON: Record<QuarantineItemKind, React.ReactNode> = {
-  file: <FileText size={14} />,
-  email: <Mail size={14} />,
-  process: <Terminal size={14} />,
-  network_connection: <ShieldCheck size={14} />,
-};
 
 const KIND_LABEL: Record<QuarantineItemKind, string> = {
   file: "File",
@@ -56,69 +47,6 @@ const KIND_LABEL: Record<QuarantineItemKind, string> = {
   process: "Process",
   network_connection: "Network Connection",
 };
-
-const DEMO_ITEMS: QuarantineItem[] = [
-  {
-    id: "q-001",
-    customer_id: null,
-    hostname: "WIN-WORK-042",
-    kind: "file",
-    name: "invoice_Q1_2024.exe",
-    path: "C:\\Users\\jdoe\\Downloads\\invoice_Q1_2024.exe",
-    hash: "a3f8b1c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0",
-    quarantine_reason: "Trojan.GenericKD.46832741 — confidence 98%",
-    severity: "critical",
-    status: "quarantined",
-    quarantined_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-    quarantined_by: "Aetherix Agent v1.4.2",
-    detection_id: "alert-abc-123",
-  },
-  {
-    id: "q-002",
-    customer_id: null,
-    hostname: "WIN-WORK-017",
-    kind: "email",
-    name: "Urgent: Account Verification Required",
-    path: null,
-    hash: null,
-    quarantine_reason: "Phishing email — credential harvesting link detected",
-    severity: "high",
-    status: "quarantined",
-    quarantined_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-    quarantined_by: "DLP Policy v2",
-    detection_id: null,
-  },
-  {
-    id: "q-003",
-    customer_id: null,
-    hostname: "LINUX-SRV-08",
-    kind: "process",
-    name: "cryptominer64",
-    path: "/tmp/.hidden/cryptominer64",
-    hash: "b4c9d2e3f1a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5",
-    quarantine_reason: "Cryptominer binary — CPU abuse detected",
-    severity: "high",
-    status: "quarantined",
-    quarantined_at: new Date(Date.now() - 3600000 * 12).toISOString(),
-    quarantined_by: "Aetherix Agent v1.4.1",
-    detection_id: "alert-def-456",
-  },
-  {
-    id: "q-004",
-    customer_id: null,
-    hostname: "WIN-WORK-001",
-    kind: "file",
-    name: "report_template.docm",
-    path: "C:\\Users\\ksmith\\Documents\\report_template.docm",
-    hash: "c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5",
-    quarantine_reason: "Macro-enabled document — suspicious auto-open macro",
-    severity: "medium",
-    status: "restore_requested",
-    quarantined_at: new Date(Date.now() - 86400000).toISOString(),
-    quarantined_by: "Aetherix Agent v1.4.2",
-    detection_id: null,
-  },
-];
 
 export function QuarantinePage({ me }: { me: MeResponse }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -181,12 +109,10 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
         setItems(data);
         if (data.length > 0) {
           setSelectedId(data[0].id);
-          setSelectedAction(data[0].status === "restore_requested" ? "approve_restore" : "confirm_quarantine");
+          setSelectedAction(data[0].status === "restore_requested" ? "release_from_quarantine" : "confirm_quarantine");
         }
-      } catch {
-        setItems(DEMO_ITEMS);
-        setSelectedId(DEMO_ITEMS[0].id);
-        setSelectedAction("confirm_quarantine");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load quarantine store.");
       } finally {
         setIsLoading(false);
       }
@@ -197,7 +123,8 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
   const handleSyncPolicy = async () => {
     setIsSyncing(true);
     try {
-      await new Promise((r) => setTimeout(r, 600));
+      const customerId = me.scope.customer_ids[0];
+      await apiGet(customerId ? `/quarantine?customer_id=${customerId}` : "/quarantine");
       setPolicy((prev) => ({ ...prev, last_updated: new Date().toISOString() }));
       setSuccess("Quarantine policies synced.");
     } catch {
@@ -211,30 +138,11 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
     if (!selectedItem) return;
     setIsWorking(true);
     try {
-      await apiPost(`/quarantine/${selectedItem.id}/simulate`, { action: selectedAction });
-    } catch {
-      const isRestore = selectedAction === "approve_restore" || selectedAction === "request_restore";
-      const sim: SimulationPreview = {
-        id: `sim-q-${selectedItem.id}-${Date.now()}`,
-        detection_id: selectedItem.id,
-        action: selectedAction,
-        destructive: selectedAction === "delete_permanently",
-        approval_required: policy.approval_required,
-        affected_systems: 1,
-        estimated_impact: [
-          isRestore
-            ? `Restoring ${KIND_LABEL[selectedItem.kind]}: ${selectedItem.name}`
-            : `${selectedAction === "delete_permanently" ? "Permanently deleting" : "Confirming quarantine for"}: ${selectedItem.name}`,
-          `Endpoint: ${selectedItem.hostname}`,
-          isRestore
-            ? `The item will be restored to its original location. Original threat risk remains — confirm with operator.`
-            : `Item is isolated in the quarantine store. No further execution possible.`,
-        ],
-        evidence_controls: ["iso27001-2022:A.8.7", "nist-csf-2.0:RS.MI"],
-        created_at: new Date().toISOString(),
-      };
+      const sim = await apiPost<SimulationPreview>(`/quarantine/${selectedItem.id}/simulate`, { action: selectedAction });
       setSimulation(sim);
       setSuccess("Simulation complete.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Quarantine simulation failed.");
     } finally {
       setIsWorking(false);
     }
@@ -256,11 +164,15 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
     setStagedActions((prev) => [optimistic, ...prev]);
     try {
       await apiPost(`/quarantine/${selectedItem.id}/action`, { action: selectedAction });
-    } catch {
-      // offline fallback — update state optimistically
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to stage quarantine action.");
+      setIsWorking(false);
+      return;
     }
     const nextStatus: QuarantineItem["status"] =
-      selectedAction === "approve_restore" || selectedAction === "request_restore"
+      selectedAction === "release_from_quarantine"
+        ? "restored"
+        : selectedAction === "request_restore"
         ? "restore_requested"
         : selectedAction === "delete_permanently"
         ? "deleted"
@@ -310,6 +222,13 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
         ]}
       />
 
+      {items.length === 0 ? (
+        <EmptyState
+          icon={Archive}
+          title="Quarantine store is empty"
+          message="No files, emails, processes, or connections are currently isolated. New containment events from agents and DLP will appear here."
+        />
+      ) : (
       <section className="panelWorkspace" aria-label="Quarantine Board">
         <DetectionTable
           detections={detections}
@@ -317,7 +236,7 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
           onSelect={(d) => {
             setSelectedId(d.id);
             const item = items.find((i) => i.id === d.id);
-            setSelectedAction(item?.status === "restore_requested" ? "approve_restore" : "confirm_quarantine");
+            setSelectedAction(item?.status === "restore_requested" ? "release_from_quarantine" : "confirm_quarantine");
             setSimulation(null);
           }}
           isLoading={isLoading}
@@ -340,8 +259,10 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
                       { label: "Status", value: item.status.replace("_", " ") },
                       { label: "Quarantined By", value: item.quarantined_by },
                       { label: "Quarantined At", value: new Date(item.quarantined_at).toLocaleString() },
+                      { label: "Detection Source", value: KIND_LABEL[item.kind] },
+                      ...(item.detection_id ? [{ label: "Linked Alert", value: item.detection_id }] : []),
                       ...(item.path ? [{ label: "Original Path", value: item.path }] : []),
-                      ...(item.hash ? [{ label: "File Hash", value: `${item.hash.slice(0, 16)}…` }] : []),
+                      ...(item.hash ? [{ label: "File Hash (sha256)", value: item.hash }] : []),
                     ].map(({ label, value }) => (
                       <div key={label} className="kvRow">
                         <span>{label}</span>
@@ -367,11 +288,12 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
           availableActions={[
             { value: "confirm_quarantine", label: "Confirm Quarantine", destructive: false },
             { value: "request_restore", label: "Request Restore", destructive: false },
-            { value: "approve_restore", label: "Approve & Restore", destructive: false },
+            { value: "release_from_quarantine", label: "Release from Quarantine", destructive: true },
             { value: "delete_permanently", label: "Delete Permanently", destructive: true },
           ]}
         />
       </section>
+      )}
     </ConsolePage>
   );
 }

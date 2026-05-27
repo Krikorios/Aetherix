@@ -1,6 +1,7 @@
 import React from "react";
-import { PlayCircle, ShieldCheck, HelpCircle, FileText, CheckCircle2, Clock } from "lucide-react";
+import { PlayCircle, ShieldCheck } from "lucide-react";
 import { Detection, StagedAction, SimulationPreview } from "./types";
+import { StagedActionBadge } from "./StagedActionBadge";
 import { EmptyState } from "./EmptyState";
 
 interface ActionStagingPanelProps {
@@ -223,16 +224,7 @@ export function ActionStagingPanel({
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    {hi.status === "queued" ? (
-                      <Clock size={12} style={{ color: "var(--accent)" }} />
-                    ) : hi.status === "awaiting_approval" ? (
-                      <Clock size={12} style={{ color: "var(--warning)" }} />
-                    ) : (
-                      <CheckCircle2 size={12} style={{ color: "var(--healthy)" }} />
-                    )}
-                    <span style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase" }}>
-                      {hi.status.replace("_", " ")}
-                    </span>
+                    <StagedActionBadge status={hi.status} />
                   </div>
                 </div>
               ))

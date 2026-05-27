@@ -1,16 +1,50 @@
+import io
+import json
+import tarfile
+import uuid
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
+from app import db as app_db
 from app.main import app
+from app.schemas import AccountCreate, RoleAssignmentRequest
+from app.services import tenancy
 
 
-def test_customer_quick_create_generates_installers_and_quick_links(monkeypatch) -> None:
+def _bootstrap_owner_headers(auth_headers) -> dict[str, str]:
+    owner = tenancy.ensure_platform_owner("owner@aetherix.test", "Owner")
+    return auth_headers(str(owner.id))
+
+
+def _make_partner_customer(name: str = "Scoped Co") -> tuple[uuid.UUID, uuid.UUID]:
+    partner_id = uuid.uuid4()
+    customer_id = uuid.uuid4()
+    with app_db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into partners (id, name, slug, deployment_mode, created_at, tier)
+            values (%s, %s, %s, 'cloud', now(), 'msp')
+            """,
+            (partner_id, f"Partner {name}", f"p-{partner_id.hex[:8]}"),
+        )
+        cur.execute(
+            """
+            insert into customers (id, partner_id, customer_number, name, status, created_by, created_at)
+            values (%s, %s, %s, %s, 'active', 'tests', now())
+            """,
+            (customer_id, partner_id, f"C-{customer_id.hex[:8]}", name),
+        )
+    return partner_id, customer_id
+
+
+def test_customer_quick_create_generates_installers_and_quick_links(monkeypatch, auth_headers) -> None:
     monkeypatch.setenv("AETHERIX_PUBLIC_URL", "https://console.test")
     client = TestClient(app)
 
     response = client.post(
         "/customers/quick-create",
+        headers=_bootstrap_owner_headers(auth_headers),
         json={
             "name": "Northwind Dental",
             "company_type": "partner",
@@ -45,23 +79,31 @@ def test_customer_quick_create_generates_installers_and_quick_links(monkeypatch)
     assert "secret_hash" not in str(links)
 
 
-def test_quick_deploy_link_mints_tenant_bound_enrollment_token(monkeypatch) -> None:
+def test_quick_deploy_link_mints_tenant_bound_enrollment_token(monkeypatch, auth_headers) -> None:
     monkeypatch.setenv("AETHERIX_PUBLIC_URL", "https://console.test")
     client = TestClient(app)
 
     created = client.post(
         "/customers/quick-create",
+        headers=_bootstrap_owner_headers(auth_headers),
         json={"name": "Contoso Plumbing", "platforms": ["linux_deb"]},
     ).json()
     link = created["quick_deploy_links"][0]
     parsed = urlparse(link["url"])
     secret = parse_qs(parsed.query)["secret"][0]
 
-    manifest_response = client.get(f"/quick-deploy/{link['id']}", params={"secret": secret})
-    assert manifest_response.status_code == 200, manifest_response.text
-    manifest = manifest_response.json()
-    assert manifest["customer"]["id"] == created["customer"]["id"]
-    assert manifest["installer"]["install_profile"]["platform"] == "linux_deb"
+    download_response = client.get(f"/quick-deploy/{link['id']}", params={"secret": secret})
+    assert download_response.status_code == 200, download_response.text
+    assert download_response.headers["content-type"] == "application/octet-stream"
+    assert "aetherix-agent-linux_deb.tar.gz" in download_response.headers["content-disposition"]
+
+    with tarfile.open(fileobj=io.BytesIO(download_response.content), mode="r:gz") as archive:
+        profile_file = archive.extractfile("install-profile.json")
+        assert profile_file is not None
+        manifest = json.loads(profile_file.read().decode("utf-8"))
+
+    assert manifest["customer_id"] == created["customer"]["id"]
+    assert manifest["platform"] == "linux_deb"
     assert manifest["enrollment_token"]
 
     enrollment = client.post(
@@ -82,12 +124,14 @@ def test_quick_deploy_link_mints_tenant_bound_enrollment_token(monkeypatch) -> N
     assert policy.json()["name"] == "SMB Baseline Protection"
 
 
-def test_existing_customer_can_be_updated_and_regenerate_artifacts(monkeypatch) -> None:
+def test_existing_customer_can_be_updated_and_regenerate_artifacts(monkeypatch, auth_headers) -> None:
     monkeypatch.setenv("AETHERIX_PUBLIC_URL", "https://console.test")
     client = TestClient(app)
+    headers = _bootstrap_owner_headers(auth_headers)
 
     created = client.post(
         "/customers/quick-create",
+        headers=headers,
         json={"name": "Legacy Office", "platforms": ["windows_msi"]},
     ).json()
     customer_id = created["customer"]["id"]
@@ -95,6 +139,7 @@ def test_existing_customer_can_be_updated_and_regenerate_artifacts(monkeypatch) 
 
     updated = client.put(
         f"/customers/{customer_id}",
+        headers=headers,
         json={
             "name": "Legacy Office Updated",
             "industry": "Legal",
@@ -110,6 +155,7 @@ def test_existing_customer_can_be_updated_and_regenerate_artifacts(monkeypatch) 
 
     installers = client.post(
         f"/customers/{customer_id}/installers",
+        headers=headers,
         json={"platforms": ["windows_exe", "linux_rpm"], "created_by": "msp-admin"},
     )
     assert installers.status_code == 201, installers.text
@@ -117,7 +163,31 @@ def test_existing_customer_can_be_updated_and_regenerate_artifacts(monkeypatch) 
 
     links = client.post(
         f"/customers/{customer_id}/quick-deploy",
+        headers=headers,
         json={"platforms": ["windows_exe", "linux_rpm"], "created_by": "msp-admin"},
     )
     assert links.status_code == 201, links.text
     assert [link["platform"] for link in links.json()] == ["windows_exe", "linux_rpm"]
+
+
+def test_legacy_customer_routes_require_auth() -> None:
+    response = TestClient(app).get("/customers")
+    assert response.status_code == 401
+
+
+def test_legacy_customer_detail_respects_scope(auth_headers) -> None:
+    partner_a, _ = _make_partner_customer("A")
+    _, foreign_customer = _make_partner_customer("B")
+    msp = tenancy.create_account(
+        AccountCreate(
+            email="msp-legacy@partner.test",
+            full_name="MSP Legacy",
+            initial_role=RoleAssignmentRequest(role_code="msp_partner", partner_id=partner_a),
+        )
+    )
+
+    response = TestClient(app).get(
+        f"/customers/{foreign_customer}",
+        headers=auth_headers(str(msp.id)),
+    )
+    assert response.status_code == 403

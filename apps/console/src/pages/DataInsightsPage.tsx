@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { TrendingUp, TrendingDown, RefreshCw, Activity, Brain, Cpu, BarChart2, AlertTriangle } from "lucide-react";
 import { LoadingState } from "../components/protection/EmptyState";
-import { ErrorBanner } from "../components";
+import { ConsolePage, ErrorBanner, PageHeader } from "../components";
 import { apiGet, type MeResponse } from "../api";
 
 export interface UsageMetrics {
@@ -30,88 +30,6 @@ export interface PlatformUsage {
   customers: UsageMetrics[];
 }
 
-const DEMO_DATA: PlatformUsage = {
-  total_endpoints: 127,
-  total_events_30d: 184320,
-  total_ai_calls_30d: 3760,
-  avg_ai_efficiency_score: 74,
-  total_dlp_events_30d: 412,
-  total_blocked_30d: 2340,
-  total_storage_gb: 38.4,
-  customers: [
-    {
-      customer_id: "c-acme",
-      customer_name: "Acme Corp",
-      endpoint_count: 18,
-      events_30d: 42100,
-      ai_calls_30d: 810,
-      ai_efficiency_score: 82,
-      dlp_events_30d: 89,
-      alerts_30d: 14,
-      blocked_30d: 430,
-      storage_gb: 7.2,
-      trend_events: 12,
-      trend_ai: 8,
-    },
-    {
-      customer_id: "c-northgate",
-      customer_name: "Northgate Ltd",
-      endpoint_count: 42,
-      events_30d: 95600,
-      ai_calls_30d: 1900,
-      ai_efficiency_score: 71,
-      dlp_events_30d: 190,
-      alerts_30d: 33,
-      blocked_30d: 1100,
-      storage_gb: 18.6,
-      trend_events: -4,
-      trend_ai: 15,
-    },
-    {
-      customer_id: "c-mediq",
-      customer_name: "MediQ Health",
-      endpoint_count: 31,
-      events_30d: 29800,
-      ai_calls_30d: 620,
-      ai_efficiency_score: 69,
-      dlp_events_30d: 78,
-      alerts_30d: 11,
-      blocked_30d: 540,
-      storage_gb: 6.8,
-      trend_events: 3,
-      trend_ai: -6,
-    },
-    {
-      customer_id: "c-summit",
-      customer_name: "Summit Retail",
-      endpoint_count: 23,
-      events_30d: 13200,
-      ai_calls_30d: 390,
-      ai_efficiency_score: 79,
-      dlp_events_30d: 47,
-      alerts_30d: 7,
-      blocked_30d: 250,
-      storage_gb: 4.8,
-      trend_events: -9,
-      trend_ai: 2,
-    },
-    {
-      customer_id: "c-logix",
-      customer_name: "Logix Freight",
-      endpoint_count: 13,
-      events_30d: 3620,
-      ai_calls_30d: 40,
-      ai_efficiency_score: 58,
-      dlp_events_30d: 8,
-      alerts_30d: 3,
-      blocked_30d: 20,
-      storage_gb: 1.0,
-      trend_events: 21,
-      trend_ai: -30,
-    },
-  ],
-};
-
 const fmt = (n: number) =>
   n >= 1_000_000
     ? `${(n / 1_000_000).toFixed(1)}M`
@@ -131,8 +49,8 @@ export function DataInsightsPage({ me }: { me: MeResponse }) {
       try {
         const res = await apiGet<PlatformUsage>("/usage/summary");
         setData(res);
-      } catch {
-        setData(DEMO_DATA);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load usage summary.");
       } finally {
         setIsLoading(false);
       }
@@ -177,26 +95,12 @@ export function DataInsightsPage({ me }: { me: MeResponse }) {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
-      {/* Header */}
-      <div style={{ marginBottom: "20px" }}>
-        <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: "4px" }}>
-          Usage & Billing
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>Data Insights</h1>
-            <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "var(--muted)" }}>
-              Usage, AI efficiency, and billing signals across all customers. 30-day rolling window.
-            </p>
-          </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "4px", background: "rgba(100,116,139,0.15)", color: "var(--muted)", fontWeight: 600 }}>
-              PLANNED
-            </span>
-          </div>
-        </div>
-      </div>
+    <ConsolePage>
+      <PageHeader
+        eyebrow="Usage & Billing"
+        title="Data Insights"
+        subtitle="Usage, AI efficiency, and billing signals across partners and customers."
+      />
 
       {error && <ErrorBanner message={error} />}
 
@@ -274,6 +178,6 @@ export function DataInsightsPage({ me }: { me: MeResponse }) {
           Billing export, usage metering hooks, and AI efficiency model integration are under active development.
         </div>
       </div>
-    </div>
+    </ConsolePage>
   );
 }

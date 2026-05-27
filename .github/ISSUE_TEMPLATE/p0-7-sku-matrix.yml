@@ -1,0 +1,37 @@
+name: P0-7 — SKU matrix in entitlement model
+description: Seed Core / +GenAI / +Compliance Pro SKUs and gate features off subscription rows.
+title: "[P0-7] SKU matrix in entitlement model"
+labels: ["P0", "backend", "billing", "roadmap-2026"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Source: [docs/roadmap-2026.md](../../docs/roadmap-2026.md) P0-7,
+        [docs/companies.md](../../docs/companies.md),
+        [docs/policy-engine.md](../../docs/policy-engine.md) "subscription-aware".
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      value: |
+        SKUs to seed in `apps/api/app/db.py` (idempotent, following the
+        existing `ai_providers` seed pattern):
+
+        - **Core** — Behavior + DLP deterministic + Compliance Evidence
+          export. $4/endpoint/mo wholesale.
+        - **Core + GenAI Guardrail** — adds semantic DLP + extension +
+          BYO AI. +$2/endpoint/mo.
+        - **Core + Compliance Pro** — adds attestation workflow + PDF +
+          extra framework packs. +$2/endpoint/mo.
+
+        Gate policy-package features off the SKU's `core_features`
+        flags. The `ai_tier` gating already in place (see
+        `app/services/ai_settings.py`) stays as-is.
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      value: |
+        - New Company can be created on each SKU via console.
+        - Companies + Licensing page reflects entitlements.
+        - `ai_tier: none|hosted|byo` still gates BYO providers.

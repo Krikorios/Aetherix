@@ -9,11 +9,10 @@ import {
   GitBranch,
   Eye,
   Edit3,
-  CheckCircle,
   AlertTriangle,
 } from "lucide-react";
 import { LoadingState } from "../components/protection/EmptyState";
-import { ErrorBanner, SuccessBanner } from "../components";
+import { ConsolePage, ErrorBanner, PageHeader, SuccessBanner } from "../components";
 import { apiGet, apiPost, type MeResponse } from "../api";
 
 export type AssignmentScope = "platform" | "partner" | "company" | "group" | "endpoint";
@@ -51,89 +50,6 @@ const SCOPE_LABEL: Record<AssignmentScope, string> = {
   endpoint: "Endpoint",
 };
 
-const DEMO_ASSIGNMENTS: PolicyAssignment[] = [
-  {
-    id: "pa-001",
-    scope: "platform",
-    scope_id: "platform",
-    scope_name: "Aetherix Platform Default",
-    policy_id: "pol-default-v2",
-    policy_name: "Default Security Baseline v2",
-    policy_version: "v2.10.4",
-    inherited: false,
-    override: false,
-    effective_since: new Date(Date.now() - 86400000 * 90).toISOString(),
-    last_diff: null,
-    pending_diff: null,
-    endpoint_count: 127,
-    drift_count: 0,
-  },
-  {
-    id: "pa-002",
-    scope: "partner",
-    scope_id: "partner-northgate",
-    scope_name: "Northgate MSP",
-    policy_id: "pol-northgate-custom",
-    policy_name: "Northgate Enhanced Policy",
-    policy_version: "v1.4.0",
-    inherited: false,
-    override: true,
-    effective_since: new Date(Date.now() - 86400000 * 45).toISOString(),
-    last_diff: new Date(Date.now() - 86400000 * 7).toISOString(),
-    pending_diff: null,
-    endpoint_count: 42,
-    drift_count: 3,
-  },
-  {
-    id: "pa-003",
-    scope: "company",
-    scope_id: "company-acme",
-    scope_name: "Acme Corp",
-    policy_id: "pol-default-v2",
-    policy_name: "Default Security Baseline v2",
-    policy_version: "v2.10.4",
-    inherited: true,
-    override: false,
-    effective_since: new Date(Date.now() - 86400000 * 30).toISOString(),
-    last_diff: null,
-    pending_diff: "Pending: add USB block rule",
-    endpoint_count: 18,
-    drift_count: 0,
-  },
-  {
-    id: "pa-004",
-    scope: "group",
-    scope_id: "group-finance",
-    scope_name: "Finance Team — Acme Corp",
-    policy_id: "pol-finance-strict",
-    policy_name: "Finance Strict Controls",
-    policy_version: "v1.1.0",
-    inherited: false,
-    override: true,
-    effective_since: new Date(Date.now() - 86400000 * 14).toISOString(),
-    last_diff: new Date(Date.now() - 86400000 * 2).toISOString(),
-    pending_diff: null,
-    endpoint_count: 7,
-    drift_count: 1,
-  },
-  {
-    id: "pa-005",
-    scope: "endpoint",
-    scope_id: "endpoint-kiosk-01",
-    scope_name: "Kiosk-01 (Lobby)",
-    policy_id: "pol-kiosk-locked",
-    policy_name: "Kiosk Lockdown Policy",
-    policy_version: "v1.0.0",
-    inherited: false,
-    override: true,
-    effective_since: new Date(Date.now() - 86400000 * 60).toISOString(),
-    last_diff: null,
-    pending_diff: null,
-    endpoint_count: 1,
-    drift_count: 0,
-  },
-];
-
 export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -152,9 +68,8 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
         const data = await apiGet<PolicyAssignment[]>("/policy/assignments");
         setAssignments(data);
         if (data.length > 0) setSelectedId(data[0].id);
-      } catch {
-        setAssignments(DEMO_ASSIGNMENTS);
-        setSelectedId(DEMO_ASSIGNMENTS[0].id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load policy assignments.");
       } finally {
         setIsLoading(false);
       }
@@ -165,7 +80,8 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      await new Promise((r) => setTimeout(r, 600));
+      const data = await apiGet<PolicyAssignment[]>("/policy/assignments");
+      setAssignments(data);
       setSuccess("Policy assignments synced from Policy Engine.");
     } catch {
       setError("Sync failed.");
@@ -179,8 +95,10 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
     setIsWorking(true);
     try {
       await apiPost(`/policy/assignments/${selectedAssignment.id}/apply`, {});
-    } catch {
-      // offline
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to apply policy diff.");
+      setIsWorking(false);
+      return;
     }
     setAssignments((prev) =>
       prev.map((a) =>
@@ -204,19 +122,13 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "24px", boxSizing: "border-box" }}>
-      {/* Header */}
-      <div style={{ marginBottom: "24px" }}>
-        <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: "4px" }}>
-          MSP Governance
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px" }}>
-          <h1 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>Policy Assignments</h1>
-          <button className="btn" onClick={handleSync} disabled={isSyncing}>
-            <RefreshCw size={14} className={isSyncing ? "spin" : ""} />
-            {isSyncing ? "Syncing…" : "Sync"}
-          </button>
-        </div>
+    <ConsolePage>
+      <PageHeader eyebrow="MSP Governance" title="Policy Assignments" />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "24px" }}>
+        <button className="btn" onClick={handleSync} disabled={isSyncing}>
+          <RefreshCw size={14} className={isSyncing ? "spin" : ""} />
+          {isSyncing ? "Syncing…" : "Sync"}
+        </button>
       </div>
 
       {error && <ErrorBanner message={error} />}
@@ -409,6 +321,6 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
           )}
         </div>
       </div>
-    </div>
+    </ConsolePage>
   );
 }

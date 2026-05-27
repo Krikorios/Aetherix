@@ -13,10 +13,10 @@ from app.main import app
 client = TestClient(app)
 
 
-def _create_policy(*, actor_id: str, name: str, partner_id: str, customer_id: str | None, modules: dict, parent_policy_id: str | None = None):
+def _create_policy(*, auth_headers, actor_id: str, name: str, partner_id: str, customer_id: str | None, modules: dict, parent_policy_id: str | None = None):
     response = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": actor_id},
+        headers=auth_headers(actor_id),
         json={
             "schema_version": "2.0",
             "name": name,
@@ -38,17 +38,17 @@ def _create_policy(*, actor_id: str, name: str, partner_id: str, customer_id: st
     return response.json()
 
 
-def _simulate_promote(*, actor_id: str, policy_id: str, approve: bool = True):
+def _simulate_promote(*, auth_headers, actor_id: str, policy_id: str, approve: bool = True):
     simulation = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": actor_id},
+        headers=auth_headers(actor_id),
     )
     assert simulation.status_code == 200, simulation.text
     sim_body = simulation.json()
 
     promote = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": actor_id},
+        headers=auth_headers(actor_id),
         json={
             "simulation_id": sim_body["id"],
             "operator_approved": approve,
@@ -58,11 +58,11 @@ def _simulate_promote(*, actor_id: str, policy_id: str, approve: bool = True):
     return sim_body, promote
 
 
-def test_flow_a_msp_creates_simulates_promotes_assigns_policy(policy_v2_templates, tenant_hierarchy_factory):
+def test_flow_a_msp_creates_simulates_promotes_assigns_policy(policy_v2_templates, tenant_hierarchy_factory, auth_headers):
     tenant = tenant_hierarchy_factory(addons=["semantic_dlp"])
     modules = deepcopy(policy_v2_templates["genai_focused"])
 
-    created = _create_policy(
+    created = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["msp_id"],
         name="Flow A MSP Policy",
         partner_id=tenant["partner_id"],
@@ -73,7 +73,7 @@ def test_flow_a_msp_creates_simulates_promotes_assigns_policy(policy_v2_template
 
     simulation = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": tenant["msp_id"]},
+        headers=auth_headers(tenant["msp_id"]),
     )
     assert simulation.status_code == 200, simulation.text
     sim = simulation.json()
@@ -82,7 +82,7 @@ def test_flow_a_msp_creates_simulates_promotes_assigns_policy(policy_v2_template
 
     promotion = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": tenant["msp_id"]},
+        headers=auth_headers(tenant["msp_id"]),
         json={
             "simulation_id": sim["id"],
             "operator_approved": True,
@@ -93,14 +93,14 @@ def test_flow_a_msp_creates_simulates_promotes_assigns_policy(policy_v2_template
 
     assign = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["msp_id"]},
+        headers=auth_headers(tenant["msp_id"]),
         json={"policy_id": policy_id, "customer_id": tenant["customer_id"]},
     )
     assert assign.status_code == 201, assign.text
 
     effective = client.get(
         f"/policies/effective?customer_id={tenant['customer_id']}",
-        headers={"X-Aetherix-Account": tenant["company_admin_id"]},
+        headers=auth_headers(tenant["company_admin_id"]),
     )
     assert effective.status_code == 200, effective.text
     resolved = effective.json()["resolved_policy"]["modules"]
@@ -121,10 +121,10 @@ def test_flow_a_msp_creates_simulates_promotes_assigns_policy(policy_v2_template
         assert int(cur.fetchone()["n"]) >= 5
 
 
-def test_flow_b_company_admin_creates_group_override_and_endpoint_inherits(policy_v2_templates, tenant_hierarchy_factory):
+def test_flow_b_company_admin_creates_group_override_and_endpoint_inherits(policy_v2_templates, tenant_hierarchy_factory, auth_headers):
     tenant = tenant_hierarchy_factory(addons=["semantic_dlp"])
 
-    base_policy = _create_policy(
+    base_policy = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["msp_id"],
         name="Flow B Base",
         partner_id=tenant["partner_id"],
@@ -132,12 +132,12 @@ def test_flow_b_company_admin_creates_group_override_and_endpoint_inherits(polic
         modules=deepcopy(policy_v2_templates["minimal"]),
     )
     base_policy_id = base_policy["policy"]["id"]
-    _, promote_base = _simulate_promote(actor_id=tenant["msp_id"], policy_id=base_policy_id, approve=True)
+    _, promote_base = _simulate_promote(auth_headers=auth_headers, actor_id=tenant["msp_id"], policy_id=base_policy_id, approve=True)
     assert promote_base.status_code == 200, promote_base.text
 
     assign_customer = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["msp_id"]},
+        headers=auth_headers(tenant["msp_id"]),
         json={"policy_id": base_policy_id, "customer_id": tenant["customer_id"]},
     )
     assert assign_customer.status_code == 201, assign_customer.text
@@ -145,7 +145,7 @@ def test_flow_b_company_admin_creates_group_override_and_endpoint_inherits(polic
     override_modules = deepcopy(policy_v2_templates["genai_focused"])
     override_modules["genai_guardrails"]["actions"]["copy_to_genai"] = "block"
 
-    override = _create_policy(
+    override = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["company_admin_id"],
         name="Flow B Group Override",
         partner_id=tenant["partner_id"],
@@ -157,13 +157,13 @@ def test_flow_b_company_admin_creates_group_override_and_endpoint_inherits(polic
 
     simulate_override = client.post(
         f"/policies/{override_policy_id}/simulate",
-        headers={"X-Aetherix-Account": tenant["company_admin_id"]},
+        headers=auth_headers(tenant["company_admin_id"]),
     )
     assert simulate_override.status_code == 200, simulate_override.text
 
     assign_group = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["company_admin_id"]},
+        headers=auth_headers(tenant["company_admin_id"]),
         json={
             "policy_id": override_policy_id,
             "policy_version": 1,
@@ -175,18 +175,18 @@ def test_flow_b_company_admin_creates_group_override_and_endpoint_inherits(polic
 
     effective = client.get(
         f"/policies/effective?endpoint_id={tenant['endpoint_id']}",
-        headers={"X-Aetherix-Account": tenant["company_admin_id"]},
+        headers=auth_headers(tenant["company_admin_id"]),
     )
     assert effective.status_code == 200, effective.text
     modules = effective.json()["resolved_policy"]["modules"]
     assert modules["genai_guardrails"]["actions"]["copy_to_genai"] == "block"
 
 
-def test_flow_c_agent_fetch_returns_effective_entitled_modules(policy_v2_templates, tenant_hierarchy_factory):
+def test_flow_c_agent_fetch_returns_effective_entitled_modules(policy_v2_templates, tenant_hierarchy_factory, auth_headers):
     tenant = tenant_hierarchy_factory(addons=[])
     modules = deepcopy(policy_v2_templates["minimal"])
 
-    created = _create_policy(
+    created = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["owner_id"],
         name="Flow C Agent Fetch",
         partner_id=tenant["partner_id"],
@@ -194,11 +194,12 @@ def test_flow_c_agent_fetch_returns_effective_entitled_modules(policy_v2_templat
         modules=modules,
     )
     policy_id = created["policy"]["id"]
-    _, promoted = _simulate_promote(actor_id=tenant["owner_id"], policy_id=policy_id, approve=True)
+    _, promoted = _simulate_promote(auth_headers=auth_headers, actor_id=tenant["owner_id"], policy_id=policy_id, approve=True)
     assert promoted.status_code == 200, promoted.text
 
     token_response = client.post(
         "/enrollment/tokens",
+        headers=auth_headers(tenant["owner_id"]),
         json={
             "partner_id": tenant["partner_id"],
             "customer_id": tenant["customer_id"],
@@ -222,7 +223,7 @@ def test_flow_c_agent_fetch_returns_effective_entitled_modules(policy_v2_templat
 
     assign_endpoint = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={"policy_id": policy_id, "endpoint_id": endpoint_id, "customer_id": tenant["customer_id"]},
     )
     assert assign_endpoint.status_code == 201, assign_endpoint.text
@@ -239,13 +240,13 @@ def test_flow_c_agent_fetch_returns_effective_entitled_modules(policy_v2_templat
     assert resolved["semantic_dlp"]["locked"] is True
 
 
-def test_flow_d_destructive_gate_requires_simulation_and_approval(policy_v2_templates, tenant_hierarchy_factory):
+def test_flow_d_destructive_gate_requires_simulation_and_approval(policy_v2_templates, tenant_hierarchy_factory, auth_headers):
     tenant = tenant_hierarchy_factory(addons=["semantic_dlp"])
     modules = deepcopy(policy_v2_templates["strict"])
     modules["semantic_dlp"]["enabled"] = True
     modules["genai_guardrails"]["enabled"] = True
 
-    created = _create_policy(
+    created = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["owner_id"],
         name="Flow D Gate",
         partner_id=tenant["partner_id"],
@@ -256,7 +257,7 @@ def test_flow_d_destructive_gate_requires_simulation_and_approval(policy_v2_temp
 
     no_sim = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={"simulation_id": str(uuid.uuid4()), "operator_approved": True, "approval_reason": "manual"},
     )
     assert no_sim.status_code == 400
@@ -264,7 +265,7 @@ def test_flow_d_destructive_gate_requires_simulation_and_approval(policy_v2_temp
 
     sim = client.post(
         f"/policies/{policy_id}/simulate",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
     )
     assert sim.status_code == 200, sim.text
     sim_body = sim.json()
@@ -272,14 +273,14 @@ def test_flow_d_destructive_gate_requires_simulation_and_approval(policy_v2_temp
 
     denied = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={"simulation_id": sim_body["id"], "operator_approved": False},
     )
     assert denied.status_code == 400
 
     approved = client.post(
         f"/policies/{policy_id}/promote",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={
             "simulation_id": sim_body["id"],
             "operator_approved": True,
@@ -301,7 +302,7 @@ def test_flow_d_destructive_gate_requires_simulation_and_approval(policy_v2_temp
         assert int(cur.fetchone()["n"]) >= 1
 
 
-def test_edge_cases_invalid_json_schema_and_agent_token_rejected(policy_v2_templates, tenant_hierarchy_factory):
+def test_edge_cases_invalid_json_schema_and_agent_token_rejected(policy_v2_templates, tenant_hierarchy_factory, auth_headers):
     tenant = tenant_hierarchy_factory(addons=["semantic_dlp"])
     broken = deepcopy(policy_v2_templates["minimal"])
     broken["semantic_dlp"]["enabled"] = True
@@ -309,7 +310,7 @@ def test_edge_cases_invalid_json_schema_and_agent_token_rejected(policy_v2_templ
 
     response = client.post(
         "/policies",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={
             "schema_version": "2.0",
             "name": "Broken Semantic Config",
@@ -329,10 +330,10 @@ def test_edge_cases_invalid_json_schema_and_agent_token_rejected(policy_v2_templ
     assert invalid_agent.status_code == 401
 
 
-def test_edge_case_deep_inheritance_and_full_simulation_performance(policy_v2_templates, tenant_hierarchy_factory):
+def test_edge_case_deep_inheritance_and_full_simulation_performance(policy_v2_templates, tenant_hierarchy_factory, auth_headers):
     tenant = tenant_hierarchy_factory(addons=["semantic_dlp"])
 
-    global_policy = _create_policy(
+    global_policy = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["owner_id"],
         name="Global Base",
         partner_id=tenant["partner_id"],
@@ -340,11 +341,11 @@ def test_edge_case_deep_inheritance_and_full_simulation_performance(policy_v2_te
         modules=deepcopy(policy_v2_templates["minimal"]),
     )
     global_policy_id = global_policy["policy"]["id"]
-    _, promoted_global = _simulate_promote(actor_id=tenant["owner_id"], policy_id=global_policy_id, approve=True)
+    _, promoted_global = _simulate_promote(auth_headers=auth_headers, actor_id=tenant["owner_id"], policy_id=global_policy_id, approve=True)
     assert promoted_global.status_code == 200
 
     customer_override_modules = deepcopy(policy_v2_templates["genai_focused"])
-    customer_override = _create_policy(
+    customer_override = _create_policy(auth_headers=auth_headers, 
         actor_id=tenant["owner_id"],
         name="Customer Override",
         partner_id=tenant["partner_id"],
@@ -357,30 +358,31 @@ def test_edge_case_deep_inheritance_and_full_simulation_performance(policy_v2_te
     start = time.perf_counter()
     sim = client.post(
         f"/policies/{customer_policy_id}/simulate",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
     )
     elapsed = time.perf_counter() - start
     assert sim.status_code == 200, sim.text
     assert elapsed < 0.5
 
-    _, promoted_customer = _simulate_promote(actor_id=tenant["owner_id"], policy_id=customer_policy_id, approve=True)
+    _, promoted_customer = _simulate_promote(auth_headers=auth_headers, actor_id=tenant["owner_id"], policy_id=customer_policy_id, approve=True)
     assert promoted_customer.status_code == 200
 
     assign_partner = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={"policy_id": global_policy_id, "partner_id": tenant["partner_id"]},
     )
     assert assign_partner.status_code == 201, assign_partner.text
 
     assign_customer = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={"policy_id": customer_policy_id, "customer_id": tenant["customer_id"]},
     )
     assert assign_customer.status_code == 201, assign_customer.text
 
     endpoint_policy = _create_policy(
+        auth_headers=auth_headers,
         actor_id=tenant["owner_id"],
         name="Endpoint Tightening",
         partner_id=tenant["partner_id"],
@@ -389,19 +391,19 @@ def test_edge_case_deep_inheritance_and_full_simulation_performance(policy_v2_te
         parent_policy_id=customer_policy_id,
     )
     endpoint_policy_id = endpoint_policy["policy"]["id"]
-    _, promoted_endpoint = _simulate_promote(actor_id=tenant["owner_id"], policy_id=endpoint_policy_id, approve=True)
+    _, promoted_endpoint = _simulate_promote(auth_headers=auth_headers, actor_id=tenant["owner_id"], policy_id=endpoint_policy_id, approve=True)
     assert promoted_endpoint.status_code == 200
 
     assign_endpoint = client.post(
         "/policies/assign",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
         json={"policy_id": endpoint_policy_id, "endpoint_id": tenant["endpoint_id"], "customer_id": tenant["customer_id"]},
     )
     assert assign_endpoint.status_code == 201, assign_endpoint.text
 
     effective = client.get(
         f"/policies/effective?endpoint_id={tenant['endpoint_id']}",
-        headers={"X-Aetherix-Account": tenant["owner_id"]},
+        headers=auth_headers(tenant["owner_id"]),
     )
     assert effective.status_code == 200, effective.text
     assert len(effective.json()["assignments_applied"]) >= 3

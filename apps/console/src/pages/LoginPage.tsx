@@ -1,7 +1,8 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { KeyRound, Mail, ShieldCheck } from "lucide-react";
+import QRCode from "qrcode";
 
-import { apiGet, apiPost, setAccountId, type MeResponse } from "../api";
+import { apiGet, apiPost, setAccessToken, type MeResponse } from "../api";
 
 const DEFAULT_TAGLINE = "Sign in to your workspace";
 
@@ -12,6 +13,13 @@ type TotpChallenge = {
   otpauth_url?: string | null;
   secret?: string | null;
   issuer?: string | null;
+};
+
+type LoginResult = {
+  access_token: string;
+  token_type: "Bearer";
+  expires_at: string;
+  me: MeResponse;
 };
 
 type Step = "credentials" | "totp";
@@ -26,8 +34,42 @@ export function LoginPage({
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [challenge, setChallenge] = useState<TotpChallenge | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const uri = challenge?.status === "totp_setup_required" ? challenge.otpauth_url : null;
+    if (!uri) {
+      setQrDataUrl(null);
+      setQrError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setQrDataUrl(null);
+    setQrError(null);
+    QRCode.toDataURL(uri, {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 192,
+      color: {
+        dark: "#111827",
+        light: "#ffffff",
+      },
+    })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setQrError("QR code failed to render. Enter the secret manually instead.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [challenge]);
 
   async function handleCredentials(event: FormEvent) {
     event.preventDefault();
@@ -36,8 +78,8 @@ export function LoginPage({
     if (!trimmedEmail || !password) return;
     setSubmitting(true);
     try {
-      // /auth/login is unauthenticated — clear any stale account header.
-      setAccountId(null);
+      // /auth/login is unauthenticated — clear any stale credentials.
+      setAccessToken(null);
       const result = await apiPost<TotpChallenge>("/auth/login", {
         email: trimmedEmail,
         password,
@@ -59,20 +101,20 @@ export function LoginPage({
     if (!trimmedCode) return;
     setSubmitting(true);
     try {
-      const me = await apiPost<MeResponse>("/auth/totp/verify", {
+      const result = await apiPost<LoginResult>("/auth/totp/verify", {
         challenge_id: challenge.challenge_id,
         code: trimmedCode,
       });
-      // Persist the resolved account id so subsequent requests carry the
-      // X-Aetherix-Account header expected by the API.
-      setAccountId(me.account.id);
+      // Persist the bearer token first so the follow-up /me call is
+      // authenticated.
+      setAccessToken(result.access_token);
       // Confirm the session is usable end-to-end before transitioning.
       try {
         await apiGet<MeResponse>("/me");
       } catch {
         // Non-fatal — the verify response is authoritative.
       }
-      onAuthenticated(me);
+      onAuthenticated(result.me);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -154,14 +196,24 @@ export function LoginPage({
             </p>
 
             {challenge?.status === "totp_setup_required" && challenge.otpauth_url ? (
-              <div className="loginField">
-                <span>Authenticator setup</span>
-                <code style={{ wordBreak: "break-all", fontSize: 12 }}>
-                  {challenge.otpauth_url}
-                </code>
-                {challenge.secret ? (
-                  <small className="muted">Secret: <code>{challenge.secret}</code></small>
-                ) : null}
+              <div className="totpSetup">
+                <div className="totpQr" aria-label="Authenticator QR code">
+                  {qrDataUrl ? (
+                    <img src={qrDataUrl} alt="Scan this QR code with your authenticator app" />
+                  ) : (
+                    <span className="totpQrPlaceholder">Generating QR…</span>
+                  )}
+                </div>
+                <div className="totpSecret">
+                  <span className="totpSecretLabel">Manual setup key</span>
+                  {challenge.secret ? (
+                    <code className="totpSecretValue">{challenge.secret}</code>
+                  ) : null}
+                  <span className="totpSecretHint">
+                    Scan the QR code. If scanning fails, add an account manually using this setup key.
+                  </span>
+                  {qrError ? <span className="totpSecretHint">{qrError}</span> : null}
+                </div>
               </div>
             ) : null}
 

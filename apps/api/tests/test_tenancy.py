@@ -205,16 +205,16 @@ def test_me_requires_account_header():
     assert response.status_code == 401
 
 
-def test_me_returns_permissions_and_scope():
+def test_me_returns_permissions_and_scope(auth_headers):
     owner_id = _platform_owner()
-    response = client.get("/me", headers={"X-Aetherix-Account": owner_id})
+    response = client.get("/me", headers=auth_headers(owner_id))
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["permissions"]["companies"] == "manage"
     assert body["scope"]["is_platform"] is True
 
 
-def test_accounts_endpoint_blocks_low_privilege_caller():
+def test_accounts_endpoint_blocks_low_privilege_caller(auth_headers):
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
     viewer = tenancy.create_account(
@@ -227,16 +227,16 @@ def test_accounts_endpoint_blocks_low_privilege_caller():
         )
     )
     response = client.get(
-        "/accounts", headers={"X-Aetherix-Account": str(viewer.id)}
+        "/accounts", headers=auth_headers(str(viewer.id))
     )
     assert response.status_code == 403
 
 
-def test_accounts_create_via_api():
+def test_accounts_create_via_api(auth_headers):
     owner_id = _platform_owner()
     response = client.post(
         "/accounts",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"email": "new@example.com", "full_name": "New User"},
     )
     assert response.status_code == 201, response.text
@@ -248,11 +248,11 @@ def test_accounts_create_via_api():
     assert body["invite_url"] is None
 
 
-def test_accounts_create_with_link_delivery_returns_invite_url():
+def test_accounts_create_with_link_delivery_returns_invite_url(auth_headers):
     owner_id = _platform_owner()
     response = client.post(
         "/accounts",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={
             "email": "link-invite@example.com",
             "full_name": "Link Invite",
@@ -284,7 +284,7 @@ def test_accounts_create_with_link_delivery_returns_invite_url():
     assert second.status_code == 400
 
 
-def test_assign_role_via_api():
+def test_assign_role_via_api(auth_headers):
     owner_id = _platform_owner()
     target = tenancy.create_account(
         AccountCreate(email="target@example.com", full_name="Target")
@@ -293,7 +293,7 @@ def test_assign_role_via_api():
     customer_id = _make_customer(partner_id)
     response = client.post(
         f"/accounts/{target.id}/roles",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"role_code": "company_admin", "customer_id": str(customer_id)},
     )
     assert response.status_code == 201, response.text
@@ -302,7 +302,7 @@ def test_assign_role_via_api():
     assert assignment["customer_id"] == str(customer_id)
 
 
-def test_delete_account_removes_account_and_roles():
+def test_delete_account_removes_account_and_roles(auth_headers):
     owner_id = _platform_owner()
     target = tenancy.create_account(
         AccountCreate(email="delete-me@example.com", full_name="Delete Me")
@@ -317,7 +317,7 @@ def test_delete_account_removes_account_and_roles():
 
     response = client.delete(
         f"/accounts/{target.id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 204, response.text
     assert tenancy.get_account(target.id) is None
@@ -330,26 +330,26 @@ def test_delete_account_removes_account_and_roles():
         assert cur.fetchone()["n"] == 0
 
 
-def test_delete_account_blocks_self_delete():
+def test_delete_account_blocks_self_delete(auth_headers):
     owner_id = _platform_owner()
     response = client.delete(
         f"/accounts/{owner_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 400
     assert tenancy.get_account(uuid.UUID(owner_id)) is not None
 
 
-def test_delete_account_returns_404_for_unknown_id():
+def test_delete_account_returns_404_for_unknown_id(auth_headers):
     owner_id = _platform_owner()
     response = client.delete(
         f"/accounts/{uuid.uuid4()}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 404
 
 
-def test_bulk_delete_accounts_reports_successes_and_self_delete_failure():
+def test_bulk_delete_accounts_reports_successes_and_self_delete_failure(auth_headers):
     owner_id = _platform_owner()
     first = tenancy.create_account(
         AccountCreate(email="bulk-delete-1@example.com", full_name="Bulk One")
@@ -360,7 +360,7 @@ def test_bulk_delete_accounts_reports_successes_and_self_delete_failure():
 
     response = client.post(
         "/accounts/bulk-delete",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
         json={"ids": [str(first.id), owner_id, str(second.id)]},
     )
     assert response.status_code == 200, response.text
@@ -374,7 +374,7 @@ def test_bulk_delete_accounts_reports_successes_and_self_delete_failure():
     assert tenancy.get_account(uuid.UUID(owner_id)) is not None
 
 
-def test_delete_company_purges_children():
+def test_delete_company_purges_children(auth_headers):
     owner_id = _platform_owner()
     partner_id = _make_partner()
     customer_id = _make_customer(partner_id)
@@ -403,7 +403,7 @@ def test_delete_company_purges_children():
 
     response = client.delete(
         f"/companies/{customer_id}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 204, response.text
 
@@ -422,10 +422,10 @@ def test_delete_company_purges_children():
         assert cur.fetchone()["n"] == 0
 
 
-def test_delete_company_returns_404_for_unknown_id():
+def test_delete_company_returns_404_for_unknown_id(auth_headers):
     owner_id = _platform_owner()
     response = client.delete(
         f"/companies/{uuid.uuid4()}",
-        headers={"X-Aetherix-Account": owner_id},
+        headers=auth_headers(owner_id),
     )
     assert response.status_code == 404
