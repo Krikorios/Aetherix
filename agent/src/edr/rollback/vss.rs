@@ -478,6 +478,150 @@ impl VssRollbackProvider {
         }
     }
 
+    fn locate_verified_shadow<'a>(
+        shadow_copies: &'a [ShadowCopyInfo],
+        recovery_point_id: &str,
+    ) -> Result<&'a ShadowCopyInfo, String> {
+        let shadow = shadow_copies
+            .iter()
+            .find(|shadow| shadow.id == recovery_point_id)
+            .ok_or_else(|| "recovery_point_not_found".to_string())?;
+
+        if !shadow.verified {
+            return Err("recovery_point_unverified".to_string());
+        }
+
+        Ok(shadow)
+    }
+
+    fn restore_candidate_path(shadow: &ShadowCopyInfo, decision: RollbackPathDecision) -> RollbackPathDecision {
+        if decision.outcome != RollbackPathOutcome::Restored {
+            return decision;
+        }
+
+        let Some(snapshot_path) = Self::shadow_path_for_live_path(shadow, &decision.path) else {
+            return RollbackPathDecision {
+                path: decision.path,
+                outcome: RollbackPathOutcome::RefusedOutOfScope,
+                reason: format!("path not under protected root {}", shadow.protected_root),
+                bytes_affected: 0,
+                hash_before: decision.hash_before,
+                hash_after: decision.hash_after,
+                metadata_diff: decision.metadata_diff,
+            };
+        };
+
+        if let Some(parent) = std::path::Path::new(&decision.path).parent() {
+            if let Err(err) = fs::create_dir_all(parent) {
+                return RollbackPathDecision {
+                    path: decision.path,
+                    outcome: RollbackPathOutcome::FailedIntegrity,
+                    reason: format!("create_parent_failed: {err}"),
+                    bytes_affected: 0,
+                    hash_before: decision.hash_before,
+                    hash_after: decision.hash_after,
+                    metadata_diff: decision.metadata_diff,
+                };
+            }
+        }
+
+        let snapshot_hash = decision
+            .hash_before
+            .clone()
+            .or_else(|| Self::hash_file(&snapshot_path).ok());
+
+        let bytes_copied = match fs::copy(&snapshot_path, &decision.path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                return RollbackPathDecision {
+                    path: decision.path,
+                    outcome: RollbackPathOutcome::FailedIntegrity,
+                    reason: format!("copy_from_shadow_failed: {err}"),
+                    bytes_affected: 0,
+                    hash_before: snapshot_hash,
+                    hash_after: decision.hash_after,
+                    metadata_diff: decision.metadata_diff,
+                };
+            }
+        };
+
+        let live_hash = match Self::hash_file(&decision.path) {
+            Ok(hash) => hash,
+            Err(err) => {
+                return RollbackPathDecision {
+                    path: decision.path,
+                    outcome: RollbackPathOutcome::FailedIntegrity,
+                    reason: format!("post_restore_hash_failed: {err}"),
+                    bytes_affected: bytes_copied,
+                    hash_before: snapshot_hash,
+                    hash_after: None,
+                    metadata_diff: decision.metadata_diff,
+                };
+            }
+        };
+
+        if snapshot_hash.as_deref() != Some(live_hash.as_str()) {
+            return RollbackPathDecision {
+                path: decision.path,
+                outcome: RollbackPathOutcome::FailedIntegrity,
+                reason: "post_restore_hash_mismatch".to_string(),
+                bytes_affected: bytes_copied,
+                hash_before: snapshot_hash,
+                hash_after: Some(live_hash),
+                metadata_diff: decision.metadata_diff,
+            };
+        }
+
+        let mut metadata_diff = decision.metadata_diff.unwrap_or_default();
+        metadata_diff.push("copied_from_vss_shadow".to_string());
+
+        RollbackPathDecision {
+            path: decision.path,
+            outcome: RollbackPathOutcome::Restored,
+            reason: "restored_from_vss_shadow".to_string(),
+            bytes_affected: bytes_copied,
+            hash_before: snapshot_hash,
+            hash_after: Some(live_hash),
+            metadata_diff: Some(metadata_diff),
+        }
+    }
+
+    fn unavailable_restore_evidence(
+        candidates: &RollbackCandidateSet,
+        approved_action_id: &str,
+        reason: impl Into<String>,
+        decision_trace: Vec<String>,
+        skipped_paths: Vec<RollbackPathDecision>,
+    ) -> RollbackEvidence {
+        let reason = reason.into();
+        RollbackEvidence {
+            status: "not_applicable".to_string(),
+            decision_trace,
+            evidence_controls: vec![],
+            endpoint_id: String::new(),
+            customer_id: None,
+            policy_version: String::new(),
+            requester_id: String::new(),
+            approver_ids: vec![],
+            simulation_id: String::new(),
+            candidate_set_hash: candidates.candidate_set_hash.clone(),
+            approved_action_id: approved_action_id.to_string(),
+            provider: "vss".to_string(),
+            recovery_point_id: candidates.recovery_point_id.clone(),
+            recovery_point_created_at: String::new(),
+            recovery_point_expires_at: None,
+            recovery_point_verified: false,
+            metadata_preserved: None,
+            provider_refusal: Some(reason),
+            restored_paths: vec![],
+            failed_paths: vec![],
+            skipped_paths,
+            provider_version: "1.0.0".to_string(),
+            os_platform: "windows".to_string(),
+            privilege_context: "SeBackupPrivilege+SeRestorePrivilege".to_string(),
+        }
+    }
+
     fn check_privilege(name: &str) -> (bool, String) {
         unsafe {
             let mut token: HANDLE = HANDLE::default();
@@ -794,10 +938,108 @@ impl RollbackProvider for VssRollbackProvider {
         candidates: &RollbackCandidateSet,
         approved_action_id: &str,
     ) -> anyhow::Result<RollbackEvidence> {
-        // Kept as no-op/unavailable for this slice
+        let volumes = Self::discover_volumes();
+        let shadow_copies = match Self::enumerate_shadow_copies(&volumes) {
+            Ok(shadows) => shadows,
+            Err(err) => {
+                let skipped_paths = candidates
+                    .paths
+                    .iter()
+                    .map(|path| Self::refusal_decision(path, format!("recovery_point_enumeration_failed: {err}")))
+                    .collect();
+                return Ok(Self::unavailable_restore_evidence(
+                    candidates,
+                    approved_action_id,
+                    format!("provider_unavailable: recovery_point_enumeration_failed: {err}"),
+                    vec![format!("vss restore failed to enumerate recovery points: {err}")],
+                    skipped_paths,
+                ));
+            }
+        };
+
+        let shadow = match Self::locate_verified_shadow(&shadow_copies, &candidates.recovery_point_id) {
+            Ok(shadow) => shadow,
+            Err(reason) => {
+                let skipped_paths = candidates
+                    .paths
+                    .iter()
+                    .map(|path| Self::refusal_decision(path, reason.clone()))
+                    .collect();
+                return Ok(Self::unavailable_restore_evidence(
+                    candidates,
+                    approved_action_id,
+                    reason.clone(),
+                    vec![format!(
+                        "vss restore recovery_point_id={} refused: {}",
+                        candidates.recovery_point_id, reason
+                    )],
+                    skipped_paths,
+                ));
+            }
+        };
+
+        let decisions: Vec<RollbackPathDecision> = candidates
+            .paths
+            .iter()
+            .map(|path| Self::assess_candidate_path(shadow, path, candidates.max_depth))
+            .collect();
+
+        let mut restored_paths = Vec::new();
+        let mut failed_paths = Vec::new();
+        let mut skipped_paths = Vec::new();
+
+        for decision in decisions {
+            match decision.outcome {
+                RollbackPathOutcome::Restored => {
+                    let restored = Self::restore_candidate_path(shadow, decision);
+                    match restored.outcome {
+                        RollbackPathOutcome::Restored => restored_paths.push(restored),
+                        RollbackPathOutcome::FailedIntegrity => failed_paths.push(restored),
+                        RollbackPathOutcome::Skipped | RollbackPathOutcome::RefusedOutOfScope => {
+                            skipped_paths.push(restored)
+                        }
+                    }
+                }
+                RollbackPathOutcome::FailedIntegrity => failed_paths.push(decision),
+                RollbackPathOutcome::Skipped | RollbackPathOutcome::RefusedOutOfScope => {
+                    skipped_paths.push(decision)
+                }
+            }
+        }
+
+        Self::emit_diagnostic(
+            "restore",
+            serde_json::json!({
+                "approved_action_id": approved_action_id,
+                "recovery_point_id": candidates.recovery_point_id,
+                "candidate_count": candidates.paths.len(),
+                "restored_count": restored_paths.len(),
+                "failed_count": failed_paths.len(),
+                "skipped_count": skipped_paths.len(),
+            }),
+        );
+
+        let status = if restored_paths.is_empty() && failed_paths.is_empty() {
+            "not_applicable"
+        } else if restored_paths.is_empty() && !failed_paths.is_empty() {
+            "failed"
+        } else {
+            "executed"
+        };
+
         Ok(RollbackEvidence {
-            status: "not_applicable".to_string(),
-            decision_trace: vec!["vss provider: restore is unavailable in this slice".to_string()],
+            status: status.to_string(),
+            decision_trace: vec![
+                format!(
+                    "vss restore: restored={}, failed={}, skipped={}",
+                    restored_paths.len(),
+                    failed_paths.len(),
+                    skipped_paths.len()
+                ),
+                format!("approved_action_id={approved_action_id}"),
+                format!("recovery_point_id={}", candidates.recovery_point_id),
+                format!("protected_root={}", shadow.protected_root),
+            ],
             evidence_controls: vec![],
             endpoint_id: String::new(),
             customer_id: None,
@@ -809,14 +1051,14 @@ impl RollbackProvider for VssRollbackProvider {
             approved_action_id: approved_action_id.to_string(),
             provider: "vss".to_string(),
             recovery_point_id: candidates.recovery_point_id.clone(),
-            recovery_point_created_at: String::new(),
+            recovery_point_created_at: shadow.created_at.clone(),
             recovery_point_expires_at: None,
-            recovery_point_verified: false,
-            metadata_preserved: None,
-            provider_refusal: Some("provider_unavailable: vss provider restore is unavailable in this slice".to_string()),
-            restored_paths: vec![],
-            failed_paths: vec![],
-            skipped_paths: vec![],
+            recovery_point_verified: shadow.verified,
+            metadata_preserved: Some(false),
+            provider_refusal: None,
+            restored_paths,
+            failed_paths,
+            skipped_paths,
             provider_version: "1.0.0".to_string(),
             os_platform: "windows".to_string(),
             privilege_context: "SeBackupPrivilege+SeRestorePrivilege".to_string(),
@@ -1130,8 +1372,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vss_restore_method_remains_unavailable() {
-        let provider = VssRollbackProvider::new();
+    fn unavailable_restore_evidence_preserves_refusal_shape() {
         let scope = RollbackScope {
             incident_id: "test-inc".to_string(),
             detector_rule_id: "test-rule".to_string(),
@@ -1148,8 +1389,21 @@ mod tests {
             candidate_set_hash: "hash".to_string(),
         };
 
-        let evidence = provider.restore(&candidates, "action-1").unwrap();
+        let evidence = VssRollbackProvider::unavailable_restore_evidence(
+            &candidates,
+            "action-1",
+            "recovery_point_not_found",
+            vec!["trace".to_string()],
+            vec![VssRollbackProvider::refusal_decision(
+                "C:\\test",
+                "recovery_point_not_found",
+            )],
+        );
+
         assert_eq!(evidence.status, "not_applicable");
+        assert_eq!(evidence.provider, "vss");
+        assert_eq!(evidence.provider_refusal.as_deref(), Some("recovery_point_not_found"));
+        assert_eq!(evidence.skipped_paths.len(), 1);
     }
 
     #[test]

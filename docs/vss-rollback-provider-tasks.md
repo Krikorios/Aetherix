@@ -8,12 +8,16 @@
 
 ## Next
 
-- Implement approved `restore()` using `CopyFileExW` plus metadata preservation evidence.
+- Harden approved `restore()` with Windows-native `CopyFileExW` plus full metadata preservation evidence.
 - Add Windows integration tests with pre-created VSS shadows and sample encrypted/deleted files.
 - Coordinate a richer simulation schema if the backend/console needs explicit restorable-path details instead of only `restorable_count` plus skipped/refused path decisions.
+
+## In Progress
+
+- Slice 4: Initial approved restore copy-out using the same verified VSS shadow path mapping and per-path safety decisions as simulation. This first restore slice uses `std::fs::copy` and post-copy SHA-256 verification; ACL/ADS/timestamp preservation remains for the Windows-native `CopyFileExW` hardening pass.
 
 ## Gating
 
 - VSS code remains under `#[cfg(windows)]`.
 - Non-Windows builds continue to use `NoopRollbackProvider`.
-- Restore paths remain unavailable until copy-out safety checks land.
+- Restore refuses missing/unverified recovery points and skips paths that simulation would not mark restorable.

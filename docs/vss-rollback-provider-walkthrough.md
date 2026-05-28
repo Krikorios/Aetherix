@@ -6,6 +6,7 @@
 2. `probe()` checks VSS service state, privileges, eligible volumes, and verified shadow-copy count.
 3. `list_recovery_points(scope)` queries `Win32_ShadowCopy`, maps shadows into `RecoveryPoint[]`, filters unverified/expired points, and limits results to matching protected roots.
 4. `simulate_restore(candidates)` remains non-mutating and reads from the VSS shadow device path only to decide whether each candidate is restorable, unchanged, missing from the snapshot, unsafe to overwrite, or integrity-blocked.
+5. `restore(candidates, approved_action_id)` starts the approved copy-out path for files that simulation marks restorable, copies from the VSS shadow device path, and verifies the copied file hash before reporting success.
 
 ## Manual Windows Check
 
@@ -37,7 +38,31 @@
 - `hash_after`: SHA-256 of the live file when readable.
 - `metadata_diff`: optional strings such as `live_missing`, `live_modified_after_recovery_point`, or `size:<live>-<snapshot>`.
 
+## Restore Evidence Shape
+
+`restore()` returns the existing `RollbackEvidence` shape:
+
+- `status`: `executed`, `failed`, or `not_applicable`.
+- `decision_trace`: includes restored/failed/skipped counts, `approved_action_id`, `recovery_point_id`, and protected root.
+- `candidate_set_hash`: copied from the approved candidate set.
+- `approved_action_id`: copied from the remote action.
+- `provider`: `vss`.
+- `recovery_point_id`: selected VSS shadow copy ID.
+- `recovery_point_created_at`: VSS `InstallDate` normalized to RFC3339.
+- `recovery_point_expires_at`: `null` for VSS.
+- `recovery_point_verified`: `true` only for verified shadow copies.
+- `metadata_preserved`: currently `false` because ACL/ADS/timestamp preservation is not complete in this slice.
+- `provider_refusal`: set for missing/unverified recovery points or enumeration failure.
+- `restored_paths`: per-path `RollbackPathDecision` with `outcome=restored`, `reason=restored_from_vss_shadow`, `hash_before` as the snapshot SHA-256, `hash_after` as the post-copy live SHA-256, and `metadata_diff` including `copied_from_vss_shadow`.
+- `failed_paths`: per-path integrity or copy failures, including `copy_from_shadow_failed`, `post_restore_hash_failed`, or `post_restore_hash_mismatch`.
+- `skipped_paths`: unchanged files, unsafe overwrites, missing snapshot paths, protected-root refusals, and depth refusals.
+- `provider_version`: `1.0.0`.
+- `os_platform`: `windows`.
+- `privilege_context`: `SeBackupPrivilege+SeRestorePrivilege`.
+
+Restore diagnostics are emitted as JSON lines on stderr with `provider="vss"`, `event="restore"`, `approved_action_id`, `recovery_point_id`, and restored/failed/skipped counts.
+
 ## Not Yet Enabled
 
-- `restore()` still returns `not_applicable` with provider refusal text.
+- Full Windows-native metadata preservation through `CopyFileExW`, ACL, alternate data stream, and timestamp handling.
 - APFS and Btrfs/LVM providers remain future provider work.
