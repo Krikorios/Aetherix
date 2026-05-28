@@ -1228,6 +1228,23 @@ def _resolve_endpoint_or_404(endpoint_id: str) -> UUID | None:
     return row["customer_id"] if row.get("customer_id") else None
 
 
+def _latest_rollback_readiness_snapshot(endpoint_id: str) -> dict[str, Any] | None:
+    """Return the latest persisted rollback_readiness for an endpoint.
+
+    Stored as part of the heartbeat payload so operator-queued rollback
+    evidence can carry the same readiness context into compliance exports.
+    """
+
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select payload->'rollback_readiness' as rollback_readiness from heartbeats where agent_id = %s",
+            (endpoint_id,),
+        )
+        row = cur.fetchone()
+    readiness = row.get("rollback_readiness") if row else None
+    return readiness if isinstance(readiness, dict) else None
+
+
 @app.post("/endpoints/{endpoint_id}/quarantine-list", response_model=ModuleActionResult)
 def request_endpoint_quarantine_list(
     endpoint_id: str,
@@ -1560,6 +1577,9 @@ def queue_rollback_restore(
     if customer_id is not None:
         _require_customer_access(customer_id, account, "incidents", "edit")
 
+    rollback_readiness = _latest_rollback_readiness_snapshot(endpoint_id)
+    provider_metadata = payload.provider_metadata if payload.provider_metadata is not None else None
+
     approval_required = payload.severity_hint in {"high", "critical"}
     action_payload: dict[str, Any] = {
         "simulation_id": payload.simulation_id,
@@ -1569,8 +1589,10 @@ def queue_rollback_restore(
         "provider": payload.provider,
         "severity_hint": payload.severity_hint,
     }
-    if payload.provider_metadata:
-        action_payload["provider_metadata"] = payload.provider_metadata
+    if provider_metadata is not None:
+        action_payload["provider_metadata"] = provider_metadata
+    if rollback_readiness is not None:
+        action_payload["rollback_readiness"] = rollback_readiness
     if payload.reason:
         action_payload["reason"] = payload.reason
 
@@ -1602,10 +1624,11 @@ def queue_rollback_restore(
             "candidate_set_hash": payload.candidate_set_hash,
             "recovery_point_id": payload.recovery_point_id,
             "provider": payload.provider,
-            "provider_metadata": payload.provider_metadata or None,
+            "provider_metadata": provider_metadata,
             "severity_hint": payload.severity_hint,
             "approval_required": approval_required,
             "reason": payload.reason or None,
+            "rollback_readiness": rollback_readiness,
         },
     )
     return result
@@ -1643,8 +1666,12 @@ def queue_rollback_intent(
     if customer_id is not None:
         _require_customer_access(customer_id, account, "incidents", "edit")
 
+    rollback_readiness = _latest_rollback_readiness_snapshot(endpoint_id)
+
     approval_required = payload.severity_hint in {"high", "critical"}
     action_payload = payload.model_dump(mode="json")
+    if rollback_readiness is not None:
+        action_payload["rollback_readiness"] = rollback_readiness
     result = _module_action(
         endpoint_id,
         "rollback_intent",
@@ -1673,10 +1700,11 @@ def queue_rollback_intent(
             "candidate_set_hash": payload.candidate_set_hash,
             "recovery_point_id": payload.recovery_point_id,
             "provider": payload.provider,
-            "provider_metadata": payload.provider_metadata or None,
+            "provider_metadata": payload.provider_metadata,
             "severity_hint": payload.severity_hint,
             "valid_until": payload.valid_until.isoformat(),
             "approval_required": approval_required,
+            "rollback_readiness": rollback_readiness,
         },
     )
     return result

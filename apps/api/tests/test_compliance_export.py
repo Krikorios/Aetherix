@@ -28,8 +28,16 @@ def _enroll_agent(agent_id: str, customer_id: uuid.UUID) -> None:
         )
 
 
-def _heartbeat_signature(agent_id: str, collected_at: str, nonce: int) -> str:
-    message = f"{agent_id}|vss-guard-host|windows|{collected_at}|policy-vss-guard|{nonce}"
+def _heartbeat_signature(
+    agent_id: str,
+    collected_at: str,
+    nonce: int,
+    *,
+    hostname: str = "vss-guard-host",
+    os_name: str = "windows",
+    policy_version: str = "policy-vss-guard",
+) -> str:
+    message = f"{agent_id}|{hostname}|{os_name}|{collected_at}|{policy_version}|{nonce}"
     return hmac.new(b"e2e-endpoint-secret", message.encode(), hashlib.sha256).hexdigest()
 
 
@@ -56,7 +64,7 @@ def _make_customer() -> uuid.UUID:
 
 
 def _load_vss_fixture() -> dict[str, object]:
-    fixture_path = Path(__file__).resolve().parents[3] / "apps/console/src/test/fixtures/vss-smoke.json"
+    fixture_path = Path(__file__).resolve().parents[3] / "apps/api/tests/fixtures/vss_readiness_pending_inbox_export.json"
     return json.loads(fixture_path.read_text())
 
 
@@ -406,9 +414,9 @@ def test_vss_provider_metadata_survives_export_and_pending_inbox(auth_headers) -
     collected_at = datetime.now(UTC).isoformat()
 
     fixture = _load_vss_fixture()
-    vss_metadata = fixture["provider_metadata"]
     readiness = fixture["rollback_readiness"]
     request_payload = fixture["rollback_restore_request"]
+    vss_metadata = request_payload["provider_metadata"]
 
     heartbeat = client.post(
         "/agent/heartbeat",
@@ -454,3 +462,144 @@ def test_vss_provider_metadata_survives_export_and_pending_inbox(auth_headers) -
     )
     assert evidence_item["payload"]["provider"] == "vss"
     assert evidence_item["payload"]["provider_metadata"] == vss_metadata
+
+
+def test_vss_metadata_guard_smoke_pending_to_export(auth_headers) -> None:
+    owner = tenancy.ensure_platform_owner("compliance-vss-smoke@aetherix.test", "Compliance VSS Smoke")
+    customer_id = _make_customer()
+    fixture = _load_vss_fixture()
+    agent = fixture["agent"]
+    readiness = fixture["rollback_readiness"]
+    restore_request = fixture["rollback_restore_request"]
+    vss_metadata = restore_request["provider_metadata"]
+
+    agent_id = agent["id"]
+    _enroll_agent(agent_id, customer_id)
+    client = TestClient(app)
+    headers = auth_headers(str(owner.id), **{"X-Aetherix-Customer": str(customer_id)})
+
+    collected_at = datetime.now(UTC).isoformat()
+    heartbeat = client.post(
+        "/agent/heartbeat",
+        json={
+            "agent_id": agent_id,
+            "hostname": agent["hostname"],
+            "os": agent["os"],
+            "policy_version": agent["policy_version"],
+            "nonce": 1,
+            "collected_at": collected_at,
+            "signature": _heartbeat_signature(
+                agent_id,
+                collected_at,
+                1,
+                hostname=agent["hostname"],
+                os_name=agent["os"],
+                policy_version=agent["policy_version"],
+            ),
+            "signals": {"cpu_percent": 3, "memory_percent": 9},
+            "rollback_readiness": readiness,
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    queue = client.post(
+        f"/endpoints/{agent_id}/rollback-restore",
+        headers=headers,
+        json=restore_request,
+    )
+    assert queue.status_code == 202, queue.text
+    action_id = queue.json()["id"]
+
+    pending = client.get("/rollback-intents/pending", headers=headers)
+    assert pending.status_code == 200, pending.text
+    pending_item = next((item for item in pending.json() if item["action"]["id"] == action_id), None)
+    assert pending_item is not None
+
+    pending_payload = pending_item["action"]["payload"]
+    pending_readiness = pending_item["rollback_readiness"]
+    assert pending_payload["provider_metadata"] == vss_metadata
+    assert pending_payload["rollback_readiness"]["provider_metadata"] == vss_metadata
+    assert pending_readiness["provider_metadata"] == vss_metadata
+    assert pending_readiness["vss_probe_details"]["service_state"] == "running"
+
+    export = client.get(
+        "/compliance/export",
+        headers={"Authorization": f"Bearer {jwt_tokens.issue(str(owner.id))[0]}"},
+        params={"customer_id": str(customer_id), "framework": "iso27001-2022"},
+    )
+    assert export.status_code == 200, export.text
+
+    requested_event = next(
+        item
+        for item in export.json()["evidence"]
+        if item["source_table"] == "evidence_events"
+        and item["payload"].get("action_id") == action_id
+        and item["summary"].startswith("endpoint.rollback.requested")
+    )
+    assert requested_event["payload"]["provider"] == "vss"
+    assert requested_event["payload"]["provider_metadata"] == vss_metadata
+    assert requested_event["payload"]["rollback_readiness"]["provider_metadata"] == vss_metadata
+    assert requested_event["payload"]["rollback_readiness"]["vss_probe_details"]["service_state"] == "running"
+
+    now = datetime.now(UTC)
+    completed = client.post(
+        "/agent/heartbeat",
+        json={
+            "agent_id": agent_id,
+            "hostname": agent["hostname"],
+            "os": agent["os"],
+            "policy_version": agent["policy_version"],
+            "nonce": 2,
+            "collected_at": now.isoformat(),
+            "signature": _heartbeat_signature(
+                agent_id,
+                now.isoformat(),
+                2,
+                hostname=agent["hostname"],
+                os_name=agent["os"],
+                policy_version=agent["policy_version"],
+            ),
+            "signals": {"cpu_percent": 2, "memory_percent": 8},
+            "rollback_readiness": readiness,
+            "edr_events": [
+                {
+                    "kind": "response_action",
+                    "rule_id": "RansomwareCanary",
+                    "action": "rollback_restore",
+                    "file_path": restore_request["affected_paths"][0],
+                    "rollback_file_paths": restore_request["affected_paths"],
+                    "matched_indicator": action_id,
+                    "policy_version": agent["policy_version"],
+                    "collected_at": now.isoformat(),
+                    "response": {
+                        "status": "completed",
+                        "simulation_id": restore_request["simulation_id"],
+                        "provider": restore_request["provider"],
+                        "provider_metadata": vss_metadata,
+                        "candidate_set_hash": restore_request["candidate_set_hash"],
+                        "recovery_point_id": restore_request["recovery_point_id"],
+                        "paths": restore_request["affected_paths"],
+                    },
+                }
+            ],
+        },
+    )
+    assert completed.status_code == 200, completed.text
+
+    export_after_execute = client.get(
+        "/compliance/export",
+        headers={"Authorization": f"Bearer {jwt_tokens.issue(str(owner.id))[0]}"},
+        params={"customer_id": str(customer_id), "framework": "iso27001-2022"},
+    )
+    assert export_after_execute.status_code == 200, export_after_execute.text
+
+    executed_event = next(
+        item
+        for item in export_after_execute.json()["evidence"]
+        if item["source_table"] == "evidence_events"
+        and item["summary"].startswith("endpoint.rollback.executed")
+        and item["payload"].get("simulation_id") == restore_request["simulation_id"]
+    )
+    assert executed_event["payload"]["provider_metadata"] == vss_metadata
+    assert executed_event["payload"]["rollback_readiness"]["provider_metadata"] == vss_metadata
+    assert executed_event["payload"]["rollback_readiness"]["vss_probe_details"]["writers_total"] == 2

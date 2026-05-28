@@ -15,17 +15,24 @@ Negative path:
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from app.db import connection
 from app.main import app
 from app.schemas import EdrEvent, FimEvent
+
+
+def _load_vss_pipeline_fixture() -> dict[str, object]:
+    fixture_path = Path(__file__).resolve().parents[0] / "fixtures/vss_readiness_pending_inbox_export.json"
+    return json.loads(fixture_path.read_text())
 
 
 # ---------------------------------------------------------------------------
@@ -1510,4 +1517,97 @@ def test_rollback_full_chain_lightweight_integration(
         "expected correlation.rollback_recovery compliance event carrying agent_id"
     )
 
+
+def test_vss_fixture_pending_inbox_export_chain(
+    tenant_hierarchy_factory, auth_headers
+) -> None:
+    """Fixture-backed smoke test for pending inbox and execution evidence payloads.
+
+    Uses realistic VSS-shaped readiness data to validate the pending inbox and
+    endpoint.rollback.executed evidence path before more provider features land.
+    """
+
+    fixture = _load_vss_pipeline_fixture()
+    agent = fixture["agent"]
+    readiness = fixture["rollback_readiness"]
+    restore_request = copy.deepcopy(fixture["rollback_restore_request"])
+    expected_metadata = restore_request["provider_metadata"]
+
+    tenant = tenant_hierarchy_factory(endpoint_id=agent["id"])
+    admin_id = tenant["company_admin_id"]
+    customer_id = tenant["customer_id"]
+    client = TestClient(app)
+    headers_admin = auth_headers(admin_id)
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    _post_heartbeat(
+        agent_id=agent["id"],
+        nonce=1,
+        collected_at=now - timedelta(seconds=60),
+        rollback_readiness=readiness,
+        fim_events=[
+            FimEvent(
+                event_type="modified",
+                file_path=restore_request["affected_paths"][0],
+                sha256_hash="7" * 64,
+                timestamp=(now - timedelta(seconds=60)).isoformat(),
+            )
+        ],
+    )
+
+    queue = client.post(
+        f"/endpoints/{agent['id']}/rollback-restore",
+        json=restore_request,
+        headers=headers_admin,
+    )
+    assert queue.status_code == 202, queue.text
+    action_id = queue.json()["id"]
+
+    pending = client.get(
+        f"/rollback-intents/pending?customer_id={customer_id}",
+        headers=headers_admin,
+    )
+    assert pending.status_code == 200, pending.text
+    pending_item = next((x for x in pending.json() if x["action"]["id"] == action_id), None)
+    assert pending_item is not None
+    assert pending_item["action"]["payload"]["provider_metadata"] == expected_metadata
+    assert pending_item["action"]["payload"]["rollback_readiness"]["provider_metadata"] == expected_metadata
+    assert pending_item["rollback_readiness"]["provider_metadata"] == expected_metadata
+    assert pending_item["rollback_readiness"]["vss_probe_details"]["service_state"] == "running"
+
+    _post_heartbeat(
+        agent_id=agent["id"],
+        nonce=2,
+        collected_at=now,
+        rollback_readiness=readiness,
+        edr_events=[
+            EdrEvent(
+                kind="response_action",
+                rule_id="RansomwareCanary",
+                action="rollback_restore",
+                file_path=restore_request["affected_paths"][0],
+                rollback_file_paths=restore_request["affected_paths"],
+                matched_indicator=str(action_id),
+                policy_version="policy-v1",
+                collected_at=now.isoformat(),
+                response={
+                    "status": "completed",
+                    "simulation_id": restore_request["simulation_id"],
+                    "provider": restore_request["provider"],
+                    "provider_metadata": expected_metadata,
+                    "candidate_set_hash": restore_request["candidate_set_hash"],
+                    "recovery_point_id": restore_request["recovery_point_id"],
+                    "paths": restore_request["affected_paths"],
+                },
+            )
+        ],
+    )
+
+    executed_events = _fetch_evidence_events_by_action("endpoint.rollback.executed")
+    executed = next((x for x in executed_events if x["resource"] == f"endpoint:{agent['id']}"), None)
+    assert executed is not None
+    payload = executed.get("payload") or {}
+    assert payload.get("provider_metadata") == expected_metadata
+    assert payload.get("rollback_readiness", {}).get("provider_metadata") == expected_metadata
+    assert payload.get("rollback_readiness", {}).get("vss_probe_details", {}).get("writers_total") == 2
 

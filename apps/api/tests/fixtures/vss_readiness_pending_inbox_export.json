@@ -1,0 +1,95 @@
+{
+  "agent": {
+    "id": "agent-vss-pipeline-001",
+    "hostname": "vss-pipeline-host",
+    "os": "windows",
+    "policy_version": "policy-vss-pipeline",
+    "secret": "e2e-endpoint-secret"
+  },
+  "rollback_readiness": {
+    "provider_available": true,
+    "provider_name": "vss",
+    "provider_version": "vss-guard-smoke",
+    "os_platform": "windows",
+    "functional": true,
+    "diagnosis": "VSS writers stable",
+    "recovery_point_count": 2,
+    "available_filesystems": [
+      "ntfs",
+      "refs"
+    ],
+    "service_available": true,
+    "sufficient_privilege": true,
+    "volume_capabilities": [
+      "vss:C:",
+      "vss:D:"
+    ],
+    "snapshot_service_info": "VSS v1.6, Writers: 2/2 ready",
+    "privilege_boundary": "SeBackupPrivilege+SeRestorePrivilege",
+    "recent_fim_paths": [
+      "C:\\Users\\Alice\\Documents\\report.docx",
+      "D:\\Finance\\Quarterly\\forecast.xlsx"
+    ],
+    "provider_metadata": {
+      "vss_shadow_copy_id": "{11111111-2222-3333-4444-555555555555}",
+      "vss_snapshot_set_id": "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}",
+      "vss_writer_status": {
+        "System Writer": "Stable",
+        "SqlServerWriter": "Stable"
+      },
+      "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "vss_alternate_data_streams": [
+        "Zone.Identifier",
+        "Aetherix.Marker"
+      ]
+    },
+    "recovery_points": [
+      {
+        "id": "rp-vss-pipeline-001",
+        "provider": "vss",
+        "created_at": "2026-05-28T11:58:00Z",
+        "expires_at": null,
+        "protected_root": "C:\\",
+        "verified": true
+      },
+      {
+        "id": "rp-vss-pipeline-002",
+        "provider": "vss",
+        "created_at": "2026-05-28T11:55:00Z",
+        "expires_at": null,
+        "protected_root": "D:\\",
+        "verified": true
+      }
+    ],
+    "vss_probe_details": {
+      "writers_ready": 2,
+      "writers_total": 2,
+      "service_state": "running"
+    }
+  },
+  "rollback_restore_request": {
+    "simulation_id": "sim-vss-pipeline-001",
+    "candidate_set_hash": "hash-vss-pipeline-001",
+    "affected_paths": [
+      "C:\\Users\\Alice\\Documents\\report.docx",
+      "D:\\Finance\\Quarterly\\forecast.xlsx"
+    ],
+    "recovery_point_id": "rp-vss-pipeline-001",
+    "provider": "vss",
+    "provider_metadata": {
+      "vss_shadow_copy_id": "{11111111-2222-3333-4444-555555555555}",
+      "vss_snapshot_set_id": "{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}",
+      "vss_writer_status": {
+        "System Writer": "Stable",
+        "SqlServerWriter": "Stable"
+      },
+      "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "vss_alternate_data_streams": [
+        "Zone.Identifier",
+        "Aetherix.Marker"
+      ]
+    },
+    "severity_hint": "high",
+    "reason": "VSS pending-inbox export smoke"
+  }
+}

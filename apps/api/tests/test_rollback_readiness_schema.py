@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.schemas import RollbackReadiness
+from app.schemas import RollbackIntentRequest, RollbackReadiness, RollbackRestoreRequest
 
 
 def _load_vss_fixture() -> dict[str, object]:
-    fixture_path = Path(__file__).resolve().parents[3] / "apps/console/src/test/fixtures/vss-smoke.json"
+    fixture_path = Path(__file__).resolve().parents[3] / "apps/api/tests/fixtures/vss_readiness_pending_inbox_export.json"
     return json.loads(fixture_path.read_text())
 
 
@@ -61,3 +62,45 @@ def test_rollback_readiness_preserves_vss_provider_metadata() -> None:
     assert readiness.provider_metadata is not None
     assert readiness.provider_metadata["vss_shadow_copy_id"] == "{11111111-2222-3333-4444-555555555555}"
     assert readiness.provider_metadata["vss_writer_status"]["SqlServerWriter"] == "Stable"
+    assert readiness.model_dump()["vss_probe_details"]["service_state"] == "running"
+
+
+def test_rollback_requests_allow_optional_provider_metadata() -> None:
+    restore_without_metadata = RollbackRestoreRequest.model_validate(
+        {
+            "simulation_id": "sim-001",
+            "candidate_set_hash": "hash-001",
+            "affected_paths": ["C:\\Users\\Alice\\Documents\\report.docx"],
+            "recovery_point_id": "rp-001",
+            "provider": "vss",
+            "severity_hint": "high",
+        }
+    )
+    restore_with_empty_metadata = RollbackRestoreRequest.model_validate(
+        {
+            "simulation_id": "sim-002",
+            "candidate_set_hash": "hash-002",
+            "affected_paths": ["C:\\Users\\Alice\\Documents\\report.docx"],
+            "recovery_point_id": "rp-002",
+            "provider": "vss",
+            "provider_metadata": {},
+            "severity_hint": "high",
+        }
+    )
+
+    intent_with_empty_metadata = RollbackIntentRequest.model_validate(
+        {
+            "simulation_id": "sim-003",
+            "candidate_set_hash": "hash-003",
+            "affected_paths": ["C:\\Users\\Alice\\Documents\\report.docx"],
+            "recovery_point_id": "rp-003",
+            "provider": "vss",
+            "provider_metadata": {},
+            "valid_until": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "severity_hint": "high",
+        }
+    )
+
+    assert restore_without_metadata.provider_metadata is None
+    assert restore_with_empty_metadata.provider_metadata == {}
+    assert intent_with_empty_metadata.provider_metadata == {}

@@ -453,6 +453,9 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                             if isinstance(response_payload, dict)
                             else ""
                         )
+                        rollback_readiness_snapshot = payload.get("rollback_readiness")
+                        if not isinstance(rollback_readiness_snapshot, dict):
+                            rollback_readiness_snapshot = None
                         if rb_resp_status != "failed":
                             from app.services.compliance import (
                                 _emit_compliance_event,
@@ -466,6 +469,7 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                 for _k in (
                                     "simulation_id",
                                     "provider",
+                                    "provider_metadata",
                                     "candidate_set_hash",
                                     "recovery_point_id",
                                     "status",
@@ -473,6 +477,8 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                 ):
                                     if response_payload.get(_k) is not None:
                                         rb_evidence_payload[_k] = response_payload[_k]
+                            if rollback_readiness_snapshot is not None:
+                                rb_evidence_payload["rollback_readiness"] = rollback_readiness_snapshot
                             _emit_compliance_event(
                                 customer_id=tenant["customer_id"],
                                 action="endpoint.rollback.executed",
@@ -496,6 +502,7 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                 for _k in (
                                     "simulation_id",
                                     "provider",
+                                    "provider_metadata",
                                     "candidate_set_hash",
                                     "recovery_point_id",
                                     "status",
@@ -505,6 +512,8 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                 ):
                                     if response_payload.get(_k) is not None:
                                         rb_evidence_payload[_k] = response_payload[_k]
+                            if rollback_readiness_snapshot is not None:
+                                rb_evidence_payload["rollback_readiness"] = rollback_readiness_snapshot
                             _emit_compliance_event(
                                 customer_id=tenant["customer_id"],
                                 action="endpoint.rollback.failed",
