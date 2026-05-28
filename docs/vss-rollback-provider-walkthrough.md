@@ -43,7 +43,7 @@
 `restore()` returns the existing `RollbackEvidence` shape:
 
 - `status`: `executed`, `failed`, or `not_applicable`.
-- `decision_trace`: includes restored/failed/skipped counts, `approved_action_id`, `recovery_point_id`, and protected root.
+- `decision_trace`: includes an explicit `simulation safety revalidated before copy` entry, restored/failed/skipped counts, `approved_action_id`, `recovery_point_id`, and protected root. Refusal traces include the refusal reason, `candidate_set_hash`, and candidate count.
 - `candidate_set_hash`: copied from the approved candidate set.
 - `approved_action_id`: copied from the remote action.
 - `provider`: `vss`.
@@ -52,7 +52,7 @@
 - `recovery_point_expires_at`: `null` for VSS.
 - `recovery_point_verified`: `true` only for verified shadow copies.
 - `metadata_preserved`: currently `false` because ACL/ADS/timestamp preservation is not complete in this slice.
-- `provider_refusal`: set for missing/unverified recovery points or enumeration failure.
+- `provider_refusal`: `null` for executions that reach copy-out; set for missing/unverified recovery points or enumeration failure before any copy attempt.
 - `restored_paths`: per-path `RollbackPathDecision` with `outcome=restored`, `reason=restored_from_vss_shadow`, `hash_before` as the snapshot SHA-256, `hash_after` as the post-copy live SHA-256, and `metadata_diff` including `copied_from_vss_shadow`.
 - `failed_paths`: per-path integrity or copy failures, including `copy_from_shadow_failed`, `post_restore_hash_failed`, or `post_restore_hash_mismatch`.
 - `skipped_paths`: unchanged files, unsafe overwrites, missing snapshot paths, protected-root refusals, and depth refusals.
@@ -60,7 +60,21 @@
 - `os_platform`: `windows`.
 - `privilege_context`: `SeBackupPrivilege+SeRestorePrivilege`.
 
-Restore diagnostics are emitted as JSON lines on stderr with `provider="vss"`, `event="restore"`, `approved_action_id`, `recovery_point_id`, and restored/failed/skipped counts.
+Restore diagnostics are emitted as JSON lines on stderr:
+
+- `event="restore"`: emitted after a copy-out attempt with `approved_action_id`, `recovery_point_id`, `candidate_set_hash`, restored/failed/skipped counts, `revalidated_simulation_safety=true`, and `provider_refusal=null`.
+- `event="restore_refused"`: emitted before returning `not_applicable` for enumeration failure, missing recovery points, or unverified recovery points. It includes `approved_action_id`, `recovery_point_id`, `candidate_set_hash`, `candidate_count`, `skipped_count`, and `reason`.
+
+## Metadata Preservation Plan
+
+The next restore slice keeps the same `RollbackEvidence` top-level shape and changes only field values/details:
+
+- `metadata_preserved`: remains `false` while any requested metadata class is not preserved; becomes `true` only when content, ACL/ownership, timestamps, file attributes, and alternate data streams are all successfully preserved for every restored path.
+- `restored_paths[].metadata_diff`: will carry preservation notes such as `owner_preserved`, `group_preserved`, `dacl_preserved`, `sacl_preserved`, `timestamps_preserved`, `attributes_preserved`, and `ads_preserved`; failures use strings like `dacl_not_preserved:<error>`.
+- `failed_paths`: remains reserved for content-copy or post-copy integrity failures. Metadata-only preservation failures do not move a path to `failed_paths`; they keep the path in `restored_paths` with `metadata_preserved=false` and explanatory `metadata_diff` entries.
+- `skipped_paths`: remains the fresh simulation re-validation output for paths not copied, including unchanged files, unsafe overwrites, protected-root refusals, missing snapshot files, and depth refusals.
+
+Implementation order for metadata preservation is `CopyFileExW` for file content, `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW` for owner/group/DACL/SACL, `GetFileTime`/`SetFileTime` for timestamps, `GetFileAttributesW`/`SetFileAttributesW` for attributes, then `BackupRead`/`BackupWrite` for alternate data streams.
 
 ## Not Yet Enabled
 

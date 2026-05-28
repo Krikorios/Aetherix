@@ -292,6 +292,16 @@ RecoveryPoint {
 
 Each P1–P6 failure records a string in `metadata_diff` (e.g., `"DACL not preserved: access_denied"`) but does NOT fail the overall path restore. Only P0 failure causes a `failed` path outcome.
 
+**RollbackEvidence shape during and after metadata preservation:**
+
+- `metadata_preserved=false` in the current copy-out slice because ACLs, timestamps, attributes, and alternate data streams are not fully preserved yet.
+- `metadata_preserved=true` only after every restored path preserves content plus owner/group, DACL/SACL, timestamps, attributes, and alternate data streams.
+- `restored_paths` contains only paths copied from the VSS shadow and verified by post-copy hash comparison. Metadata-only preservation failures stay in `restored_paths` and append `metadata_diff` entries such as `dacl_not_preserved:<error>` or `ads_not_preserved:<stream>:<error>`.
+- `failed_paths` contains content-copy and integrity failures only: parent creation failure, `CopyFileExW`/copy failure, post-copy hash failure, or post-copy hash mismatch.
+- `skipped_paths` is populated from the restore-time safety re-validation, not from stale approval state. It contains unchanged files, unsafe overwrite refusals, missing snapshot paths, protected-root refusals, depth refusals, and recovery-point refusal paths.
+- `provider_refusal` is set only when restore refuses before any copy attempt, such as recovery point enumeration failure, missing recovery point, or unverified recovery point. Mixed per-path failures use `failed_paths` with `provider_refusal=null`.
+- `decision_trace` always records that simulation safety was revalidated before copy and includes `approved_action_id`, `recovery_point_id`, `candidate_set_hash`, and per-path aggregate counts.
+
 ---
 
 ## 5. Probe / Readiness Differences vs. Simulation

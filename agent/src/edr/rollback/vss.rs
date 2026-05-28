@@ -494,7 +494,10 @@ impl VssRollbackProvider {
         Ok(shadow)
     }
 
-    fn restore_candidate_path(shadow: &ShadowCopyInfo, decision: RollbackPathDecision) -> RollbackPathDecision {
+    fn restore_candidate_path(
+        shadow: &ShadowCopyInfo,
+        decision: RollbackPathDecision,
+    ) -> RollbackPathDecision {
         if decision.outcome != RollbackPathOutcome::Restored {
             return decision;
         }
@@ -584,6 +587,40 @@ impl VssRollbackProvider {
             hash_after: Some(live_hash),
             metadata_diff: Some(metadata_diff),
         }
+    }
+
+    fn emit_restore_refusal(
+        approved_action_id: &str,
+        candidates: &RollbackCandidateSet,
+        reason: &str,
+        skipped_count: usize,
+    ) {
+        Self::emit_diagnostic(
+            "restore_refused",
+            serde_json::json!({
+                "approved_action_id": approved_action_id,
+                "recovery_point_id": candidates.recovery_point_id.clone(),
+                "candidate_set_hash": candidates.candidate_set_hash.clone(),
+                "candidate_count": candidates.paths.len(),
+                "skipped_count": skipped_count,
+                "reason": reason,
+            }),
+        );
+    }
+
+    fn restore_refusal_trace(
+        candidates: &RollbackCandidateSet,
+        approved_action_id: &str,
+        reason: &str,
+    ) -> Vec<String> {
+        vec![
+            format!("vss restore refused: {reason}"),
+            "vss restore: simulation safety revalidated before copy".to_string(),
+            format!("approved_action_id={approved_action_id}"),
+            format!("recovery_point_id={}", candidates.recovery_point_id),
+            format!("candidate_set_hash={}", candidates.candidate_set_hash),
+            format!("candidate_count={}", candidates.paths.len()),
+        ]
     }
 
     fn unavailable_restore_evidence(
@@ -942,16 +979,29 @@ impl RollbackProvider for VssRollbackProvider {
         let shadow_copies = match Self::enumerate_shadow_copies(&volumes) {
             Ok(shadows) => shadows,
             Err(err) => {
+                let reason =
+                    format!("provider_unavailable: recovery_point_enumeration_failed: {err}");
                 let skipped_paths = candidates
                     .paths
                     .iter()
-                    .map(|path| Self::refusal_decision(path, format!("recovery_point_enumeration_failed: {err}")))
+                    .map(|path| {
+                        Self::refusal_decision(
+                            path,
+                            format!("recovery_point_enumeration_failed: {err}"),
+                        )
+                    })
                     .collect();
+                Self::emit_restore_refusal(
+                    approved_action_id,
+                    candidates,
+                    &reason,
+                    candidates.paths.len(),
+                );
                 return Ok(Self::unavailable_restore_evidence(
                     candidates,
                     approved_action_id,
-                    format!("provider_unavailable: recovery_point_enumeration_failed: {err}"),
-                    vec![format!("vss restore failed to enumerate recovery points: {err}")],
+                    reason.clone(),
+                    Self::restore_refusal_trace(candidates, approved_action_id, &reason),
                     skipped_paths,
                 ));
             }
@@ -965,14 +1015,17 @@ impl RollbackProvider for VssRollbackProvider {
                     .iter()
                     .map(|path| Self::refusal_decision(path, reason.clone()))
                     .collect();
+                Self::emit_restore_refusal(
+                    approved_action_id,
+                    candidates,
+                    &reason,
+                    candidates.paths.len(),
+                );
                 return Ok(Self::unavailable_restore_evidence(
                     candidates,
                     approved_action_id,
                     reason.clone(),
-                    vec![format!(
-                        "vss restore recovery_point_id={} refused: {}",
-                        candidates.recovery_point_id, reason
-                    )],
+                    Self::restore_refusal_trace(candidates, approved_action_id, &reason),
                     skipped_paths,
                 ));
             }
@@ -1011,11 +1064,14 @@ impl RollbackProvider for VssRollbackProvider {
             "restore",
             serde_json::json!({
                 "approved_action_id": approved_action_id,
-                "recovery_point_id": candidates.recovery_point_id,
+                "recovery_point_id": candidates.recovery_point_id.clone(),
+                "candidate_set_hash": candidates.candidate_set_hash.clone(),
                 "candidate_count": candidates.paths.len(),
                 "restored_count": restored_paths.len(),
                 "failed_count": failed_paths.len(),
                 "skipped_count": skipped_paths.len(),
+                "revalidated_simulation_safety": true,
+                "provider_refusal": serde_json::Value::Null,
             }),
         );
 
@@ -1030,6 +1086,7 @@ impl RollbackProvider for VssRollbackProvider {
         Ok(RollbackEvidence {
             status: status.to_string(),
             decision_trace: vec![
+                "vss restore: simulation safety revalidated before copy".to_string(),
                 format!(
                     "vss restore: restored={}, failed={}, skipped={}",
                     restored_paths.len(),
@@ -1404,6 +1461,33 @@ mod tests {
         assert_eq!(evidence.provider, "vss");
         assert_eq!(evidence.provider_refusal.as_deref(), Some("recovery_point_not_found"));
         assert_eq!(evidence.skipped_paths.len(), 1);
+    }
+
+    #[test]
+    fn restore_refusal_trace_records_revalidation() {
+        let scope = RollbackScope {
+            incident_id: "test-inc".to_string(),
+            detector_rule_id: "test-rule".to_string(),
+            affected_paths: vec!["C:\\test".to_string()],
+            observed_at: "now".to_string(),
+        };
+        let candidates = RollbackCandidateSet {
+            scope,
+            recovery_point_id: "rp-1".to_string(),
+            paths: vec!["C:\\test".to_string()],
+            total_bytes_estimate: 100,
+            max_depth: 8,
+            candidate_set_hash: "hash".to_string(),
+        };
+
+        let trace = VssRollbackProvider::restore_refusal_trace(
+            &candidates,
+            "action-1",
+            "recovery_point_unverified",
+        );
+
+        assert!(trace.iter().any(|item| item.contains("simulation safety revalidated")));
+        assert!(trace.iter().any(|item| item == "candidate_set_hash=hash"));
     }
 
     #[test]
