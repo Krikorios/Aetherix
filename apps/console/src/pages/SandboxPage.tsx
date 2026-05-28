@@ -7,7 +7,7 @@ export function SandboxPage({ me }: { me: MeResponse }) {
     <AddOnPage
       me={me}
       icon={Box}
-      title="Threat Sandbox"
+      title="Sandbox Analyzer"
       description="Detonation-based analysis for suspicious files and URLs. Submits artefacts to an isolated cloud sandbox, captures full execution traces, network IOCs, and generates a verdict with confidence score."
       features={[
         "Automated file and URL detonation",
@@ -15,7 +15,7 @@ export function SandboxPage({ me }: { me: MeResponse }) {
         "Network IOC capture and enrichment",
         "Verdict-to-policy feedback loop",
       ]}
-      licenceName="Threat Sandbox"
+      licenceName="Sandbox Analyzer"
     />
   );
 }

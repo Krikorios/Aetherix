@@ -2,7 +2,7 @@
 
 This repository contains the Aetherix platform: a lightweight Rust endpoint agent, a FastAPI/Postgres control plane, a React/Vite MSP console, policy simulation, tenant-aware customer onboarding, Companies + Licensing, Accounts hierarchy design, and customized installer/Quick Deploy generation.
 
-See [docs/milestone-summary-2026-05-23.md](docs/milestone-summary-2026-05-23.md) for the latest milestone summary, including Policy Engine v2, Semantic DLP plus GenAI Guardrails, Rust agent enforcement, the MV3 browser extension, and the Antimalware & Behavior console module.
+See [docs/current-capabilities-snapshot-2026-05-29.md](docs/current-capabilities-snapshot-2026-05-29.md) for the latest capability snapshot. Older milestone notes, including [docs/milestone-summary-2026-05-23.md](docs/milestone-summary-2026-05-23.md), are historical records and may not reflect current EDR, rollback, OpenSearch, or authentication status.
 
 ## Workspace
 

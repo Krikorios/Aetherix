@@ -1,4 +1,10 @@
-export const API = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+
+if (import.meta.env.PROD && !configuredApiUrl) {
+  throw new Error("VITE_API_URL must be configured for production builds.");
+}
+
+export const API = configuredApiUrl ?? "http://127.0.0.1:8000";
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -801,16 +807,25 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     logout();
   }
   if (!res.ok) {
-    let detail = `${res.status}`;
+    let detail = res.statusText || `Request failed (${res.status})`;
     try {
       const json = (await res.json()) as { detail?: unknown };
       if (typeof json.detail === "string") {
         detail = json.detail;
+      } else if (Array.isArray(json.detail)) {
+        // Pydantic validation error — extract human-readable messages
+        const msgs = (json.detail as Array<{ msg?: string; loc?: unknown[] }>)
+          .map((e) => {
+            const field = Array.isArray(e.loc) ? e.loc.filter((l) => l !== "body" && l !== "query").join(".") : "";
+            return field ? `${field}: ${e.msg ?? "invalid"}` : (e.msg ?? "invalid");
+          })
+          .filter(Boolean);
+        detail = msgs.length > 0 ? msgs.join("; ") : "Validation error";
       } else if (json.detail !== undefined) {
-        detail = JSON.stringify(json.detail);
+        detail = String(json.detail);
       }
     } catch {
-      // ignore parse errors — use status code message
+      // ignore parse errors — use status text
     }
     throw new Error(detail);
   }

@@ -119,6 +119,157 @@ before the release can be promoted to design-partner tenants. The
 the binary so customers can pin a fingerprint independent of the signing
 chain.
 
+---
+
+## Design-partner release verification runbook
+
+This section gives a **complete, copy-paste-ready** procedure that a design
+partner (or QA engineer on a clean VM) can run after receiving a tagged
+release link. Replace `<VERSION>` with the semver string from the GitHub
+release page (e.g. `1.2.0`).
+
+### Step 0 — Download artifacts and sidecars
+
+All artifacts are published as GitHub Release assets. Download the package
+_and_ its `.sha256` sidecar before verifying.
+
+```
+# macOS
+curl -fLO "https://github.com/aetherix/aetherix/releases/download/agent-v<VERSION>/aetherix-agent-<VERSION>.pkg"
+curl -fLO "https://github.com/aetherix/aetherix/releases/download/agent-v<VERSION>/aetherix-agent-<VERSION>.pkg.sha256"
+
+# Windows (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/aetherix/aetherix/releases/download/agent-v<VERSION>/aetherix-agent-<VERSION>.msi" -OutFile "aetherix-agent-<VERSION>.msi"
+Invoke-WebRequest -Uri "https://github.com/aetherix/aetherix/releases/download/agent-v<VERSION>/aetherix-agent-<VERSION>.msi.sha256" -OutFile "aetherix-agent-<VERSION>.msi.sha256"
+
+# Linux
+wget "https://github.com/aetherix/aetherix/releases/download/agent-v<VERSION>/aetherix-agent_<VERSION>_amd64.deb"
+wget "https://github.com/aetherix/aetherix/releases/download/agent-v<VERSION>/aetherix-agent_<VERSION>_amd64.deb.sha256"
+```
+
+### Step 1 — Verify SHA-256 fingerprint
+
+Confirm the downloaded file matches the published fingerprint **before**
+running any signature check. A mismatch means the artifact was corrupted or
+tampered in transit — do not proceed.
+
+```
+# macOS / Linux
+sha256sum -c aetherix-agent-<VERSION>.pkg.sha256
+# Expected output: aetherix-agent-<VERSION>.pkg: OK
+
+sha256sum -c aetherix-agent_<VERSION>_amd64.deb.sha256
+# Expected output: aetherix-agent_<VERSION>_amd64.deb: OK
+
+# Windows (PowerShell)
+$expected = (Get-Content "aetherix-agent-<VERSION>.msi.sha256" -Raw).Split(" ")[0].Trim()
+$actual   = (Get-FileHash "aetherix-agent-<VERSION>.msi" -Algorithm SHA256).Hash.ToLower()
+if ($expected -eq $actual) { Write-Host "SHA-256 OK" } else { Write-Error "MISMATCH — do not install" }
+```
+
+### Step 2 — Verify code signature (macOS)
+
+Requires a Mac with Xcode command-line tools installed.
+
+```bash
+# Check Gatekeeper acceptance (must say "accepted" with no warnings)
+spctl -a -vv -t install aetherix-agent-<VERSION>.pkg
+# Expected: aetherix-agent-<VERSION>.pkg: accepted
+#           source=Developer ID Installer: Aetherix Ltd (<TEAM_ID>)
+
+# Inspect certificate chain
+pkgutil --check-signature aetherix-agent-<VERSION>.pkg
+# Expected output includes:
+#   Status: signed by a developer certificate issued by Apple for distribution
+#   Certificate Chain:
+#     1. Developer ID Installer: Aetherix Ltd
+#     2. Developer ID Certification Authority
+#     3. Apple Root CA
+
+# Verify notarization staple (ticket embedded in the pkg)
+stapler validate aetherix-agent-<VERSION>.pkg
+# Expected: The validate action worked!
+```
+
+If `spctl` reports `rejected` or `not signed`, **do not install** — contact
+the Aetherix engineering team.
+
+### Step 3 — Verify Authenticode signature (Windows)
+
+Run the following in an **elevated** PowerShell session.
+
+```powershell
+# Check Authenticode signature status
+$sig = Get-AuthenticodeSignature "aetherix-agent-<VERSION>.msi"
+$sig | Select-Object Status, StatusMessage, SignerCertificate
+
+# Expected:
+#   Status        : Valid
+#   StatusMessage : Signature verified.
+#   SignerCertificate : [Subject includes "Aetherix Ltd"]
+
+# Verify timestamp (RFC 3161) exists — ensures the signature survives cert expiry
+$sig.TimeStamperCertificate
+# Expected: a non-null certificate object from a recognised TSA
+
+# Alternative: signtool (requires Windows SDK)
+signtool verify /pa /v "aetherix-agent-<VERSION>.msi"
+# Expected last line: Number of files successfully Verified: 1
+```
+
+### Step 4 — Verify GPG signature (Linux)
+
+The Aetherix release GPG key must be imported once per machine.
+
+```bash
+# Import the Aetherix release public key (one-time setup)
+curl -fsSL https://packages.aetherix.com/gpg/release.pub | gpg --import
+# Verify the fingerprint matches the one published on the Aetherix security page
+
+# Verify dpkg-sig signature
+dpkg-sig --verify aetherix-agent_<VERSION>_amd64.deb
+# Expected:
+#   GOODSIG _gpgbuilder <KEY_ID> <timestamp>
+
+# Alternative: verify detached .asc if provided
+gpg --verify aetherix-agent_<VERSION>_amd64.deb.asc aetherix-agent_<VERSION>_amd64.deb
+# Expected: Good signature from "Aetherix Release Signing Key <releases@aetherix.com>"
+```
+
+### Step 5 — Clean install smoke test
+
+After successful signature verification, perform a clean install on the test VM
+and confirm the agent connects to the control plane:
+
+1. **macOS**: `sudo installer -pkg aetherix-agent-<VERSION>.pkg -target /`  
+   Then: `sudo launchctl list | grep aetherix` — service should be `0` (running).
+
+2. **Windows** (elevated cmd): `msiexec /i aetherix-agent-<VERSION>.msi /qn ENROLLMENT_TOKEN=<token>`  
+   Then: `sc query AetherixAgent` — `STATE: 4 RUNNING`.
+
+3. **Linux**: `sudo dpkg -i aetherix-agent_<VERSION>_amd64.deb`  
+   Then: `systemctl is-active aetherix-agent` — should return `active`.
+
+Within 60 seconds of install, the enrolled endpoint must appear on the
+Aetherix console under **Network → Endpoints** with a green heartbeat
+indicator. If it does not appear after 90 seconds, collect
+`/var/log/aetherix/agent.log` (Linux/macOS) or
+`%ProgramData%\Aetherix\logs\agent.log` (Windows) and file an issue.
+
+### Step 6 — Release promotion gate
+
+A tagged release may only be promoted to design-partner tenants once **all**
+of the following have been confirmed and documented in the release PR:
+
+| Gate | Check |
+|---|---|
+| SHA-256 fingerprints | All three platforms match `.sha256` sidecars |
+| macOS spctl | `accepted` + notarization staple validated |
+| Windows Authenticode | `Status: Valid` + RFC 3161 timestamp present |
+| Linux GPG | `GOODSIG` from Aetherix release key |
+| Clean install smoke | Agent heartbeat visible in console within 90 s |
+| Console build | `npm run build` exits 0 with no Vite parse overlays |
+
 ### Known boundary
 
 The pipeline currently produces an MSI, PKG, and DEB only. RPM and EXE

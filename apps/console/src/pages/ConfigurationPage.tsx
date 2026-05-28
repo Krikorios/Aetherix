@@ -38,7 +38,7 @@ const DEFAULT_BRANDING: BrandingConfig = {
   support_email: "support@aetherix-msp.com",
   support_url: "https://help.aetherix-msp.com",
   support_phone: "",
-  footer_note: "© 2024 Aetherix MSP Platform. All rights reserved.",
+  footer_note: "© 2026 Aetherix MSP Platform. All rights reserved.",
 };
 
 export function ConfigurationPage({ me }: { me: MeResponse }) {
@@ -310,7 +310,7 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
               </div>
               <div style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
                 Footer Note
-                <input className="input" value={draft.footer_note} onChange={(e) => handleChange("footer_note", e.target.value)} placeholder="© Your Company 2024" />
+                <input className="input" value={draft.footer_note} onChange={(e) => handleChange("footer_note", e.target.value)} placeholder="© Your Company 2026" />
               </div>
             </div>
           </div>
@@ -438,7 +438,7 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
           <div className="panel" style={{ padding: "14px 16px", marginTop: "14px" }}>
             <div style={{ fontSize: "11px", color: "var(--muted)", display: "flex", alignItems: "center", gap: "6px" }}>
               <CheckCircle size={12} style={{ color: "var(--success)" }} />
-              Branding is resolved live from the <code style={{ fontSize: "10px" }}>/me</code> endpoint and applied to accent colour, product name, and sidebar on each session.
+              Branding settings are applied live to the accent colour, product name, and sidebar on each session.
             </div>
           </div>
         </div>

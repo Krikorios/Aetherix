@@ -283,6 +283,8 @@ export function DigitalRiskPage({ me }: { me?: MeResponse }) {
             handleActionChange(d.recommended_action);
           }}
           isLoading={isLoading}
+          panelTitle="Digital Risk Exposures"
+          panelSubtitle="Brand, data leak, and threat intelligence alerts"
         />
 
         <DetailPanel detection={selectedDetection} />

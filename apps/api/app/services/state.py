@@ -147,6 +147,23 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                     observed_at=observed_at,
                 )
 
+            # OpenSearch dual-write for FIM (best effort, outside the inner cursor work)
+            try:
+                from app.services import event_index as os_index
+                os_index.index_fim_event(
+                    partner_id=tenant.get("partner_id"),
+                    customer_id=str(tenant["customer_id"]) if tenant.get("customer_id") else None,
+                    agent_id=heartbeat.agent_id,
+                    fim_event_id=str(fim_id),
+                    event_type=event.event_type,
+                    file_path=event.file_path,
+                    sha256_hash=event.sha256_hash,
+                    observed_at=observed_at,
+                    evidence_controls=controls,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
     # Compliance Evidence mapping for new EDR events
     if heartbeat.edr_events and tenant["customer_id"]:
         import uuid
@@ -326,6 +343,25 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                     ),
                 )
 
+                # OpenSearch dual-write (best-effort, never fails the heartbeat)
+                try:
+                    from app.services import event_index as os_index
+
+                    os_index.index_security_alert(
+                        partner_id=tenant.get("partner_id"),
+                        customer_id=str(tenant["customer_id"]) if tenant.get("customer_id") else None,
+                        agent_id=heartbeat.agent_id,
+                        alert_id=str(alert_id),
+                        severity=severity_for_insert,
+                        category=category,
+                        payload=payload_for_insert,
+                        evidence_controls=list(evidence_for_insert) if evidence_for_insert else [],
+                        created_at=created_at,
+                        # We don't have the DB seq here easily; the document still carries the alert UUID for lookup
+                    )
+                except Exception:  # noqa: BLE001 - OpenSearch must never impact primary path
+                    pass
+
                 if planned_links:
                     correlation_service.record_planned_links(
                         cur,
@@ -423,7 +459,21 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                             if isinstance(paths_from_resp, list):
                                 rollback_paths = [p for p in paths_from_resp if p]
 
-                    if is_rollback and rollback_paths:
+                    rollback_decision_trace: list[str] = []
+                    if is_rollback:
+                        for source in (
+                            event.decision_trace,
+                            response_payload.get("decision_trace") if isinstance(response_payload, dict) else None,
+                            payload_dict.get("rollback_evidence", {}).get("decision_trace")
+                            if isinstance(payload_dict.get("rollback_evidence"), dict)
+                            else None,
+                        ):
+                            if isinstance(source, list):
+                                rollback_decision_trace.extend(
+                                    item for item in source if isinstance(item, str)
+                                )
+
+                    if is_rollback:
                         try:
                             original_alert_id = None
                             if event.matched_indicator:
@@ -439,6 +489,7 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                 file_paths=rollback_paths,
                                 created_at=created_at,
                                 original_alert_id=original_alert_id,
+                                decision_trace=rollback_decision_trace,
                             )
                         except Exception:
                             pass
@@ -479,6 +530,8 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                         rb_evidence_payload[_k] = response_payload[_k]
                             if rollback_readiness_snapshot is not None:
                                 rb_evidence_payload["rollback_readiness"] = rollback_readiness_snapshot
+                            if rollback_decision_trace:
+                                rb_evidence_payload["decision_trace"] = rollback_decision_trace
                             _emit_compliance_event(
                                 customer_id=tenant["customer_id"],
                                 action="endpoint.rollback.executed",
@@ -514,6 +567,8 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                         rb_evidence_payload[_k] = response_payload[_k]
                             if rollback_readiness_snapshot is not None:
                                 rb_evidence_payload["rollback_readiness"] = rollback_readiness_snapshot
+                            if rollback_decision_trace:
+                                rb_evidence_payload["decision_trace"] = rollback_decision_trace
                             _emit_compliance_event(
                                 customer_id=tenant["customer_id"],
                                 action="endpoint.rollback.failed",

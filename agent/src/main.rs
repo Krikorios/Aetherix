@@ -1474,7 +1474,7 @@ fn handle_remote_rollback_action(
             response.evidence_controls = evidence_controls.clone();
 
             let mut event = EdrEvent::new(
-                EdrDetectionKind::RansomwareRollback,
+                EdrDetectionKind::ResponseAction,
                 &cached.simulation_id,
                 EdrAction::Rollback,
                 &active_policy.policy_version_hash,
@@ -1483,7 +1483,16 @@ fn handle_remote_rollback_action(
             event.tags.push("remote_response_action".to_string());
             event.tags.push(format!("remote_action:{action_name}"));
             event.tags.push("rollback_cached".to_string());
-            event.matched_indicator = Some(action.id.clone());
+            event.matched_indicator = cached
+                .decision_trace
+                .iter()
+                .find_map(|entry| entry.strip_prefix("original_alert_id=").map(str::to_string))
+                .or_else(|| Some(action.id.clone()));
+            event.rollback_file_paths = cached
+                .restored_paths
+                .iter()
+                .map(|path| path.path.clone())
+                .collect();
             event.response = Some(response);
             event.rollback_evidence = Some(cached);
             return event;
@@ -1607,6 +1616,31 @@ fn handle_remote_rollback_action(
     let candidates = rollback::intent_to_candidate_set(&intent);
     let rollback_evidence = match context.rollback_provider.restore(&candidates, &action.id) {
         Ok(mut ev) => {
+            ev.endpoint_id = context.credentials.agent_id.clone();
+            ev.customer_id = context.credentials.customer_id.clone();
+            ev.policy_version = active_policy.policy_version_hash.clone();
+            ev.evidence_controls = evidence_controls.clone();
+            if ev.requester_id.is_empty() {
+                ev.requester_id = payload
+                    .get("requester_id")
+                    .or_else(|| payload.get("requested_by"))
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("control-plane")
+                    .to_string();
+            }
+            if ev.approver_ids.is_empty() {
+                ev.approver_ids = payload
+                    .get("approver_ids")
+                    .and_then(|value| value.as_array())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
+            append_rollback_correlation_hints(&mut ev.decision_trace, payload);
             ev.decision_trace.extend(correlation_links.clone());
             ev
         }
@@ -1641,10 +1675,11 @@ fn handle_remote_rollback_action(
     rollback::store_evidence(&action.id, &rollback_evidence);
     rollback::evict_old_evidence();
 
-    // --- Success: convert and attach both evidence types ---
+    // --- Result: convert and attach both evidence types ---
+    let rollback_status = rollback_evidence.status.clone();
     let response = rollback::convert_rollback_evidence_to_response(&rollback_evidence);
     let mut event = EdrEvent::new(
-        EdrDetectionKind::RansomwareRollback,
+        EdrDetectionKind::ResponseAction,
         &intent.simulation_id,
         EdrAction::Rollback,
         &active_policy.policy_version_hash,
@@ -1652,11 +1687,51 @@ fn handle_remote_rollback_action(
     event.evidence_controls = evidence_controls;
     event.tags.push("remote_response_action".to_string());
     event.tags.push(format!("remote_action:{action_name}"));
-    event.tags.push("rollback_executed".to_string());
-    event.matched_indicator = Some(action.id.clone());
+    if rollback_status == "executed" {
+        event.tags.push("rollback_executed".to_string());
+    } else {
+        event.tags.push("rollback_failed".to_string());
+    }
+    event.matched_indicator = rollback_original_alert_id(payload).or_else(|| Some(action.id.clone()));
+    event.rollback_file_paths = rollback_evidence
+        .restored_paths
+        .iter()
+        .map(|path| path.path.clone())
+        .collect();
     event.response = Some(response);
     event.rollback_evidence = Some(rollback_evidence);
     event
+}
+
+fn rollback_original_alert_id(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("original_alert_id")
+        .or_else(|| payload.get("security_alert_id"))
+        .or_else(|| payload.get("alert_id"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn append_rollback_correlation_hints(decision_trace: &mut Vec<String>, payload: &serde_json::Value) {
+    let path_values = payload
+        .get("affected_paths")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.as_str());
+    for path in path_values {
+        decision_trace.push(format!("correlation_hint:fim_path={path}"));
+        decision_trace.push(format!("correlation_hint:dlp_path={path}"));
+    }
+    if let Some(event_id) = payload.get("fim_event_id").and_then(|value| value.as_str()) {
+        decision_trace.push(format!("correlation_hint:fim_event_id={event_id}"));
+    }
+    if let Some(event_id) = payload.get("dlp_event_id").and_then(|value| value.as_str()) {
+        decision_trace.push(format!("correlation_hint:dlp_event_id={event_id}"));
+    }
+    if let Some(alert_id) = rollback_original_alert_id(payload) {
+        decision_trace.push(format!("original_alert_id={alert_id}"));
+    }
 }
 
 /// Build an `EdrEvent` for a rollback refusal or error, attaching both
@@ -1679,7 +1754,7 @@ fn build_rollback_refusal_event(
     provider_refusal: Option<&str>,
 ) -> aetherix_agent::edr::EdrEvent {
     let mut event = aetherix_agent::edr::EdrEvent::new(
-        aetherix_agent::edr::EdrDetectionKind::RansomwareRollback,
+        aetherix_agent::edr::EdrDetectionKind::ResponseAction,
         "rollback",
         aetherix_agent::edr::EdrAction::Review,
         &active_policy.policy_version_hash,
@@ -1886,7 +1961,7 @@ fn handle_remote_rollback_simulation(
     };
 
     let mut event = EdrEvent::new(
-        EdrDetectionKind::RansomwareRollback,
+        EdrDetectionKind::ResponseAction,
         simulation_id,
         EdrAction::Review,
         &active_policy.policy_version_hash,

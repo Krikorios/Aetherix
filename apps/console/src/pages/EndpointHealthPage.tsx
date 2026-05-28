@@ -126,6 +126,7 @@ function ResponseActionsPanel({ endpointId, onRefresh }: { endpointId: string; o
   const [actions, setActions] = useState<ResponseAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendingAction, setSendingAction] = useState<string | null>(null);
+  const [now] = useState(() => Date.now());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -139,7 +140,7 @@ function ResponseActionsPanel({ endpointId, onRefresh }: { endpointId: string; o
     }
   }, [endpointId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { queueMicrotask(() => void load()); }, [load]);
 
   async function sendAction(action: string, payload?: Record<string, unknown>) {
     setSendingAction(action);
@@ -163,7 +164,7 @@ function ResponseActionsPanel({ endpointId, onRefresh }: { endpointId: string; o
   }
 
   const timeAgo = (iso: string) => {
-    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
     if (s < 60) return `${s}s ago`;
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
@@ -264,13 +265,13 @@ function ResponseActionsPanel({ endpointId, onRefresh }: { endpointId: string; o
   );
 }
 
-export function EndpointHealthPage({ me }: { me: MeResponse }) {
+export function EndpointHealthPage({ me, embedded = false }: { me: MeResponse; embedded?: boolean }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [policy, setPolicy] = useState<EffectivePolicy>({
+  const [policy, setPolicy] = useState<EffectivePolicy>(() => ({
     policy_version: "v2.10.4",
     last_updated: new Date(Date.now() - 3600000).toISOString(),
     status: "protected",
@@ -280,7 +281,7 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
       drift_alerting: true,
       auto_remediation: false,
     },
-  });
+  }));
 
   const [endpoints, setEndpoints] = useState<EndpointHealthRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -429,17 +430,18 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
   const attention = endpoints.filter((e) => e.status === "attention").length;
 
   if (isLoading) {
-    return (
+    const loadingState = (
       <div style={{ padding: "40px", width: "100%" }}>
         <LoadingState message="Fetching endpoint telemetry…" />
       </div>
     );
+    return embedded ? loadingState : <ConsolePage>{loadingState}</ConsolePage>;
   }
 
-  return (
-    <ConsolePage>
+  const content = (
+    <>
       <ModuleHeader
-        title="Endpoint Health & Attack Surface"
+        title="Endpoint Health"
         eyebrow="Company Operations"
         icon={Shield}
         status={policy.status}
@@ -690,6 +692,8 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
         />
       </section>
       )}
-    </ConsolePage>
+    </>
   );
+
+  return embedded ? content : <ConsolePage>{content}</ConsolePage>;
 }

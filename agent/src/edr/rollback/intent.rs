@@ -11,6 +11,7 @@ pub struct RollbackIntent {
     pub candidate_set_hash: String,
     pub recovery_point_id: String,
     pub valid_until: String,
+    pub observed_at: String,
     pub affected_paths: Vec<String>,
     pub total_bytes_estimate: u64,
     pub max_depth: u8,
@@ -24,6 +25,13 @@ pub fn parse_rollback_intent(action_id: &str, payload: &serde_json::Value) -> Op
     let candidate_set_hash = payload.get("candidate_set_hash")?.as_str()?.to_string();
     let recovery_point_id = payload.get("recovery_point_id")?.as_str()?.to_string();
     let valid_until = payload.get("valid_until")?.as_str()?.to_string();
+    let observed_at = payload
+        .get("observed_at")
+        .or_else(|| payload.get("detected_at"))
+        .or_else(|| payload.get("created_at"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
     let affected_paths: Vec<String> = payload
         .get("affected_paths")
@@ -52,6 +60,7 @@ pub fn parse_rollback_intent(action_id: &str, payload: &serde_json::Value) -> Op
         candidate_set_hash,
         recovery_point_id,
         valid_until,
+        observed_at,
         affected_paths,
         total_bytes_estimate,
         max_depth,
@@ -79,7 +88,7 @@ pub fn intent_to_candidate_set(intent: &RollbackIntent) -> RollbackCandidateSet 
             incident_id: intent.approved_action_id.clone(),
             detector_rule_id: intent.simulation_id.clone(),
             affected_paths: intent.affected_paths.clone(),
-            observed_at: chrono::Utc::now().to_rfc3339(),
+            observed_at: intent.observed_at.clone(),
         },
         recovery_point_id: intent.recovery_point_id.clone(),
         paths: intent.affected_paths.clone(),
@@ -170,6 +179,7 @@ mod tests {
         assert_eq!(intent.affected_paths, vec!["/a", "/b"]);
         assert_eq!(intent.total_bytes_estimate, 4096);
         assert_eq!(intent.max_depth, 8);
+        assert!(!intent.observed_at.is_empty());
     }
 
     #[test]
@@ -188,6 +198,7 @@ mod tests {
             candidate_set_hash: "hash-1".to_string(),
             recovery_point_id: "rp-1".to_string(),
             valid_until: "2126-05-28T12:00:00Z".to_string(),
+            observed_at: "2026-05-28T12:00:00Z".to_string(),
             affected_paths: vec![],
             total_bytes_estimate: 0,
             max_depth: 8,
@@ -203,6 +214,7 @@ mod tests {
             candidate_set_hash: "hash-1".to_string(),
             recovery_point_id: "rp-1".to_string(),
             valid_until: "2020-01-01T00:00:00Z".to_string(),
+            observed_at: "2026-05-28T12:00:00Z".to_string(),
             affected_paths: vec![],
             total_bytes_estimate: 0,
             max_depth: 8,
@@ -219,6 +231,7 @@ mod tests {
             candidate_set_hash: "hash-1".to_string(),
             recovery_point_id: "rp-1".to_string(),
             valid_until: "not-a-timestamp".to_string(),
+            observed_at: "2026-05-28T12:00:00Z".to_string(),
             affected_paths: vec![],
             total_bytes_estimate: 0,
             max_depth: 8,
@@ -235,6 +248,7 @@ mod tests {
             candidate_set_hash: "hash-1".to_string(),
             recovery_point_id: "rp-1".to_string(),
             valid_until: "2126-05-28T12:00:00Z".to_string(),
+            observed_at: "2026-05-28T12:00:00Z".to_string(),
             affected_paths: vec!["/a".to_string(), "/b".to_string()],
             total_bytes_estimate: 4096,
             max_depth: 8,
@@ -243,6 +257,7 @@ mod tests {
         assert_eq!(set.recovery_point_id, "rp-1");
         assert_eq!(set.candidate_set_hash, "hash-1");
         assert_eq!(set.paths, vec!["/a", "/b"]);
+        assert_eq!(set.scope.observed_at, "2026-05-28T12:00:00Z");
         assert_eq!(set.total_bytes_estimate, 4096);
         assert_eq!(set.max_depth, 8);
     }

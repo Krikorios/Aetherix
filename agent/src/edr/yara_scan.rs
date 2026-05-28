@@ -485,6 +485,7 @@ fn scan_data(
             response: None,
             recovery_hints: None,
             rollback_evidence: None,
+            rollback_file_paths: Vec::new(),
         });
     }
 
@@ -513,6 +514,7 @@ fn create_minimal_event(rule_id: &str, source: &str, sha256: &str, policy_versio
         response: None,
         recovery_hints: None,
         rollback_evidence: None,
+        rollback_file_paths: Vec::new(),
     }
 }
 

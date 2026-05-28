@@ -13,8 +13,10 @@ import {
   ShieldCheck,
   } from "lucide-react";
 import {
+  API,
   apiGet,
   apiPost,
+  getAccessToken,
   type Customer,
 } from "../api";
 import { AttestationsList } from "../components/compliance/AttestationsList";
@@ -163,6 +165,7 @@ export function CompliancePage() {
   const [newStatus, setNewStatus] = useState<"unreviewed" | "reviewed" | "flagged">("reviewed");
   const [reviewNotes, setReviewNotes] = useState("");
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
 
   // Load Companies list and initial data
@@ -299,6 +302,37 @@ export function CompliancePage() {
     return { total, compliant, flagged, pending, score };
   }, [bundle, reviewMap]);
 
+  const downloadAuditorPdf = async () => {
+    if (!selectedCustomerId || !selectedFramework) return;
+    setIsExportingPdf(true);
+    setError(null);
+    try {
+      const token = getAccessToken();
+      const headers: HeadersInit = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch(
+        `${API}/compliance/export?customer_id=${selectedCustomerId}&framework=${selectedFramework}&format=pdf`,
+        { headers },
+      );
+      if (!res.ok) {
+        throw new Error(`PDF export failed: ${res.statusText}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `aetherix-compliance-${selectedFramework}-${selectedCustomerId.slice(0, 8)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PDF export failed");
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   if (isLoading && companies.length === 0) {
     return (
       <main className="panel">
@@ -338,9 +372,9 @@ export function CompliancePage() {
       <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
         <div>
           <PageHeader
-            eyebrow="Govemanee, Risk & Compliance"
-            title="Compliance Evidence Engine"
-            subtitle="v0.5 v0.5 Compliance Evidence Matrix & Cryptographic WORM Auditing"
+            eyebrow="Governance, Risk & Compliance"
+            title="Compliance Center"
+            subtitle="v0.5 Compliance Evidence Matrix & Cryptographic WORM Auditing"
           />
         </div>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
@@ -380,6 +414,17 @@ export function CompliancePage() {
             style={{ width: "38px", height: "38px", marginTop: "18px", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "5px" }}
           >
             <RefreshCw size={16} />
+          </button>
+          <button
+            type="button"
+            className="btn btnPrimary"
+            onClick={() => void downloadAuditorPdf()}
+            disabled={isExportingPdf || !selectedCustomerId}
+            title="Download full compliance evidence bundle as PDF"
+            style={{ marginTop: "18px", display: "flex", alignItems: "center", gap: "6px", height: "38px", padding: "0 14px", fontSize: "13px" }}
+          >
+            <Printer size={14} />
+            {isExportingPdf ? "Exporting…" : "Download Auditor Pack (PDF)"}
           </button>
         </div>
       </div>

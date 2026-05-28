@@ -309,6 +309,8 @@ export function CustomDetectionRulesPage({ me }: { me: MeResponse }) {
             setSimulation(null);
           }}
           isLoading={isLoading}
+          panelTitle="Detection Rules"
+          panelSubtitle="Custom YARA, IOC, and behavioral rules"
         />
 
         {/* Panel 2: Code Editor Context Visualization */}

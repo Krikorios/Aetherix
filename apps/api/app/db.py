@@ -1013,6 +1013,9 @@ _SCHEMA_STATEMENTS = (
     alter table customers add column if not exists ai_features jsonb not null default '{}'::jsonb
     """,
     """
+    alter table customers add column if not exists event_retention_days integer
+    """,
+    """
     create table if not exists subscriptions (
         id uuid primary key,
         sku text not null unique,
@@ -1728,6 +1731,71 @@ _SCHEMA_STATEMENTS = (
     """
     create index if not exists reports_type_generated_idx
     on reports(type, generated_at desc)
+    """,
+    # --- VSS rollback simulation results ------------------------------------
+    """
+    create table if not exists rollback_simulations (
+        simulation_id text primary key,
+        endpoint_id text not null references enrolled_agents(agent_id),
+        candidate_set_hash text not null,
+        candidate_count integer not null default 0,
+        restorable_count integer not null default 0,
+        skipped_paths jsonb not null default '[]'::jsonb,
+        destructive boolean not null default false,
+        valid_until timestamptz not null,
+        decision_trace jsonb not null default '[]'::jsonb,
+        provider text,
+        recovery_point_id text,
+        affected_paths jsonb not null default '[]'::jsonb,
+        customer_id uuid references customers(id),
+        created_at timestamptz not null default now()
+    )
+    """,
+    """
+    create index if not exists rollback_simulations_endpoint_idx
+    on rollback_simulations(endpoint_id)
+    """,
+    """
+    create index if not exists rollback_simulations_endpoint_valid_until_idx
+    on rollback_simulations(endpoint_id, valid_until desc)
+    """,
+    # --- VSS real restore execution results --------------------------------
+    """
+    create table if not exists rollback_restore_results (
+        execution_id text primary key,
+        simulation_id text,
+        endpoint_id text not null references enrolled_agents(agent_id),
+        candidate_set_hash text not null,
+        success boolean not null default false,
+        paths_attempted integer not null default 0,
+        paths_restored integer not null default 0,
+        paths_failed integer not null default 0,
+        path_results jsonb not null default '[]'::jsonb,
+        error_message text,
+        recovery_point_id text,
+        provider text,
+        executed_at timestamptz,
+        duration_ms integer,
+        customer_id uuid references customers(id),
+        created_at timestamptz not null default now()
+    )
+    """,
+    """
+    create index if not exists rollback_restore_results_endpoint_idx
+    on rollback_restore_results(endpoint_id)
+    """,
+    """
+    create index if not exists rollback_restore_results_simulation_idx
+    on rollback_restore_results(simulation_id)
+    """,
+    # --- Metadata preservation summary (Agent 1 richer restore evidence) ----
+    #
+    # Stores the aggregate ACL / ADS / timestamp preservation outcome from a
+    # real restore.  Added as a nullable column so existing restore rows are
+    # unaffected; Agent 1 populates it once per-provider support ships.
+    """
+    alter table rollback_restore_results
+    add column if not exists metadata_preservation_summary jsonb
     """,
 )
 

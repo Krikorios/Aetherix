@@ -282,6 +282,8 @@ export function BlocklistPage({ me }: { me: MeResponse }) {
             setSimulation(null);
           }}
           isLoading={isLoading}
+          panelTitle="Blocklist Entries"
+          panelSubtitle="Active block rules and IOC entries"
         />
 
         <DetailPanel

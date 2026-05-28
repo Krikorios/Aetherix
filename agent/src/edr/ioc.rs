@@ -85,6 +85,7 @@ pub fn match_indicator(indicator: &Indicator, policy_version: &str) -> Option<Ed
             response: None,
             recovery_hints: None,
             rollback_evidence: None,
+            rollback_file_paths: Vec::new(),
         })
     } else {
         None

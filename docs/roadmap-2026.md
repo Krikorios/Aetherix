@@ -213,6 +213,37 @@ Priority 3 in
 log collectors (syslog / Event Log / journald), parser packs, FIM,
 rootkit checks, software inventory + CVE/EPSS/KEV enrichment, MITRE
 ATT&CK mapping, correlation rules. New policy section `siem_hids`.
+**Depends on P1-1.5 (OpenSearch plane) for scalable retention + search.**
+
+### P1-1.5 OpenSearch Event, Retention & Search Plane (foundational for SIEM + Live Search)
+**Why this is now P1:** Every SIEM/HIDS, EDR telemetry, DLP, and compliance event stream eventually needs (a) fast full-text + structured search, (b) customer-configurable retention (30/90/365/7yr + legal hold), and (c) cost-effective tiering. Postgres alone cannot deliver this at MSP scale. This workstream unblocks "Live Search", makes the Native SIEM module credible, and satisfies the explicit "retention/search" gap called out in [native-security-gap-review.md](/Users/user/Desktop/Aetherix/docs/native-security-gap-review.md) and [default-policy-v1.01.md](/Users/user/Desktop/Aetherix/docs/default-policy-v1.01.md).
+
+**Scope (phased, start immediately)**
+- Add `opensearch` service to `docker-compose.yml` (single-node dev + production guidance for multi-node + TLS + basic auth / API keys).
+- Minimal Python client integration (official `opensearch-py` or `elasticsearch` 8.x compatible client) behind a feature flag / env var `AETHERIX_OPENSEARCH_URL`.
+- Dual-write helper (new `app/services/event_index.py` or similar) that, after every successful Postgres commit for `security_alerts`, `fim_events`, `dlp_events`, and `evidence_events`, indexes a normalized document carrying all tenant fields + `evidence_controls` + `postgres_ref` (seq or id + chain_hash for verification).
+- Index templates + data-stream / index-pattern design: `aetherix-events-{partner}-{customer}-*` (or data streams). Enforce required fields and `evidence_controls`.
+- First ILM policies (hot 7–30d, warm 90–365d, cold/frozen for regulatory, delete) driven by a new `customer_retention_policy` table / column (or reuse licensing metadata). Legal-hold override path that writes to audit_log.
+- Read path: new internal `search_events(customer_id, query, time_range, ...)` helper + first API surface (`/customers/{id}/events/search` or GraphQL-style) used by a stub "Live Search" console page.
+- Add "opensearch" as a first-class SIEM connector in `apps/api/app/services/integrations.py` (alongside existing Splunk + Sentinel entries) so customers can push or let Aetherix push to their own OpenSearch.
+- Structured logging from the API (and later agent) to a separate `aetherix-platform-*` namespace (operational observability only).
+
+**Concrete first 2-week tasks (start work now)**
+1. Stand up local OpenSearch 2.x in docker-compose + healthcheck (use official image + security demo config or basic auth).
+2. Add `opensearch` section to `apps/api/requirements.txt` + small client wrapper that respects tenant isolation on every index/search.
+3. Implement minimal dual-write for one table (e.g. `security_alerts` on create) with idempotent index name generation and error logging (never fail the request if OpenSearch is down — queue for later replay).
+4. Define the canonical event document schema (see architecture.md §3.3.1) and create the first index template via the client on startup.
+5. Wire a simple `GET /internal/search/smoke?customer_id=...` (platform-owner only) that proves round-trip.
+6. Document the Postgres-vs-OpenSearch contract (authoritative chain vs query replica) in a short ADDITIONAL section of architecture.md and this roadmap.
+
+**Exit criteria for this item**
+- A customer with 90-day retention configured can see events older than Postgres practical limits via the new search path.
+- ILM policies are versioned and automatically selected from the customer's retention setting.
+- Every indexed document contains enough metadata to cross-verify against the Postgres hash chain.
+- Console has a (even if rough) Live Search / Events workspace that returns results from OpenSearch.
+- Adding a new high-volume event type requires <1 day of plumbing to land in the searchable retention store.
+
+**Touches:** `docker-compose.yml`, new `apps/api/app/services/event_index.py` (or equivalent), updates to `state.py` / `compliance.py` write paths, new Alembic table for retention policies if needed, `integrations.py`, console Search page foundation, architecture.md (already partially updated).
 
 ### P1-2 Partner Portal polish + RMM/PSA integrations
 White-label co-branding (Companies + Licensing already exposes the

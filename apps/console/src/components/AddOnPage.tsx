@@ -38,7 +38,7 @@ export function AddOnPage({ me: _me, icon: Icon, title, description, features, l
             <div className="addOnCtaTitle">This module requires an add-on licence</div>
             <div className="addOnCtaSub">Contact your Aetherix account manager to enable {licenceName}.</div>
           </div>
-          <button className="btn btnPrimary addOnCtaBtn">
+          <button className="btn btnPrimary addOnCtaBtn" type="button" disabled title="Contact workflow is not available yet">
             Contact Us <ArrowRight size={12} />
           </button>
         </div>

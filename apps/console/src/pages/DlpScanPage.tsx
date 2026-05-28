@@ -73,7 +73,7 @@ export function DlpScanPage() {
     <>
       <PageHeader
         eyebrow="Data loss prevention"
-        title="DLP Scanner"
+        title="Threats Xplorer"
         subtitle="Inspect text for protected entities using the active policy"
       />
 

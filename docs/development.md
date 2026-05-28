@@ -57,6 +57,23 @@ npm run dev -- --host 127.0.0.1
 
 If Vite reports that `5173` is in use, use the next URL printed by the terminal.
 
+## Known Console Issues
+
+The following issues are tracked in `docs/console-ui-audit-2026-05-28.md` and should be fixed before any demo session:
+
+**Vite build/parse errors (P0 — trigger full-screen overlay in dev/preview, dismiss with Escape):**
+
+- `apps/console/src/pages/AntimalwareBehavior.tsx` — syntax error near EOF (unexpected token / missing closing brace). Fix before demoing the Antimalware & Behavior protection module.
+- `apps/console/src/pages/EASMPage.tsx` — `PARSE_ERROR` at line 406:1 (unexpected `}`). Fix before demoing the External Attack Surface page.
+
+**Backend errors exposed to users (P0):**
+
+- Executive Summary footer exposes raw references to `ai_reports` table, `/companies`, and `/alerts` routes — replace with proper copy.
+- Compliance Center renders a raw JSON validation error from the API (`Field required: source_table`) — add a proper empty/error state component.
+- Queue page renders a "Not Found" alert banner — guard the API call and show an empty state instead.
+
+Run `npm run build` (not just `npm run dev`) to catch Vite parse errors early — the dev server sometimes defers them until the affected page is navigated to.
+
 ## Validation Commands
 
 Run these before handing off changes:
@@ -252,30 +269,43 @@ The agent stores credentials at `~/.aetherix/agent-credentials.json` unless `AET
 
 ## Current Data Model
 
-Core tables are created in `apps/api/app/db.py`:
+### Authoritative & Compliance Store (Postgres)
+Core tables are created in `apps/api/app/db.py`. Postgres remains the single source of truth for:
 
-- `partners`
-- `customers`
-- `customer_groups`
-- `policy_packages`
-- `policy_assignments`
-- `enrollment_tokens`
-- `enrolled_agents`
-- `installer_builds`
-- `quick_deploy_links`
-- `heartbeats`
-- `alerts`
-- `acknowledged_alerts`
-- `policy_documents`
-- `audit_log`
-- `accounts`, `account_roles`, `roles`, `role_permissions`, `login_challenges`, `impersonation_sessions`
-- `subscriptions`, `company_licenses`, `license_products`, `license_usage_daily`
-- `policy_documents_v2`, `policy_versions`, `policy_assignments_v2`, `policy_simulations`, `policy_promotions`, `evidence_events`
+- All mutable state and relationships (partners, customers, groups, policy documents/versions/assignments, enrolled agents, heartbeats (latest), module_actions, quarantine inventory, accounts/roles, subscriptions, etc.)
+- The append-only, hash-chained compliance spine: `audit_log` and `evidence_events`
+- Current operational state that must support joins and strong consistency (e.g. policy effective evaluation, active alerts, pending approvals)
+
+Key high-volume event tables that still live here today (but are dual-written or will be replicated to OpenSearch):
 - `telemetry_events`, `security_alerts`, `incident_cases`
-- `compliance_controls`
-- `ai_providers`, `customer_ai_settings`, `customer_ai_usage_daily`
+- `fim_events`, `dlp_events`
+- Historical evidence rows
 
-Do not add in-memory state for new features. Add Postgres tables and tests that truncate or isolate them in `apps/api/tests/conftest.py`.
+**Rule:** Any new table that participates in the compliance evidence chain or requires strong ACID/join semantics starts in Postgres. Never add in-memory state for new features. Add Postgres tables and tests that truncate or isolate them in `apps/api/tests/conftest.py`.
+
+### Searchable Time-Series & Retention Store (OpenSearch — planned / in active integration)
+See [architecture.md §3.3.1](architecture.md) for the full contract.
+
+High-volume append-only security telemetry, logs, and historical events that require:
+- Sub-second full-text + structured search
+- Customer-configurable retention with hot/warm/cold/delete via ILM
+- "Live Search" / investigation workspaces
+- Future raw SIEM/HIDS log volume
+
+Primary documents (dual-written from the control plane after Postgres commit, or via CDC later):
+- `security_alerts` + raw EDR events
+- `fim_events`, `dlp_events`
+- `evidence_events` replica (with `chain_hash` / `postgres_ref` for verification)
+- Future raw log streams from the Native SIEM/HIDS collectors
+
+**Important invariant:** OpenSearch is a query-optimized replica for search and retention. It is **never** the source of truth for auditor exports or chain-of-custody verification. Every document carries enough metadata to cross-check against Postgres.
+
+### Guidance for new work
+- Compliance / audit / policy / account / current-state tables → Postgres + Alembic.
+- New high-volume detection/telemetry/log/event types that will be searched historically or retained for years → design the Postgres row + the OpenSearch document shape together (see `event_index.py` helper once landed).
+- Retention policy changes and legal-hold flows must update both stores (or at least record the intent in the Postgres audit_log so the OpenSearch side can be reconciled).
+
+The split is deliberate: Postgres for "what must never be lost or tampered with and must support complex queries", OpenSearch for "what operators and SOC teams need to search and keep for regulatory periods at scale". Roadmap item P1-1.5 tracks the concrete integration work.
 
 ## Current Console Foundation
 

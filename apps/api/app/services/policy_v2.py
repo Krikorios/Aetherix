@@ -17,6 +17,10 @@ from uuid import UUID
 from app.db import connection
 from app.schemas import (
     AgentDlpEvidenceIngest,
+    AgentRollbackSimulation,
+    AgentRollbackSimulationAck,
+    AgentRollbackRestoreResult,
+    AgentRollbackRestoreResultAck,
     AgentPolicyAck,
     AgentPolicyAckRequest,
     AgentPolicyResponse,
@@ -1663,6 +1667,197 @@ def ingest_agent_dlp_evidence(endpoint_id: str, token: str, payload: AgentDlpEvi
         pass
 
     return event
+
+
+def ingest_agent_rollback_simulation(
+    endpoint_id: str,
+    token: str,
+    payload: "AgentRollbackSimulation",
+) -> "AgentRollbackSimulationAck":
+    """Store a simulation result from the agent and emit compliance evidence.
+
+    The ``simulation_id`` is upserted so the agent can safely retry without
+    creating duplicate rows.  The resulting evidence event is linked to the
+    ``endpoint.rollback.simulated`` compliance control.
+    """
+    enrolled = _authenticate_agent(endpoint_id, token)
+    customer_id = enrolled["customer_id"]
+
+    valid_until = payload.valid_until
+    if valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=UTC)
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into rollback_simulations (
+                simulation_id, endpoint_id, candidate_set_hash, candidate_count,
+                restorable_count, skipped_paths, destructive, valid_until,
+                decision_trace, provider, recovery_point_id, affected_paths,
+                customer_id
+            ) values (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s::jsonb, %s, %s,
+                      %s::jsonb, %s)
+            on conflict (simulation_id) do update set
+                restorable_count = excluded.restorable_count,
+                skipped_paths    = excluded.skipped_paths,
+                decision_trace   = excluded.decision_trace
+            """,
+            (
+                payload.simulation_id,
+                endpoint_id,
+                payload.candidate_set_hash,
+                payload.candidate_count,
+                payload.restorable_count,
+                json.dumps([d.model_dump(mode="json") for d in payload.skipped_paths]),
+                payload.destructive,
+                valid_until,
+                json.dumps(payload.decision_trace),
+                payload.provider,
+                payload.recovery_point_id,
+                json.dumps(payload.affected_paths),
+                customer_id,
+            ),
+        )
+
+    confidence = payload.simulation_confidence
+
+    scope = {
+        "endpoint_id": endpoint_id,
+        "customer_id": str(customer_id) if customer_id else None,
+    }
+    evidence = EvidenceEmitter.emit(
+        action="endpoint.rollback.simulated",
+        resource=f"endpoint:{endpoint_id}",
+        actor=f"agent:{endpoint_id}",
+        scope=scope,
+        payload={
+            "simulation_id": payload.simulation_id,
+            "candidate_set_hash": payload.candidate_set_hash,
+            "candidate_count": payload.candidate_count,
+            "restorable_count": payload.restorable_count,
+            "destructive": payload.destructive,
+            "valid_until": valid_until.isoformat(),
+            "provider": payload.provider,
+            "recovery_point_id": payload.recovery_point_id,
+            "simulation_confidence": confidence,
+        },
+    )
+
+    return AgentRollbackSimulationAck(
+        simulation_id=payload.simulation_id,
+        accepted=True,
+        evidence_event_id=evidence.id if evidence else None,
+        simulation_confidence=confidence,
+    )
+
+
+def ingest_agent_rollback_restore_result(
+    endpoint_id: str,
+    token: str,
+    payload: "AgentRollbackRestoreResult",
+) -> "AgentRollbackRestoreResultAck":
+    """Store a real restore execution result from the agent and emit compliance evidence.
+
+    ``execution_id`` is upserted so retry posts from the agent are safe.
+    Emits ``endpoint.rollback.executed`` on success or ``endpoint.rollback.failed``
+    on failure, matching the heartbeat-response-action pathway from ``state.py``
+    so the compliance evidence trail is consistent regardless of which path fires.
+    """
+    enrolled = _authenticate_agent(endpoint_id, token)
+    customer_id = enrolled["customer_id"]
+
+    executed_at = payload.executed_at
+    if executed_at is not None and executed_at.tzinfo is None:
+        executed_at = executed_at.replace(tzinfo=UTC)
+
+    success_rate = payload.restore_success_rate
+
+    # Serialise metadata_preservation_summary if present.
+    meta_preservation_json: str | None = None
+    if payload.metadata_preservation_summary is not None:
+        meta_preservation_json = json.dumps(
+            payload.metadata_preservation_summary.model_dump(mode="json")
+        )
+
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into rollback_restore_results (
+                execution_id, simulation_id, endpoint_id, candidate_set_hash,
+                success, paths_attempted, paths_restored, paths_failed,
+                path_results, error_message, recovery_point_id, provider,
+                executed_at, duration_ms, customer_id, metadata_preservation_summary
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s,
+                      %s, %s, %s, %s::jsonb)
+            on conflict (execution_id) do update set
+                success                      = excluded.success,
+                paths_restored               = excluded.paths_restored,
+                paths_failed                 = excluded.paths_failed,
+                path_results                 = excluded.path_results,
+                error_message                = excluded.error_message,
+                metadata_preservation_summary = excluded.metadata_preservation_summary
+            """,
+            (
+                payload.execution_id,
+                payload.simulation_id,
+                endpoint_id,
+                payload.candidate_set_hash,
+                payload.success,
+                payload.paths_attempted,
+                payload.paths_restored,
+                payload.paths_failed,
+                json.dumps([r.model_dump(mode="json") for r in payload.path_results]),
+                payload.error_message,
+                payload.recovery_point_id,
+                payload.provider,
+                executed_at,
+                payload.duration_ms,
+                customer_id,
+                meta_preservation_json,
+            ),
+        )
+
+    action = "endpoint.rollback.executed" if payload.success else "endpoint.rollback.failed"
+    scope = {
+        "endpoint_id": endpoint_id,
+        "customer_id": str(customer_id) if customer_id else None,
+    }
+    # Include metadata_preservation_summary in the compliance evidence payload
+    # so the evidence trail captures whether ACLs/ADS/timestamps were preserved.
+    evidence_meta: dict | None = (
+        payload.metadata_preservation_summary.model_dump(mode="json")
+        if payload.metadata_preservation_summary is not None
+        else None
+    )
+    evidence = EvidenceEmitter.emit(
+        action=action,
+        resource=f"endpoint:{endpoint_id}",
+        actor=f"agent:{endpoint_id}",
+        scope=scope,
+        payload={
+            "execution_id": payload.execution_id,
+            "simulation_id": payload.simulation_id,
+            "candidate_set_hash": payload.candidate_set_hash,
+            "success": payload.success,
+            "paths_attempted": payload.paths_attempted,
+            "paths_restored": payload.paths_restored,
+            "paths_failed": payload.paths_failed,
+            "error_message": payload.error_message,
+            "recovery_point_id": payload.recovery_point_id,
+            "provider": payload.provider,
+            "executed_at": executed_at.isoformat() if executed_at else None,
+            "duration_ms": payload.duration_ms,
+            "restore_success_rate": success_rate,
+            "metadata_preservation_summary": evidence_meta,
+        },
+    )
+
+    return AgentRollbackRestoreResultAck(
+        execution_id=payload.execution_id,
+        accepted=True,
+        evidence_event_id=evidence.id if evidence else None,
+        restore_success_rate=success_rate,
+    )
 
 
 def _authenticate_agent(endpoint_id: str, token: str) -> dict[str, Any]:

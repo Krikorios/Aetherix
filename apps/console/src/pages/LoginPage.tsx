@@ -189,7 +189,7 @@ export function LoginPage({
           </form>
         ) : (
           <form className="loginForm" onSubmit={handleTotp} noValidate>
-            <p className="loginFooter" style={{ marginTop: 0 }}>
+            <p className="loginFooter">
               {challenge?.status === "totp_setup_required"
                 ? "Scan the setup code with your authenticator app, then enter the 6-digit code to finish enrollment."
                 : `Enter the 6-digit code from your authenticator app for ${challenge?.email}.`}

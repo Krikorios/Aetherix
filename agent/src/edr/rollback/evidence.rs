@@ -114,7 +114,7 @@ pub fn build_rollback_requested_event(
     evidence_controls: Vec<String>,
 ) -> EdrEvent {
     let mut event = EdrEvent::new(
-        EdrDetectionKind::RansomwareRollback,
+        EdrDetectionKind::ResponseAction,
         simulation_id,
         EdrAction::Rollback,
         policy_version,
@@ -137,7 +137,7 @@ pub fn build_rollback_executed_event(
 ) -> EdrEvent {
     let response = super::intent::convert_rollback_evidence_to_response(&rollback_evidence);
     let mut event = EdrEvent::new(
-        EdrDetectionKind::RansomwareRollback,
+        EdrDetectionKind::ResponseAction,
         simulation_id,
         EdrAction::Rollback,
         policy_version,
@@ -149,6 +149,17 @@ pub fn build_rollback_executed_event(
     event.matched_indicator = Some(action_id.to_string());
     event.response = Some(response);
     event.rollback_evidence = Some(rollback_evidence);
+    event.rollback_file_paths = event
+        .rollback_evidence
+        .as_ref()
+        .map(|evidence| {
+            evidence
+                .restored_paths
+                .iter()
+                .map(|path| path.path.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     event
 }
 
@@ -194,9 +205,9 @@ pub fn build_rollback_failed_event(
 
     let response = super::intent::convert_rollback_evidence_to_response(&rollback_evidence);
     let mut event = EdrEvent::new(
-        EdrDetectionKind::RansomwareRollback,
+        EdrDetectionKind::ResponseAction,
         "rollback",
-        EdrAction::Review,
+        EdrAction::Rollback,
         policy_version,
     );
     event.evidence_controls = evidence_controls;
@@ -263,9 +274,9 @@ pub fn build_rollback_refused_event(
     };
 
     let mut event = EdrEvent::new(
-        EdrDetectionKind::RansomwareRollback,
+        EdrDetectionKind::ResponseAction,
         "rollback",
-        EdrAction::Review,
+        EdrAction::Rollback,
         policy_version,
     );
     event.evidence_controls = evidence_controls;
@@ -378,7 +389,7 @@ mod tests {
             "pol-v1",
             vec!["nist-csf-2.0:RS.MI".to_string()],
         );
-        assert_eq!(event.kind, EdrDetectionKind::RansomwareRollback);
+        assert_eq!(event.kind, EdrDetectionKind::ResponseAction);
         assert!(event.tags.contains(&"rollback_requested".to_string()));
         assert!(event.tags.contains(&"remote_action:rollback".to_string()));
         assert_eq!(event.matched_indicator, Some("action-1".to_string()));

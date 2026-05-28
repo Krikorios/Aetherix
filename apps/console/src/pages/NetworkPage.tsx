@@ -371,7 +371,7 @@ export function NetworkPage({ me }: { me: MeResponse }) {
           <div className="networkFooter">
             <span>{selectedCount} selected</span>
             <button type="button" className="installTextButton" disabled={selectedCount === 0} onClick={() => setSelectedEndpointIds(new Set())}>Clear selection</button>
-            <button type="button" className="installTextButton danger" disabled={selectedCount === 0}><Trash2 size={14} /> Retire endpoint</button>
+            <button type="button" className="installTextButton danger" disabled title="Endpoint retirement is not available yet"><Trash2 size={14} /> Retire endpoint</button>
           </div>
         </section>
       </section>

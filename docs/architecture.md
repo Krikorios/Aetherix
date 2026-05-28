@@ -75,7 +75,8 @@ flowchart TB
    EASM -. future .-> Reasoning
    Response -. future .-> Reasoning
    API -. future .-> Queue[Redis / Event Queue]
-   DRP -. future .-> Collectors[OSINT / Dark Web / Social / Paste / Repo Collectors]
+   API -. future .-> OS[(OpenSearch\nEvents + Logs + ILM Retention)]
+   DRP -. future .-> Reasoning
    EASM -. future .-> Scanners[DNS / CT Logs / Port / Vuln Enrichment]
    Reasoning -. future .-> Vector[(Vector Store)]
 ```
@@ -153,13 +154,62 @@ Current state: customers, accounts, roles, role assignments, invitations, passwo
 
 | Store | Use | Why |
 | --- | --- | --- |
-| Postgres | endpoints, policies, alerts, audit, users, tenants | ACID, joinable, easy to back up |
-| Object store | scan evidence (when policy opts in) | Cheap, immutable, lifecycle policies |
-| Redis | ingest queue, rate-limit counters, short caches | Backpressure between agent fleet and API |
-| Vector store | embeddings for semantic DLP recall | Optional; only populated when semantic features are enabled |
-| Graph projection | companies, assets, findings, identities, infrastructure, incidents | Cross-module correlation without replacing Postgres as source of truth |
+| Postgres | Authoritative state (endpoints, policies, current alerts, accounts, tenants, policy documents, module actions, quarantine inventory) + append-only compliance chain (`audit_log`, `evidence_events`) | ACID, joinable, hash-chained tamper evidence, easy point-in-time recovery and auditor export |
+| OpenSearch | High-volume time-series security events, logs, telemetry, and investigative search (`security_alerts`, `fim_events`, `dlp_events`, `evidence_events` historical, raw SIEM/HIDS logs, historical telemetry). Powers retention policies and full-text / correlation search. | Sub-second search on massive event volumes, native Index Lifecycle Management (ILM) for hot/warm/cold/delete tiers, per-tenant data streams, built for SIEM-style log analytics and "Live Search" |
+| Object store | Scan evidence, quarantine artifacts, large rollback payloads, compliance export bundles (when policy opts in) | Cheap, immutable, lifecycle policies, signed artifact references |
+| Redis | Ingest queue / backpressure, rate-limit counters, short caches, session state | Fast coordination between agent fleet and control plane |
+| Vector store | Embeddings for semantic DLP recall, future prompt audit / RAG over customer policy + incident corpus | Optional; only populated when semantic features are enabled |
+| Graph projection (future) | companies, assets, findings, identities, infrastructure, incidents | Cross-module correlation and traversal without replacing Postgres as source of truth |
 
-The POC uses Postgres as the single source of truth. `apps/api/app/db.py` bootstraps schema idempotently on startup and Alembic migrations live under `apps/api/alembic/`; there is no SQLite or in-memory fallback. Tests use a separate Postgres database configured by `AETHERIX_TEST_DATABASE_URL`.
+The POC uses Postgres as the single source of truth for all state and the compliance evidence chain. `apps/api/app/db.py` bootstraps schema idempotently on startup and Alembic migrations live under `apps/api/alembic/`; there is no SQLite or in-memory fallback. Tests use a separate Postgres database configured by `AETHERIX_TEST_DATABASE_URL`.
+
+High-volume append-only event tables that drive operations, investigation, and SIEM use cases will be dual-written (or CDC-replicated) to OpenSearch so that Postgres remains the authoritative, hash-chained system of record while OpenSearch provides the scalable search + retention plane. See §3.3.1 for the detailed contract.
+
+#### 3.3.1 Event & Log Store (OpenSearch) — Retention, Ingestion, and Index Management
+
+OpenSearch is the dedicated store for the platform's high-volume, time-series, searchable security telemetry and logs. It directly supports the **Native SIEM / HIDS** module (architecture §3.4.2), "Live Search" investigation experience (default-policy-v1.01 and roadmap), and customer-configurable retention SLAs.
+
+**Primary contents**
+- Security detections (`security_alerts` and raw EDR events)
+- FIM events (`fim_events`)
+- DLP events (`dlp_events`)
+- Compliance evidence events (replica of `evidence_events` carrying `chain_hash` for verification)
+- Future raw SIEM/HIDS streams (Windows Event Log, journald, syslog, auditd, ETW/ESF, eBPF, app logs, netflow, etc.)
+- Historical heartbeat/telemetry snapshots for timelines (distinct from the "latest state" row in Postgres `heartbeats`)
+
+**Ingestion patterns (phased)**
+- Phase 1 (current target): Dual-write inside the control plane after the Postgres transaction commits for `security_alerts`, `fim_events`, `dlp_events`, and `evidence_events`. The API remains the single source of tenant context and `evidence_controls` tagging.
+- Phase 2: Postgres CDC (logical replication / Debezium) for the audit replica path and any high-volume tables where we want zero app change risk.
+- Phase 3 (mature SIEM module): Agent collectors or a lightweight relay (Vector / custom) can stream raw logs directly to tenant-scoped OpenSearch ingest pipelines when volume or latency requirements exceed the heartbeat envelope. All such paths still carry tenant identifiers and are subject to the same policy + entitlement gates.
+
+**Index & data-stream strategy**
+- Tenant-isolated patterns: `aetherix-events-{partner_id}-{customer_id}-*` (or data streams with the same routing). This gives clean ILM per customer, easy snapshot/restore, and simple query scoping.
+- Index templates enforce required fields on every document: `partner_id`, `customer_id`, `endpoint_id`, `module`, `detector_id`, `policy_version`, `evidence_controls[]`, `mitre_tactics[]`, `severity`, `timestamp`, plus module-specific payload.
+- All security event documents carry a `postgres_chain_hash` (or `audit_seq`) reference so any result used in an auditor export or compliance report can be cross-verified against the Postgres authoritative chain.
+- Separate index patterns for operational platform logs (API + agent structured logs) under `aetherix-platform-*` so customer data never mixes with control-plane observability.
+
+**Retention & Index Lifecycle Management (ILM)**
+- Retention policies are first-class customer configuration (exposed in Companies + Licensing / policy documents) and map to ILM policies:
+  - Hot (last 7–30 days): full replicas, fast search, used for Live Search and active incident response.
+  - Warm (30–90/365 days): searchable, fewer replicas, used for historical investigation and compliance lookbacks.
+  - Cold / Frozen: searchable snapshots or frozen tier; used for long-term regulatory retention (7+ years).
+  - Delete: after configured retention unless a legal-hold flag is set on the customer or specific incident.
+- ILM policies are versioned and reference the customer's effective retention setting at index creation/rollover time. Changing a customer's retention updates future indices; historical indices can be migrated or left under their original policy.
+- Legal hold: a customer- or incident-scoped flag that forces the Delete phase to be skipped (or moves data to a "hold" repository) until explicitly released. All hold actions write to the Postgres audit_log + evidence_events.
+
+**Compliance & evidentiary boundary (critical)**
+- Postgres (`audit_log` with its hash chain + `evidence_events`) remains the **single source of truth** for any auditor-facing export or compliance attestation. The `/compliance/export` and attestation workflows continue to read exclusively from Postgres (plus object-store artifacts).
+- OpenSearch serves as a high-performance, retention-aware **query replica**. Any console feature, investigation workspace, or external SIEM export that surfaces historical events must be able to cite the corresponding Postgres `seq` / `chain_hash` or `evidence_event.id`.
+- This split satisfies both "we can search 100M events in <1s" and "our compliance evidence is tamper-evident and exportable without depending on a search engine."
+
+**Multi-tenancy & security**
+- Strict document-level or index-pattern filtering at the OpenSearch layer is defense-in-depth; the primary enforcement is always in the control-plane API (tenant context on every query).
+- Per-tenant credentials / API keys for any direct OpenSearch access (e.g., customer SOC teams or external SIEM connectors) are issued through the existing customer_ai_settings / integrations credential vault pattern.
+
+**Observability tie-in**
+- Platform operational logs (API, agent structured logs, future OpenTelemetry) land in a separate `aetherix-platform-*` namespace so MSP operators can debug the Aetherix control plane itself without ever seeing customer security telemetry.
+
+This design keeps the "one evidence chain" promise of architecture §3.4.2 while giving the platform the scalable log analytics and retention capabilities that MSPs expect from a SIEM-class product. Native SIEM/HIDS collectors (roadmap) will be the largest future producers of volume into this store.
 
 ### 3.4 Reasoning Plane
 
@@ -171,7 +221,7 @@ LLMs and semantic classifiers live behind tenant AI settings and semantic servic
 - Per-customer usage counters and quota checks before outbound AI calls.
 - Optional redaction before external LLM submission.
 
-Still planned: a dedicated prompt-audit table, vector store, and broader structured-output evaluation harness.
+Still planned: a dedicated prompt-audit table, vector store, OpenSearch-backed prompt/incident RAG corpus (separate from customer security telemetry), and broader structured-output evaluation harness.
 
 The reasoning plane is **advisory**. It can raise a risk score, suggest a
 playbook, draft an incident summary. It cannot, on its own, change a
@@ -655,12 +705,12 @@ A full STRIDE pass belongs in its own document. The headline assumptions:
 | Semantic DLP (reasoning plane edge) | [apps/api/app/services/semantic.py](../apps/api/app/services/semantic.py) | Implemented deterministic context scoring with optional external LLM enrichment hooks; enforcement remains deterministic-first |
 | Classification + labeling service | — | Planned: sensitivity-label model + label-propagation rules + endpoint enforcement |
 | Anti-malware / EDR module | [agent/src/edr](../agent/src/edr), [apps/api/app/services/state.py](../apps/api/app/services/state.py) | Implemented first slice: YARA-X scanning/cache, IOC matching, process tree rules, ransomware canary/entropy/mass-write detection, Argon2id-backed reversible quarantine with list/restore primitives, process kill, isolation-intent evidence, remote action evidence, and heartbeat-to-alert mapping. Rollback, firewall enforcement, and richer OS telemetry remain planned. |
-| SIEM / HIDS collectors | — | Planned: log + FIM + syscall/eBPF + vuln-inventory collectors in `agent/`, parser + correlation + MITRE mapping in `apps/api` |
+| SIEM / HIDS collectors | — | Planned: log + FIM + syscall/eBPF + vuln-inventory collectors in `agent/`, parser + correlation + MITRE mapping in `apps/api`; all high-volume streams land in OpenSearch (tenant-isolated data streams + ILM) for search + retention while Postgres holds the compliance chain |
 | Compliance Evidence Engine | [apps/api/app/services/compliance.py](../apps/api/app/services/compliance.py), [apps/api/app/db.py](../apps/api/app/db.py) | v0 implemented: seeded control catalogue, `evidence_controls` tags on audit / alert / policy-document writes, and signed JSON export via `/compliance/export` |
 | DRP / EASM contracts | — | Planned: add `monitored_assets`, `drp_findings`, `easm_assets`, `easm_findings`, `intelligence_items`, `takedown_requests` |
 | State store | [apps/api/app/db.py](../apps/api/app/db.py), [apps/api/app/services/state.py](../apps/api/app/services/state.py) | Postgres-backed POC state |
 | Console | [apps/console/src/App.tsx](../apps/console/src/App.tsx), [apps/console/src/pages/CompaniesPage.tsx](../apps/console/src/pages/CompaniesPage.tsx), [apps/console/src/pages/AccountsPage.tsx](../apps/console/src/pages/AccountsPage.tsx) | Full MSP navigation, operations, alerts, DLP scanner, policy editor/simulation, Companies + Licensing, Accounts hierarchy, Quick Deploy |
-| Audit log | [apps/api/app/services/audit.py](../apps/api/app/services/audit.py) | Implemented for mutating routes |
+| Audit log | [apps/api/app/services/audit.py](../apps/api/app/services/audit.py) | Implemented (hash-chained) in Postgres as authoritative source of truth. OpenSearch receives a query-optimized replica (with chain_hash) for fast search and investigation; never used for compliance exports or chain verification |
 | AI settings / semantic gateway edge | [apps/api/app/services/ai_settings.py](../apps/api/app/services/ai_settings.py), [apps/api/app/services/semantic.py](../apps/api/app/services/semantic.py) | Provider catalogue, encrypted BYO keys, tier gates, quota counters, redaction, semantic DLP integration implemented; prompt audit/vector store remain future hardening |
 | Enrollment / mTLS | [apps/api/app/services/enrollment.py](../apps/api/app/services/enrollment.py), [apps/api/app/services/customers.py](../apps/api/app/services/customers.py) | Token enrollment, tenant-bound installer profiles, per-agent HMAC implemented; Ed25519/mTLS remains future hardening |
 

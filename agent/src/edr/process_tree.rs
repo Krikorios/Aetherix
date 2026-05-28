@@ -241,6 +241,7 @@ fn evaluate_exec(exec: &ProcessExec, current_pids: &HashMap<u32, ProcessExec>) -
                 response: None,
                 recovery_hints: None,
                 rollback_evidence: None,
+                rollback_file_paths: Vec::new(),
             });
         }
 
@@ -270,6 +271,7 @@ fn evaluate_exec(exec: &ProcessExec, current_pids: &HashMap<u32, ProcessExec>) -
                 response: None,
                 recovery_hints: None,
                 rollback_evidence: None,
+                rollback_file_paths: Vec::new(),
             });
         }
     }

@@ -103,7 +103,9 @@ def _truncate_tables() -> None:
                 login_challenges,
                 oauth2_states,
                 oauth2_identities,
-                oauth2_providers
+                oauth2_providers,
+                rollback_simulations,
+                rollback_restore_results
             restart identity cascade
             """
         )

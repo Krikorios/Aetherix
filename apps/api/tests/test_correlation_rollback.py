@@ -115,6 +115,28 @@ def _fetch_rollback_evidence_events() -> list[dict]:
         return list(cur.fetchall())
 
 
+def _seed_simulation(
+    *,
+    endpoint_id: str,
+    simulation_id: str,
+    candidate_set_hash: str,
+    customer_id=None,
+    valid_hours: int = 2,
+) -> None:
+    """Insert a rollback_simulations row so rollback-intent guard passes in tests."""
+    valid_until = datetime.now(UTC) + timedelta(hours=valid_hours)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into rollback_simulations (
+                simulation_id, endpoint_id, candidate_set_hash,
+                candidate_count, restorable_count, valid_until, customer_id
+            ) values (%s, %s, %s, 3, 2, %s, %s)
+            on conflict (simulation_id) do nothing
+            """,
+            (simulation_id, endpoint_id, candidate_set_hash, valid_until, customer_id),
+        )
+
 def _insert_dlp_event(
     *,
     customer_id,
@@ -558,6 +580,12 @@ def test_rollback_intent_request_low_severity_queued_directly(
     client = TestClient(app)
     headers = auth_headers(admin_id)
 
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-low-001",
+        candidate_set_hash="hash-low-001",
+        customer_id=tenant["customer_id"],
+    )
     valid_until = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-intent",
@@ -594,6 +622,12 @@ def test_rollback_intent_high_severity_awaiting_approval(
     client = TestClient(app)
     headers = auth_headers(admin_id)
 
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-high-001",
+        candidate_set_hash="hash-high-001",
+        customer_id=tenant["customer_id"],
+    )
     valid_until = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-intent",
@@ -646,6 +680,12 @@ def test_rollback_intent_approve_dual_auth(
     )
     headers_second = auth_headers(second_admin.id)
 
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-dual-001",
+        candidate_set_hash="hash-dual-001",
+        customer_id=customer_id,
+    )
     valid_until = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-intent",
@@ -701,6 +741,12 @@ def test_rollback_intent_deny_flow(
     client = TestClient(app)
     headers = auth_headers(admin_id)
 
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-deny-001",
+        candidate_set_hash="hash-deny-001",
+        customer_id=tenant["customer_id"],
+    )
     valid_until = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-intent",
@@ -743,6 +789,13 @@ def test_rollback_intent_expired_simulation_rejected(
     headers = auth_headers(admin_id)
 
     expired_until = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-exp-001",
+        candidate_set_hash="hash-exp-001",
+        customer_id=tenant["customer_id"],
+        valid_hours=-2,
+    )
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-intent",
         json={
@@ -905,6 +958,118 @@ def test_rollback_e2e_execution_evidence(
     assert str(rb_from_behavior[0]["related_id"]) == str(rollback_alert["id"])
 
 
+def test_agent_rollback_uses_nested_response_decision_trace_for_correlation(
+    tenant_hierarchy_factory, monkeypatch
+) -> None:
+    """Agent-originated rollback events carry provider traces in response.
+
+    The heartbeat processor must use those nested correlation hints, not only
+    top-level EdrEvent.decision_trace, so Agent 3 can link recovery back to FIM.
+    """
+    monkeypatch.setenv("AETHERIX_CORRELATION_WINDOW_SECONDS", "300")
+    agent_id = "agent-rb-nested-trace-001"
+    tenant_hierarchy_factory(endpoint_id=agent_id)
+    rollback_path = "/home/user/e2e/nested_trace.docx"
+    shared_hash = "1" * 64
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    fim_time = now - timedelta(seconds=60)
+    _post_heartbeat(
+        agent_id=agent_id,
+        nonce=1,
+        collected_at=fim_time,
+        fim_events=[
+            FimEvent(
+                event_type="modified",
+                file_path=rollback_path,
+                sha256_hash=shared_hash,
+                timestamp=fim_time.isoformat(),
+            )
+        ],
+    )
+
+    canary_time = now - timedelta(seconds=30)
+    _post_heartbeat(
+        agent_id=agent_id,
+        nonce=2,
+        collected_at=canary_time,
+        edr_events=[
+            EdrEvent(
+                kind="ransomware_canary",
+                rule_id="NestedTraceCanary",
+                action="monitor",
+                file_path=rollback_path,
+                file_sha256=shared_hash,
+                matched_indicator="NESTED_TRACE_CANARY",
+                policy_version="policy-v1",
+                collected_at=canary_time.isoformat(),
+            )
+        ],
+    )
+    behavior_alert = _fetch_alert(agent_id, category="behavior")
+
+    nested_trace = [
+        "rollback_provider=vss",
+        f"correlation_hint:fim_path={rollback_path}",
+        f"correlation_hint:dlp_path={rollback_path}",
+        "snapshot_device_mutated=false",
+    ]
+    _post_heartbeat(
+        agent_id=agent_id,
+        nonce=3,
+        collected_at=now,
+        edr_events=[
+            EdrEvent(
+                kind="response_action",
+                rule_id="sim-nested-trace-001",
+                action="rollback",
+                matched_indicator=str(behavior_alert["id"]),
+                policy_version="policy-v1",
+                collected_at=now.isoformat(),
+                response={
+                    "action": "rollback",
+                    "status": "executed",
+                    "attempted_at": now.isoformat(),
+                    "policy_version": "policy-v1",
+                    "rule_id": "sim-nested-trace-001",
+                    "target_pid": None,
+                    "target_path": None,
+                    "file_sha256": None,
+                    "platform": "windows",
+                    "platform_api": "vss",
+                    "decision_trace": nested_trace,
+                    "error": None,
+                    "quarantine": None,
+                    "quarantine_items": [],
+                    "evidence_controls": ["nist-csf-2.0:RC.RP"],
+                },
+                rollback_evidence={
+                    "status": "executed",
+                    "decision_trace": nested_trace,
+                    "evidence_controls": ["nist-csf-2.0:RC.RP"],
+                    "provider": "vss",
+                    "restored_paths": [{"path": rollback_path}],
+                    "failed_paths": [],
+                    "skipped_paths": [],
+                },
+            )
+        ],
+    )
+
+    rollback_alert = _fetch_alert(agent_id, category="response")
+    links = _fetch_links(rollback_alert["id"])
+    assert any(
+        link["correlation_type"] == "rollback_action" and link["related_kind"] == "fim_event"
+        for link in links
+    ), f"expected nested response decision_trace to create FIM link, got {links}"
+
+    executed_events = _fetch_evidence_events_by_action("endpoint.rollback.executed")
+    executed = next(event for event in executed_events if event["resource"] == f"endpoint:{agent_id}")
+    assert f"correlation_hint:fim_path={rollback_path}" in executed["payload"].get(
+        "decision_trace", []
+    )
+
+
 def test_rollback_pending_list_and_filters(
     tenant_hierarchy_factory, auth_headers
 ) -> None:
@@ -918,6 +1083,12 @@ def test_rollback_pending_list_and_filters(
     client = TestClient(app)
     headers_admin = auth_headers(admin_id)
 
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-pending-001",
+        candidate_set_hash="hash-pending-001",
+        customer_id=customer_id,
+    )
     valid_until = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-intent",
@@ -992,6 +1163,12 @@ def test_rollback_effective_policy_disabled_blocking(
     headers_second = auth_headers(second_admin.id)
 
     # 1. Queue a high-severity rollback action while rollback is still enabled under default policy
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-pre-001",
+        candidate_set_hash="hash-pre-001",
+        customer_id=tenant["customer_id"],
+    )
     resp_pre = client.post(
         f"/endpoints/{agent_id}/rollback-restore",
         json={
@@ -1176,6 +1353,12 @@ def test_rollback_restore_flow_full(
     headers_second = auth_headers(second_admin.id)
 
     # 1. Queue a high-severity rollback-restore action (requires approval)
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-restore-001",
+        candidate_set_hash="hash-restore-001",
+        customer_id=customer_id,
+    )
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-restore",
         json={
@@ -1267,6 +1450,12 @@ def test_rollback_restore_flow_failed(
     headers_admin = auth_headers(admin_id)
 
     # 1. Queue a medium-severity rollback-restore action (queued directly)
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-fail-001",
+        candidate_set_hash="hash-fail-001",
+        customer_id=tenant["customer_id"],
+    )
     resp = client.post(
         f"/endpoints/{agent_id}/rollback-restore",
         json={
@@ -1414,6 +1603,12 @@ def test_rollback_full_chain_lightweight_integration(
     alert_id = canary_alert["id"]
 
     # 3. Queue a rollback restore request against the canary simulation (High severity)
+    _seed_simulation(
+        endpoint_id=agent_id,
+        simulation_id="sim-full-chain-001",
+        candidate_set_hash="hash-full-chain-001",
+        customer_id=customer_id,
+    )
     resp_queue = client.post(
         f"/endpoints/{agent_id}/rollback-restore",
         json={
@@ -1555,6 +1750,12 @@ def test_vss_fixture_pending_inbox_export_chain(
         ],
     )
 
+    _seed_simulation(
+        endpoint_id=agent["id"],
+        simulation_id=restore_request["simulation_id"],
+        candidate_set_hash=restore_request["candidate_set_hash"],
+        customer_id=customer_id,
+    )
     queue = client.post(
         f"/endpoints/{agent['id']}/rollback-restore",
         json=restore_request,
@@ -1610,4 +1811,3 @@ def test_vss_fixture_pending_inbox_export_chain(
     assert payload.get("provider_metadata") == expected_metadata
     assert payload.get("rollback_readiness", {}).get("provider_metadata") == expected_metadata
     assert payload.get("rollback_readiness", {}).get("vss_probe_details", {}).get("writers_total") == 2
-

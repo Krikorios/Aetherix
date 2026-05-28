@@ -1,5 +1,7 @@
 # Aetherix Platform Milestone Summary
 
+> Historical note: this May 23 milestone is retained for chronology only. For the current implementation state and customer-facing claim surface, use [current-capabilities-snapshot-2026-05-29.md](current-capabilities-snapshot-2026-05-29.md) and newer coordination briefs.
+
 Date: May 23, 2026  
 Status: Strong POC foundation with several end-to-end internal modules
 

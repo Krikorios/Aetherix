@@ -86,6 +86,92 @@ Use these payloads to exercise the classifier deterministically:
   listener must still fire on subsequent paste events (re-bootstrap via
   `document_start` content script).
 
+---
+
+## Automated validation script
+
+`apps/extension/test/e2e-validation.spec.js` is a Playwright spec that
+automates the checklist rows above. It uses Chromium's `--load-extension`
+flag to load the real extension into a persistent context and spins up a
+local HTTP stub for the Aetherix agent bridge (port 8787) so tests are
+deterministic without a running agent.
+
+### One-time setup
+
+```bash
+# Install Playwright Chromium (if not already installed)
+npx playwright install chromium
+```
+
+### Run in CI / stub mode (no live sites)
+
+```bash
+SKIP_LIVE_SITES=1 npx playwright test \
+  apps/extension/test/e2e-validation.spec.js \
+  --config apps/extension/test/playwright.extension.config.js
+```
+
+This runs only the bridge-reachability and offline-queue tests. The
+`@live-site` tests are automatically skipped.
+
+### Run full manual validation (before every release tag)
+
+```bash
+npx playwright test \
+  apps/extension/test/e2e-validation.spec.js \
+  --config apps/extension/test/playwright.extension.config.js
+```
+
+A browser window opens. The script navigates to each live site and fires
+synthetic paste/upload events. Results and evidence rows are written to
+`apps/extension/test-results/e2e-evidence.json`.
+
+### Interpreting selector-drift annotations
+
+When a site changes its DOM and a composer selector no longer matches, the
+test emits an `info.annotation` of type `selector_drift` describing which
+selector set to update. After a run, check the annotations in the output:
+
+```
+Annotation: selector_drift — "chatgpt composer not found — update SELECTORS.chatgpt"
+```
+
+Fix selector drift by updating the `SELECTORS` map inside
+`e2e-validation.spec.js` **and** the corresponding extractor function in
+`apps/extension/utils/site_context.js`.
+
+### Adding resilient MutationObserver fallbacks
+
+If Gemini test G3 consistently fails with a `selector_drift` annotation
+for shadow-DOM interception, add a `MutationObserver` in
+`apps/extension/utils/intercept.js` that watches for new shadow hosts
+and calls `_bindShadowRoot(el)` on each. The observer should be installed
+once at `document_start` so it catches shadow roots added by SPA navigation.
+
+Example skeleton (add to `intercept.js`):
+
+```javascript
+const _shadowObserver = new MutationObserver((mutations) => {
+  for (const m of mutations) {
+    for (const node of m.addedNodes) {
+      if (node.nodeType !== 1) continue;
+      if (node.shadowRoot && !_boundShadowRoots.has(node.shadowRoot)) {
+        _bindShadowRoot(node.shadowRoot);
+      }
+      // Walk sub-tree for shadow hosts added in bulk
+      node.querySelectorAll?.("*").forEach((el) => {
+        if (el.shadowRoot && !_boundShadowRoots.has(el.shadowRoot)) {
+          _bindShadowRoot(el.shadowRoot);
+        }
+      });
+    }
+  }
+});
+_shadowObserver.observe(document.documentElement, { childList: true, subtree: true });
+```
+
+---
+
 ## Sign-off
 
 - Tester: __________________

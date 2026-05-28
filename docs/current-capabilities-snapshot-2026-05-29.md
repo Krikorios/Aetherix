@@ -72,7 +72,19 @@ This is **production-intent** operator-controlled remote response (not just agen
 
 **Correlation-aware (May 30)**: Alert list now shows uplift badges and expandable correlation detail panel for FIM↔EDR cross-module joins. Severity auto-uplift events (low→medium, medium→high, high→critical) are surfaced to operators with supporting evidence grouped by match type (file_path, sha256).
 
-**Gaps**: Correlation not yet wired into AntimalwareBehavior DetailPanel; some sidebar destinations still lighter; full impersonation UX and white-label still maturing; deeper MDM packaging deferred.
+**Gaps (as of May 29, 2026)**:
+- Correlation not yet wired into AntimalwareBehavior DetailPanel (next cycle, see coordination-brief-cycle-2026-05-30.md).
+- Full impersonation UX and white-label still maturing.
+- Deeper MDM packaging deferred.
+
+**Console UI consistency issues (from audit 2026-05-28)** — see `docs/console-ui-audit-2026-05-28.md` for the full 34-item working checklist. Headline items:
+- Two source files (`AntimalwareBehavior.tsx`, `EASMPage.tsx`) have syntax parse errors that trigger Vite HMR overlays in dev/preview (P0 — fix before any demo).
+- Three pages expose raw developer/backend content to logged-in users: Executive Summary footer (raw table/route names), Compliance Center (raw JSON validation error), Queue page ("Not Found" banner) — P0.
+- Seven nav-item ↔ page-title mismatches (most severe: "Threats Xplorer" → "DLP Scanner"; "Sandbox Analyzer" → "Threat Sandbox"; "Compliance Center" → "Compliance Evidence Engine").
+- The shared three-panel board heading "Detections & Rules Security Alerts" is used verbatim across six different module pages without adapting to context.
+- ADD-ONS & INTEGRATIONS nav section mixes locked upsell pages (Sandbox Analyzer, Email Security, Mobile Security) with functional pages (Data Insights, Integrations, Configuration) with no visual distinction.
+
+**Data Plane Note (as of late May 2026)**: All event, telemetry, audit, and evidence storage is currently in Postgres. OpenSearch integration (tenant-isolated data streams + ILM retention + investigative search) is the planned path for scalable SIEM/HIDS log volume, customer-configurable retention, and the "Live Search" experience. See architecture.md §3.3.1 and roadmap P1-1.5 for the design and first tasks.
 
 ---
 

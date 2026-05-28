@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Columns3, Copy, CircleMinus, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   apiGet,
   apiPost,
@@ -11,6 +11,7 @@ import {
   type PolicyAssignmentV2,
   type PolicyListItemV2,
   type PolicyListResponseV2,
+  type PolicySimulationRecord,
   type Subscription,
 } from "../api";
 import { EmptyState, ErrorBanner, LoadingRow, SideSheet, SuccessBanner } from "../components";
@@ -34,6 +35,10 @@ export function PolicyPage() {
   const [groups, setGroups] = useState<CustomerGroup[]>([]);
 
   const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const [promotionOpen, setPromotionOpen] = useState(false);
+  const [promotionApproved, setPromotionApproved] = useState(false);
+  const [promotionReason, setPromotionReason] = useState("");
+  const [lastSimulation, setLastSimulation] = useState<{ policyId: string; simulationId: string } | null>(null);
   const [assignment, setAssignment] = useState({
     target: "customer" as "customer" | "group" | "endpoint",
     customerId: "",
@@ -77,6 +82,11 @@ export function PolicyPage() {
     );
     if (!mountedRef.current) return;
     setPolicies(page.items || []);
+    const pendingSelection = window.sessionStorage.getItem("aetherix.pending_policy_selection");
+    if (pendingSelection && page.items.some((policy) => policy.id === pendingSelection)) {
+      window.sessionStorage.removeItem("aetherix.pending_policy_selection");
+      setSelectedPolicyIds(new Set([pendingSelection]));
+    }
   }
 
   async function loadBaseData() {
@@ -249,6 +259,62 @@ export function PolicyPage() {
     }
   }
 
+  async function simulateSelectedPolicy() {
+    const policyId = primarySelectedId;
+    if (!policyId) {
+      setError("Select exactly one policy to simulate");
+      return;
+    }
+    setError(null);
+    setSuccess(null);
+    setIsWorking(true);
+    try {
+      const simulation = await apiPost<PolicySimulationRecord>(`/policies/${policyId}/simulate`, {});
+      setLastSimulation({ policyId, simulationId: simulation.id });
+      setSuccess(`Simulation complete: ${simulation.summary.modules_with_destructive_actions} module(s) trigger approval gates.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Policy simulation failed");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  function openPromotionForSelected() {
+    if (!primarySelectedId) {
+      setError("Select exactly one policy to promote");
+      return;
+    }
+    if (!lastSimulation || lastSimulation.policyId !== primarySelectedId) {
+      setError("Run simulation before promoting this policy");
+      return;
+    }
+    setPromotionApproved(false);
+    setPromotionReason("");
+    setPromotionOpen(true);
+  }
+
+  async function promoteSelectedPolicy() {
+    const policyId = primarySelectedId;
+    if (!policyId || !lastSimulation || lastSimulation.policyId !== policyId) return;
+    setError(null);
+    setSuccess(null);
+    setIsWorking(true);
+    try {
+      await apiPost(`/policies/${policyId}/promote`, {
+        simulation_id: lastSimulation.simulationId,
+        operator_approved: promotionApproved,
+        approval_reason: promotionReason,
+      });
+      setPromotionOpen(false);
+      setSuccess("Policy promoted successfully.");
+      await loadPolicies();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Policy promotion failed");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
   function openAssignmentForSelected() {
     if (!primarySelectedId) {
       setError("Select exactly one policy to assign");
@@ -259,7 +325,7 @@ export function PolicyPage() {
 
   return (
     <>
-      <div className="policyCatalogPage">
+      <div className="policyCatalogPage" aria-hidden={assignmentOpen || promotionOpen ? true : undefined}>
         <header className="policyCatalogTopbar">
           <div className="policyCatalogTitleGroup">
             <p>Protection</p>
@@ -301,18 +367,33 @@ export function PolicyPage() {
                 className="policyToolbarButton"
                 type="button"
                 disabled={selectedCount !== 1}
+                onClick={() => void simulateSelectedPolicy()}
+              >
+                Simulate selected
+              </button>
+              <button
+                className="policyToolbarButton"
+                type="button"
+                disabled={selectedCount !== 1 || !lastSimulation || lastSimulation.policyId !== primarySelectedId}
+                onClick={openPromotionForSelected}
+              >
+                Promote selected
+              </button>
+              <button
+                className="policyToolbarButton"
+                type="button"
+                disabled={selectedCount !== 1}
                 onClick={openAssignmentForSelected}
               >
-                Assign to agent / network
+                Assign selected
               </button>
-              <button className="policyToolbarButton" type="button" disabled={selectedCount !== 1}>
-                <Copy size={15} /> Clone
+              <button className="policyToolbarButton" type="button" disabled title="Policy cloning is not available yet">
+                Clone
               </button>
-              <button className="policyToolbarButton danger" type="button" disabled={selectedCount === 0}>
-                <CircleMinus size={15} /> Delete
+              <button className="policyToolbarButton danger" type="button" disabled title="Policy deletion is not available yet">
+                Delete
               </button>
             </div>
-            <button className="policyColumnsButton" type="button" aria-label="Columns"><Columns3 size={20} /></button>
           </div>
 
           <div className="policyCatalogGrid policyCatalogHead">
@@ -361,30 +442,27 @@ export function PolicyPage() {
                   <label className="policyCheckCell" aria-label={`Select ${policy.name}`}>
                     <input type="checkbox" checked={selectedPolicyIds.has(policy.id)} onChange={() => togglePolicySelection(policy.id)} />
                   </label>
-                  <div className="policyNameContainer" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <div className="policyNameRow">
                     <button
                       type="button"
-                      className="policyNameLink"
-                      onClick={() => openEditPolicy(policy.id)}
-                      style={{ fontWeight: 600 }}
+                      className="policyNameLink policyNameButton"
+                      onClick={() => togglePolicySelection(policy.id)}
                     >
                       {policy.name}
                     </button>
-                    <span className="policyVersionLabel" style={{ fontSize: "11px", padding: "1px 5px", background: "var(--line)", borderRadius: "4px", color: "var(--text-muted)", fontWeight: "bold" }}>
-                      v{policy.latest_version}
-                    </span>
+                    <span className="policyVersionLabel">v{policy.latest_version}</span>
                   </div>
                   <span>
                     <span className={`policyStatusPill ${statusClass}`}>{statusLabel}</span>
                   </span>
-                  <span className="policyScopeText" style={{ fontSize: "13px" }}>
+                  <span className="policyScopeText">
                     {companyId ? (
-                      <strong className="tenantScopeCompany" style={{ color: "var(--text-primary)", fontWeight: 500 }}>{companyName}</strong>
+                      <strong className="tenantScopeCompany">{companyName}</strong>
                     ) : (
-                      <span className="tenantScopeGlobal" style={{ color: "var(--text-muted)", fontSize: "12px", fontStyle: "italic" }}>Global / Partner</span>
+                      <span className="tenantScopeGlobal">Global / Partner</span>
                     )}
                   </span>
-                  <time dateTime={policy.updated_at} style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+                  <time dateTime={policy.updated_at} className="policyUpdatedTime">
                     {formatDate(policy.updated_at)}
                   </time>
                 </article>
@@ -510,65 +588,65 @@ export function PolicyPage() {
             </>
           ) : null}
 
-          <div className="policyAssignPreview" style={{ marginTop: "24px", paddingTop: "16px", borderTop: "1px solid var(--line)" }}>
-            <h3 style={{ fontSize: "14px", fontWeight: "bold", marginBottom: "12px", color: "var(--text-primary)" }}>Cascaded Inheritance Topology</h3>
+          <div className="policyAssignPreview">
+            <h3 className="previewTitle">Cascaded Inheritance Topology</h3>
             {!effectivePreview ? (
-              <p className="muted" style={{ fontSize: "12px", color: "var(--text-muted)" }}>Select an assignment target above to render the graphical inheritance hierarchy cascade.</p>
+              <p className="muted previewHint">Select an assignment target above to render the graphical inheritance hierarchy cascade.</p>
             ) : (
               <>
-                <div className="inheritanceFlowGraph" style={{ background: "var(--line)", padding: "16px", borderRadius: "8px", marginBottom: "16px" }}>
-                  <div className="flowLevelMSP" style={{ background: "white", padding: "10px", borderRadius: "6px", borderLeft: "4px solid var(--primary)", fontSize: "12px", boxShadow: "0 1px 2px var(--shadow)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                <div className="inheritanceFlowGraph">
+                  <div className="flowLevel flowLevel-msp">
+                    <div className="flowLevelHead">
                       <span>🌐 Level 1: Global Partner Template</span>
-                      <span style={{ color: "var(--primary)" }}>Root baseline</span>
+                      <span className="root">Root baseline</span>
                     </div>
-                    <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "var(--text-muted)" }}>Establishes default EDR, GenAI rulesets and security exclusions.</p>
+                    <p className="flowLevelDesc">Establishes default EDR, GenAI rulesets and security exclusions.</p>
                   </div>
 
-                  <div className="flowConnector" style={{ height: "16px", width: "2px", background: "var(--text-muted)", margin: "0 auto", opacity: 0.3 }} />
+                  <div className="flowConnector" />
 
-                  <div className="flowLevelCustomer" style={{ background: "white", padding: "10px", borderRadius: "6px", borderLeft: "4px solid #6366f1", fontSize: "12px", boxShadow: "0 1px 2px var(--shadow)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                  <div className="flowLevel flowLevel-customer">
+                    <div className="flowLevelHead">
                       <span>🏢 Level 2: Customer / Tenant Level</span>
-                      <span style={{ color: "#6366f1" }}>Tenant overrides</span>
+                      <span className="tenant">Tenant overrides</span>
                     </div>
-                    <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "var(--text-muted)" }}>
+                    <p className="flowLevelDesc">
                       {assignment.customerId ? `Active Tenant: ${companyMap.get(assignment.customerId)?.customer.name ?? "Custom Overrides"}` : "Inherited from global template"}
                     </p>
                   </div>
 
-                  <div className="flowConnector" style={{ height: "16px", width: "2px", background: "var(--text-muted)", margin: "0 auto", opacity: 0.3 }} />
+                  <div className="flowConnector" />
 
-                  <div className="flowLevelGroup" style={{ background: "white", padding: "10px", borderRadius: "6px", borderLeft: "4px solid #f59e0b", fontSize: "12px", boxShadow: "0 1px 2px var(--shadow)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                  <div className="flowLevel flowLevel-group">
+                    <div className="flowLevelHead">
                       <span>👥 Level 3: Organizational Group</span>
-                      <span style={{ color: "#f59e0b" }}>Group overrides</span>
+                      <span className="group">Group overrides</span>
                     </div>
-                    <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "var(--text-muted)" }}>
+                    <p className="flowLevelDesc">
                       Custom endpoint groupings (e.g. High-Risk production, Servers).
                     </p>
                   </div>
 
-                  <div className="flowConnector" style={{ height: "16px", width: "2px", background: "var(--text-muted)", margin: "0 auto", opacity: 0.3 }} />
+                  <div className="flowConnector" />
 
-                  <div className="flowLevelEndpoint" style={{ background: "white", padding: "10px", borderRadius: "6px", borderLeft: "4px solid var(--danger)", fontSize: "12px", boxShadow: "0 1px 2px var(--shadow)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
+                  <div className="flowLevel flowLevel-endpoint">
+                    <div className="flowLevelHead">
                       <span>💻 Level 4: Target Enrolled Endpoint</span>
-                      <span style={{ color: "var(--danger)" }}>Effective target</span>
+                      <span className="endpoint">Effective target</span>
                     </div>
-                    <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "var(--text-muted)" }}>
+                    <p className="flowLevelDesc">
                       {assignment.endpointId ? `Enrolled Host: ${assignment.endpointId}` : "Applies to all devices in scope"}
                     </p>
                   </div>
                 </div>
 
-                <div className="resolvedPolicySummary" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
+                <div className="resolvedPolicySummary">
+                  <p className="resolvedCount">
                     <strong>Resolved Policy Modules ({Object.keys(effectivePreview.resolved_policy.modules).length}):</strong>
                   </p>
-                  <div className="policyPreviewModules" style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  <div className="policyPreviewModules">
                     {Object.entries(effectivePreview.resolved_policy.modules).map(([key, value]) => (
-                      <span key={key} className={value.enabled ? "badge" : "badge band-medium"} style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "4px", background: value.enabled ? "rgba(16, 185, 129, 0.1)" : "rgba(100, 116, 139, 0.1)", color: value.enabled ? "var(--primary)" : "var(--text-muted)", fontWeight: "bold" }}>
+                      <span key={key} className={`policyModuleChip ${value.enabled ? "enabled" : "disabled"}`}>
                         {key} {value.enabled ? "✓" : "✗"}
                       </span>
                     ))}
@@ -586,6 +664,41 @@ export function PolicyPage() {
           </div>
         </div>
       </SideSheet>
+
+      {promotionOpen ? (
+        <div className="modalOverlay" role="presentation">
+          <section className="modalContent" role="dialog" aria-modal="true" aria-label="Production Promotion gate">
+            <h2>Production Promotion gate</h2>
+            <p className="modalMessage">
+              Confirm that simulation results have been reviewed before promoting this policy to active enforcement.
+            </p>
+            <label className="toggleRow">
+              <input
+                type="checkbox"
+                checked={promotionApproved}
+                onChange={(event) => setPromotionApproved(event.target.checked)}
+              />
+              I approve this policy promotion
+            </label>
+            <label>
+              Approval reason
+              <textarea
+                value={promotionReason}
+                onChange={(event) => setPromotionReason(event.target.value)}
+                placeholder="Document the promotion reason"
+              />
+            </label>
+            <div className="modalActions">
+              <button className="btnGhost" type="button" onClick={() => setPromotionOpen(false)} disabled={isWorking}>
+                Cancel
+              </button>
+              <button className="btnPrimary" type="button" onClick={() => void promoteSelectedPolicy()} disabled={isWorking || !promotionApproved}>
+                Confirm & Promote
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -287,27 +287,20 @@ export function EnrollmentPage() {
     }
   }
 
-  function deleteSelected() {
-    if (selectedIds.size === 0) return;
-    setCustomers((current) => current.filter((customer) => !selectedIds.has(customer.id)));
-    setSelectedIds(new Set());
-    setSuccess("Selected packages removed from this view. Backend deletion is not wired for installer packages yet.");
-  }
-
   return (
     <main className="installPackagesPage">
       <div className="installUtilityBar" aria-label="Console utilities">
-        <button type="button" aria-label="User"><UserCircle size={15} /></button>
-        <button type="button" aria-label="Promotions"><Gift size={15} /></button>
-        <button type="button" aria-label="Notifications"><Bell size={15} /></button>
+        <button type="button" aria-label="User" disabled title="User menu is not available yet"><UserCircle size={15} /></button>
+        <button type="button" aria-label="Promotions" disabled title="Promotions are not available yet"><Gift size={15} /></button>
+        <button type="button" aria-label="Notifications" disabled title="Notifications are not available yet"><Bell size={15} /></button>
       </div>
 
       <header className="installHeader">
-        <h1>Installation packages</h1>
+        <h1>Installers</h1>
         <div>
           <button type="button" className="installTinyButton" onClick={resetFilters}>Reset view</button>
-          <button type="button" className="installIconButton active" aria-label="Filters"><Filter size={15} /></button>
-          <button type="button" className="installIconButton" aria-label="View settings"><SlidersHorizontal size={15} /></button>
+          <button type="button" className="installIconButton active" aria-label="Filters" disabled title="Advanced filters are not available yet"><Filter size={15} /></button>
+          <button type="button" className="installIconButton" aria-label="View settings" disabled title="View settings are not available yet"><SlidersHorizontal size={15} /></button>
         </div>
       </header>
 
@@ -329,13 +322,21 @@ export function EnrollmentPage() {
               {(["windows", "linux", "macos"] as const).map((os) => (
                 <div className="installDownloadColumn" key={os}>
                   <h2>{osIcon(os)} {os === "macos" ? "macOS" : os[0].toUpperCase() + os.slice(1)} installers</h2>
-                  {PLATFORM_OPTIONS.filter((platform) => platform.os === os).map((platform) => (
-                    <a key={platform.value} href="#" onClick={(event) => event.preventDefault()}>
-                      <span>{platform.label}</span>
-                      <small>{platform.arch}</small>
-                      <Check size={13} />
-                    </a>
-                  ))}
+                  {PLATFORM_OPTIONS.filter((platform) => platform.os === os).map((platform) => {
+                    const link = quickLinks.find((item) => item.platform === platform.value);
+                    return link ? (
+                      <a key={platform.value} href={link.url}>
+                        <span>{platform.label}</span>
+                        <small>{platform.arch}</small>
+                        <Check size={13} />
+                      </a>
+                    ) : (
+                      <button key={platform.value} type="button" disabled title="Prepare download links before downloading">
+                        <span>{platform.label}</span>
+                        <small>{platform.arch}</small>
+                      </button>
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -344,7 +345,7 @@ export function EnrollmentPage() {
         <button type="button" className="installTextButton" onClick={sendLinks} disabled={!activeRow || isWorking}>
           Send download links
         </button>
-        <button type="button" className="installDanger" onClick={deleteSelected} disabled={selectedIds.size === 0}>
+        <button type="button" className="installDanger" disabled title="Package deletion is not available yet">
           <Trash2 size={13} /> Delete
         </button>
       </section>

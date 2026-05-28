@@ -17,7 +17,6 @@ import {
   FileCheck,
   FlaskConical,
   Globe,
-  Globe2,
   LayoutDashboard,
   LogOut,
   Mail,
@@ -49,7 +48,6 @@ import { LoginPage } from "./pages/LoginPage";
 import { SetupAccountPage } from "./pages/SetupAccountPage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { DigitalRiskPage } from "./pages/DigitalRiskPage";
-import { EASMPage } from "./pages/EASMPage";
 import {
   apiGet,
   getAccessToken,
@@ -57,10 +55,11 @@ import {
   type Branding,
   type MeResponse,
   type PermissionLevel,
+  type RoleCode,
 } from "./api";
 import { hasPermission as sharedHasPermission } from "./permissions";
 import { ExecutiveSummaryPage } from "./pages/ExecutiveSummaryPage";
-import { EndpointHealthPage } from "./pages/EndpointHealthPage";
+import { HealthAttackSurfacePage } from "./pages/HealthAttackSurfacePage";
 import { BlocklistPage } from "./pages/BlocklistPage";
 import { RiskManagementPage } from "./pages/RiskManagementPage";
 import { QuarantinePage } from "./pages/QuarantinePage";
@@ -107,7 +106,6 @@ type Page =
   | "deviceControl"
   | "riskManagement"
   | "digitalRisk"
-  | "easm"
   | "reports"
   | "quarantine"
   | "network"
@@ -170,7 +168,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { id: "riskManagement", label: "Risk Management", icon: <AlertTriangle size={18} />, requires: { resource: "incidents", level: "view" } },
       { id: "digitalRisk", label: "Digital Risk (DRP)", icon: <Eye size={18} />, requires: { resource: "incidents", level: "view" } },
-      { id: "easm", label: "External Attack Surface (EASM)", icon: <Globe2 size={18} />, requires: { resource: "incidents", level: "view" } },
       { id: "reports", label: "Reports", icon: <FileText size={18} />, requires: { resource: "incidents", level: "view" } },
       { id: "compliance", label: "Compliance Center", icon: <FileCheck size={18} />, requires: { resource: "companies", level: "view" } },
     ],
@@ -197,13 +194,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
     ],
   },
 ];
-
-const LEVEL_RANK: Record<PermissionLevel, number> = {
-  none: 0,
-  view: 1,
-  edit: 2,
-  manage: 3,
-};
 
 function hasPermission(
   me: MeResponse | null,
@@ -234,7 +224,7 @@ const INITIAL_INVITE_TOKEN =
   typeof window !== "undefined" ? parseInviteToken(window.location.hash) : null;
 
 const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-const isHarness = params?.get("harness") === "true";
+const isHarness = import.meta.env.DEV && params?.get("harness") === "true";
 const harnessRole = params?.get("role") || "msp_partner";
 const harnessPage = (params?.get("page") || "policies") as Page;
 
@@ -251,7 +241,7 @@ function mockedMe(role: string): MeResponse {
       locked_until: null,
       last_login_at: null,
       created_at: "2026-05-23T00:00:00Z",
-      roles: [{ id: "role-1", role_code: role as any, partner_id: null, customer_id: null, granted_by: "system", granted_at: "2026-05-23T00:00:00Z" }],
+      roles: [{ id: "role-1", role_code: role as RoleCode, partner_id: null, customer_id: null, granted_by: "system", granted_at: "2026-05-23T00:00:00Z" }],
     },
     permissions: {
       policies: "manage",
@@ -511,9 +501,8 @@ export function App() {
          {page === "accounts" && <AccountsPage />}
          {page === "compliance" && <CompliancePage />}
          {page === "digitalRisk" && <DigitalRiskPage me={me} />}
-         {page === "easm" && <EASMPage me={me} />}
-         {page === "executiveSummary" && <ExecutiveSummaryPage me={me} />}
-         {page === "healthAttackSurface" && <EndpointHealthPage me={me} />}
+          {page === "executiveSummary" && <ExecutiveSummaryPage me={me} />}
+          {page === "healthAttackSurface" && <HealthAttackSurfacePage me={me} />}
          {page === "blocklist" && <BlocklistPage me={me} />}
          {page === "riskManagement" && <RiskManagementPage me={me} />}
          {page === "quarantine" && <QuarantinePage me={me} />}
@@ -571,178 +560,6 @@ function ForbiddenPage() {
           <span>You don't have permission to view this section. Contact your administrator if you need access.</span>
         </div>
         <ShieldCheck size={18} />
-      </div>
-    </section>
-  );
-}
-
-type PlaceholderStatus = "designing" | "planned" | "add-on";
-
-const STATUS_LABEL: Record<PlaceholderStatus, string> = {
-  designing: "Designing",
-  planned: "Planned",
-  "add-on": "Add-on entitlement",
-};
-
-type PlaceholderMeta = {
-  title: string;
-  eyebrow: string;
-  status: PlaceholderStatus;
-  summary: string;
-  depends: string[];
-};
-
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm" | "network" | "antimalware" | "quarantine" | "policyEditor" | "actionQueue">, PlaceholderMeta> = {
-  executiveSummary: {
-    title: "Executive Summary",
-    eyebrow: "Partner reporting",
-    status: "planned",
-    summary:
-      "AI-generated portfolio summary for MSP partners: customer risk, license utilisation, top incidents, and weekly delta. Builds on /companies, /alerts, and the upcoming ai_reports table.",
-    depends: ["ai_reports table", "/companies tenant scope", "LLM gateway contract"],
-  },
-  healthAttackSurface: {
-    title: "Endpoint Health",
-    eyebrow: "Company operations",
-    status: "planned",
-    summary:
-      "Per-company endpoint health view with policy drift, agent version skew, and action queues. Aggregates the existing /endpoints heartbeat data once company-scoped queries land.",
-    depends: ["tenant-scoped /endpoints", "policy drift signal", "action queue API"],
-  },
-  blocklist: {
-    title: "Blocklist",
-    eyebrow: "Response controls",
-    status: "planned",
-    summary:
-      "Tenant-scoped blocklists for hashes, domains, URLs, users, and processes. Pulled into agent policy on heartbeat alongside the existing signed policy document.",
-    depends: ["block list table", "policy document merge", "agent policy fetch"],
-  },
-  customRules: {
-    title: "Custom Detection Rules",
-    eyebrow: "Detection engineering",
-    status: "planned",
-    summary:
-      "Customer-authored detection rules layered on top of platform rules. Same partner/company isolation as policy documents, with simulation before promotion.",
-    depends: ["rules table", "rule simulator", "policy promotion flow"],
-  },
-  agenticAi: {
-    title: "Agentic AI Investigation",
-    eyebrow: "Autonomous response",
-    status: "designing",
-    summary:
-      "Investigation agents correlate endpoint telemetry, DLP events, asset criticality, and threat intel into auditable timelines with confidence-scored response recommendations and approval gates.",
-    depends: ["incident_cases correlation", "LLM gateway", "response_actions table"],
-  },
-  webProtection: {
-    title: "Web & Email Protection",
-    eyebrow: "Content and communication",
-    status: "planned",
-    summary:
-      "Unified controls for web destinations and email protection with policy-driven guardrails and tenant-scoped enforcement aligned to add-on licensing.",
-    depends: ["web classifier", "mail connector", "policy integration"],
-  },
-  deviceControl: {
-    title: "Device Control",
-    eyebrow: "Data movement controls",
-    status: "planned",
-    summary:
-      "USB and peripheral policy controls for sensitive environments with approval-gated block actions and audit-backed evidence emission.",
-    depends: ["device telemetry", "control policy schema", "audit evidence hooks"],
-  },
-  riskManagement: {
-    title: "Risk Management",
-    eyebrow: "Asset hardening",
-    status: "planned",
-    summary:
-      "Patch inventory, installation packages, tasks, and tags scoped to a company. Reuses the customer hierarchy already enforced on /companies and installer builds.",
-    depends: ["patch inventory ingestion", "task runner", "tag schema"],
-  },
-  reports: {
-    title: "Reports",
-    eyebrow: "Executive deliverables",
-    status: "planned",
-    summary:
-      "Templated AI executive reports, ransomware readiness, and integrity reports backed by ai_reports with structured confidence, source references, and deterministic fallbacks.",
-    depends: ["ai_reports table", "report templates", "object storage for evidence"],
-  },
-  sandbox: {
-    title: "Sandbox Analyzer",
-    eyebrow: "Add-on entitlement",
-    status: "add-on",
-    summary:
-      "Detonation and behavioural analysis of suspicious artefacts. Surfaces only when the subscription_entitlements row grants sandbox access for the customer.",
-    depends: ["subscription_entitlements", "sandbox worker", "verdict pipeline"],
-  },
-  policyAssignments: {
-    title: "Policy Assignments",
-    eyebrow: "MSP governance",
-    status: "planned",
-    summary:
-      "Centralized view of partner/company/group/endpoint assignment scope with inheritance preview and operational diff history.",
-    depends: ["assignment history view", "scope filters", "effective diff renderer"],
-  },
-  emailSecurity: {
-    title: "Email Security",
-    eyebrow: "Add-on entitlement",
-    status: "add-on",
-    summary:
-      "Inline and journaling protection for mailboxes. Gated on subscription_entitlements and integrated with quarantine, blocklist, and incident correlation.",
-    depends: ["mail connector", "subscription_entitlements", "quarantine integration"],
-  },
-  mobileSecurity: {
-    title: "Mobile Security",
-    eyebrow: "Add-on entitlement",
-    status: "add-on",
-    summary:
-      "iOS and Android protection with MDM bridge. Gated on subscription_entitlements; reuses the policy engine and enrollment token flow already shipping for desktop agents.",
-    depends: ["MDM bridge", "subscription_entitlements", "mobile agent profile"],
-  },
-  dataInsights: {
-    title: "Data Insights",
-    eyebrow: "Usage and billing",
-    status: "planned",
-    summary:
-      "Usage, AI efficiency, and billing signals across partners and customers. Feeds the AI Efficiency Score already shown on the Companies hub.",
-    depends: ["usage metering", "billing export", "AI efficiency model"],
-  },
-  integrations: {
-    title: "Integrations",
-    eyebrow: "Ecosystem connectors",
-    status: "planned",
-    summary:
-      "PSA, RMM, SIEM, identity, and billing connectors. Wraps the existing FastAPI control plane behind a connector contract with per-tenant credentials.",
-    depends: ["connector framework", "credential vault", "SIEM event export"],
-  },
-  configuration: {
-    title: "Configuration",
-    eyebrow: "Platform settings",
-    status: "designing",
-    summary:
-      "MSP white-label branding, support contacts, and global defaults. Builds on the live /me branding resolver that already drives accent colour and product name in this console.",
-    depends: ["branding write API", "support contact schema", "global defaults"],
-  },
-};
-
-function PlaceholderPage({ page }: { page: Page }) {
-  const meta = PLACEHOLDERS[page as keyof typeof PLACEHOLDERS];
-  if (!meta) return null;
-  return (
-    <section className="panel placeholderPanel">
-      <div className="panelHeader">
-        <div>
-          <p className="placeholderEyebrow">{meta.eyebrow}</p>
-          <h2>{meta.title}</h2>
-          <span>{meta.summary}</span>
-        </div>
-        <span className={`badge placeholderStatus status-${meta.status}`}>{STATUS_LABEL[meta.status]}</span>
-      </div>
-      <div className="placeholderDepends">
-        <span>Backend dependencies</span>
-        <ul>
-          {meta.depends.map((d) => (
-            <li key={d}>{d}</li>
-          ))}
-        </ul>
       </div>
     </section>
   );

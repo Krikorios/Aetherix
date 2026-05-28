@@ -41,64 +41,28 @@ export function ConfirmModal({
   if (!open) return null;
 
   return (
-    <div
-      className="modalOverlay"
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(11, 18, 32, 0.45)",
-        backdropFilter: "blur(2px)",
-        zIndex: 1000,
-        display: "grid",
-        placeItems: "center",
-        padding: "20px",
-      }}
-      onClick={onCancel}
-    >
+    <div className="modalOverlay" onClick={onCancel}>
       <div
         className="modalContent"
-        style={{
-          background: "var(--panel)",
-          border: "1px solid var(--line)",
-          borderRadius: "12px",
-          width: "100%",
-          maxWidth: "440px",
-          padding: "24px",
-          boxShadow: "0 24px 60px -28px rgba(15, 90, 110, 0.35)",
-          display: "flex",
-          flexDirection: "column",
-          gap: "16px",
-        }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <h2 style={{ margin: 0, fontSize: "18px", color: "var(--ink)" }}>{title}</h2>
-        <div style={{ color: "var(--muted)", fontSize: "14px", lineHeight: 1.5 }}>
-          {message}
-        </div>
+        <h2>{title}</h2>
+        <div className="modalMessage">{message}</div>
         {requireReason && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-            <label htmlFor="deleteReason" style={{ fontSize: "13px", fontWeight: 600, color: "var(--ink)" }}>Reason for deletion</label>
+          <div className="modalReasonField">
+            <label htmlFor="deleteReason">Reason for deletion</label>
             <input
               id="deleteReason"
               type="text"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Provide a clear reason..."
-              style={{
-                width: "100%",
-                minHeight: "38px",
-                border: "1px solid var(--line)",
-                borderRadius: "8px",
-                padding: "0 10px",
-                background: "#fffef9",
-                color: "var(--ink)",
-              }}
             />
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "8px" }}>
+        <div className="modalActions">
           <button type="button" className="btnGhost" onClick={onCancel} disabled={isBusy}>
             Cancel
           </button>
@@ -116,8 +80,38 @@ export function ConfirmModal({
   );
 }
 
+export function safeErrorMessage(message: string): string {
+  const trimmed = message.trim();
+  if (!trimmed) return "Something went wrong. Please retry or contact support if the issue continues.";
+
+  const lower = trimmed.toLowerCase();
+  const rawBackendMarkers = [
+    "traceback",
+    "stack trace",
+    "sqlalchemy",
+    "psycopg",
+    "postgres",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "internal server error",
+  ];
+  const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  const looksLikePathLeak = /\b(apps\/api|\/users\/|c:\\|\.py\b|\.rs\b|\.tsx\b)/i.test(trimmed);
+
+  if (looksLikeJson || looksLikePathLeak || rawBackendMarkers.some((marker) => lower.includes(marker))) {
+    return "The console could not complete this request. Please retry or contact support if the issue continues.";
+  }
+
+  if (/^\d{3}$/.test(trimmed)) {
+    return `The request failed with status ${trimmed}. Please retry or contact support if the issue continues.`;
+  }
+
+  return trimmed;
+}
+
 export function ErrorBanner({ message }: { message: string }) {
-  return <div className="banner" role="alert">{message}</div>;
+  return <div className="banner" role="alert">{safeErrorMessage(message)}</div>;
 }
 
 export function SuccessBanner({ message }: { message: string }) {

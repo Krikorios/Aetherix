@@ -6,8 +6,11 @@ import {
   apiPut,
   type CompanySummaryPage,
   type EffectivePolicyResponse,
+  type PolicyCreateResponse,
   type PolicyDocumentV2Input,
   type PolicyGetResponse,
+  type PolicyListItemV2,
+  type PolicyListResponseV2,
   type PolicySimulationRecord,
 } from "../api";
 import { ErrorBanner, SuccessBanner } from "../components";
@@ -141,24 +144,29 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
   });
 
   const [companyRows, setCompanyRows] = useState<CompanySummaryPage["items"]>([]);
+  const [availablePolicies, setAvailablePolicies] = useState<PolicyListItemV2[]>([]);
   const [simulation, setSimulation] = useState<PolicySimulationRecord | null>(null);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
 
-  // Load companies for scope selection
+  // Load companies and parent-policy options for scope selection
   useEffect(() => {
-    const loadCompanies = async () => {
+    const loadEditorOptions = async () => {
       setIsLoadingCompanies(true);
       try {
-        const res = await apiGet<CompanySummaryPage>("/companies/summary?limit=100");
+        const [res, policyPage] = await Promise.all([
+          apiGet<CompanySummaryPage>("/companies/summary?limit=100"),
+          apiGet<PolicyListResponseV2>("/policies"),
+        ]);
         setCompanyRows(res.items || []);
+        setAvailablePolicies((policyPage.items || []).filter((policy) => policy.id !== policyId));
       } catch (e) {
-        console.error("Failed to load companies for policy scope", e);
+        console.error("Failed to load policy editor options", e);
       } finally {
         setIsLoadingCompanies(false);
       }
     };
-    loadCompanies();
-  }, []);
+    loadEditorOptions();
+  }, [policyId]);
 
   // Load existing policy when editing
   const [isLoadingPolicy, setIsLoadingPolicy] = useState(false);
@@ -271,7 +279,8 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
         await apiPut(`/policies/${policyId}`, draft);
         setSuccess("Policy updated successfully. Changes will be picked up by assigned agents on next heartbeat.");
       } else {
-        await apiPost("/policies", draft);
+        const created = await apiPost<PolicyCreateResponse>("/policies", draft);
+        window.sessionStorage.setItem("aetherix.pending_policy_selection", created.policy.id);
         setSuccess("Policy created successfully! Close this editor and assign it from the Policies list.");
       }
 
@@ -336,7 +345,9 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
               onChange={(e) => setLineageField("parent_policy_id", e.target.value || null)}
             >
               <option value="">None (Standalone)</option>
-              {/* In a full implementation we would load policies here for selection */}
+              {availablePolicies.map((policy) => (
+                <option key={policy.id} value={policy.id}>{policy.name}</option>
+              ))}
             </select>
           </label>
 

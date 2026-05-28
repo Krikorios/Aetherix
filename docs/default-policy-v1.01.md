@@ -1,5 +1,7 @@
 # Default Policy v1.01
 
+> Historical/planning note: this document captures the original target baseline and workbook translation. Several "current state" rows are now stale; use [current-capabilities-snapshot-2026-05-29.md](current-capabilities-snapshot-2026-05-29.md), [policy-engine.md](policy-engine.md), and newer coordination briefs for implementation status.
+
 Status: target baseline for future development and deployment planning, May 2026. Companion to [policy-engine.md](policy-engine.md), [architecture.md](architecture.md), and [native-security-gap-review.md](native-security-gap-review.md).
 
 This document translates the GravityZone-style default policy baseline into an Aetherix-native policy target. It should be used as the reference checklist for policy editor design, policy schema work, agent module development, and deployment templates.
@@ -45,7 +47,7 @@ These are the important defaults extracted from `Default Policy v1.01.xlsx`.
 | Incidents Sensor | On | Maps to endpoint event sensor and incident graph inputs. |
 | Storage protection | ICAP on-access scanning On, infected files Deny Access | Treat as a server/storage workload profile, not default endpoint v1. |
 | Risk management | On, daily schedule | Maps to software inventory, vulnerability posture, misconfiguration, and remediation guidance. |
-| Live Search | Off | Treat as future investigation/search capability after telemetry retention exists. |
+| Live Search | Off | Future investigation/search workspace (console + API) powered by OpenSearch after telemetry retention + indexing exist. See architecture.md §3.3.1 and roadmap P1-1.5. |
 
 ## Aetherix Default Policy Summary
 
@@ -371,7 +373,7 @@ Every module above should produce evidence that can be exported by customer, fra
 | Policy changes | actor, scope, policy version, before/after hashes, simulation result, approval reason, `evidence_controls` |
 | Endpoint detections | endpoint id, module, detector id, policy version, action, confidence, deterministic inputs, response action, `evidence_controls` |
 | DLP and labels | source, destination, label, entity types, content hash, action, reviewer, redaction status, `evidence_controls` |
-| SIEM/HIDS events | source log, parser/rule id, MITRE tags, severity, correlation id, retention bucket, `evidence_controls` |
+| SIEM/HIDS events | source log, parser/rule id, MITRE tags, severity, correlation id, retention bucket (ILM-driven via OpenSearch), `evidence_controls` |
 | DRP/EASM findings | asset id, finding type, source, confidence, evidence ref, remediation, status, `evidence_controls` |
 | AI activity | provider, model, tenant setting, prompt/response hashes, redaction flag, quota result, deterministic fallback, reviewer |
 | Response actions | action type, requested by, approved by, executed by, target, result, rollback availability, chain hash |
@@ -387,7 +389,7 @@ Every module above should produce evidence that can be exported by customer, fra
 | Relay | Deployment infrastructure profile for on-prem and bandwidth-controlled customers. |
 | Encryption | Future add-on or managed integration; do not claim current support. |
 | Sandbox Analyzer | Optional advanced threat add-on after AV/EDR deterministic scanning exists. |
-| Live Search | Future investigation/search feature after telemetry retention and query indexing exist. |
+| Live Search | Future investigation/search feature after telemetry retention and query indexing exist. Backed by OpenSearch time-series store + ILM (see architecture.md §3.3.1 "Event & Log Store"). |
 | Patch Management | Start with inventory and remediation guidance; deployment orchestration later. |
 
 ## Recommended Rollout Phases
@@ -397,12 +399,12 @@ Every module above should produce evidence that can be exported by customer, fra
 3. **DLP, labels, and GenAI.** Implement sensitivity labels, GenAI/browser guardrails, clipboard/upload controls, label propagation, and redacted review summaries.
 4. **Compliance expansion.** Add control reviews, attestation workflow, PDF export, framework-complete catalogues, and evidence object references.
 5. **AI governance.** Centralize provider gateway, structured outputs, prompt/response hash audit, model allowlists, per-module budgets, and deterministic fallbacks.
-6. **SIEM/HIDS v0.** Add log/FIM collectors, parser rules, MITRE mapping, software inventory, CVE/EPSS/KEV, retention/search, and active response gates.
+6. **SIEM/HIDS v0.** Add log/FIM collectors, parser rules, MITRE mapping, software inventory, CVE/EPSS/KEV, **OpenSearch-backed retention/search + Live Search workspace** (architecture §3.3.1), and active response gates.
 7. **AV/EDR v0.** Add YARA/signature/IOC scanning, behaviour rules, anti-ransomware canaries, quarantine/isolate, and process tree telemetry.
 8. **Firewall, web, and exploit hardening.** Add host firewall rules, URL/phishing reputation, network attack signatures, and exploit behaviour detections.
 9. **External risk and intelligence.** Add DRP assets/findings, EASM discovery/exposure findings, threat intelligence validation, and takedown workflows.
 10. **Incident graph and reporting.** Correlate all modules into incidents, add response approvals, executive reports, compliance evidence links, and white-label delivery.
-11. **Deployment modes and operations.** Add on-prem relay, air-gap update path, object-store options, OpenTelemetry, backup/restore, retention policies, and cost telemetry.
+11. **Deployment modes and operations.** Add on-prem relay, air-gap update path, object-store options, OpenTelemetry, backup/restore, **OpenSearch + ILM-driven retention policies per customer**, and cost telemetry. OpenSearch is the implementation vehicle for the "retention" and "Live Search" capabilities.
 
 ## Acceptance Criteria for Default Policy v1.01
 

@@ -109,6 +109,37 @@
         "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "vss_alternate_data_streams": ["Zone.Identifier", "Aetherix.Marker"]
       }
+    },
+    "simulate_restore_output": {
+      "simulation_id": "sim-vss-smoke-001",
+      "candidate_set_hash": "hash-vss-smoke-001",
+      "candidate_count": 3,
+      "restorable_count": 2,
+      "skipped_paths": [
+        {
+          "path": "C:\\Windows\\System32\\drivers\\etc\\hosts",
+          "outcome": "refused_out_of_scope",
+          "reason": "unsafe_overwrite: live file is newer than recovery point",
+          "bytes_affected": 0,
+          "hash_before": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+          "hash_after": "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
+          "metadata_diff": ["live_modified_after_recovery_point"]
+        }
+      ],
+      "destructive": false,
+      "valid_until": "2026-05-29T12:00:00Z",
+      "decision_trace": [
+        "vss simulation recovery_point_id=rp-vss-guard-001",
+        "vss simulation protected_root=C:\\",
+        "vss simulation: 3 candidate(s), 2 restorable, 1 skipped/refused"
+      ],
+      "provider": "vss",
+      "recovery_point_id": "rp-vss-guard-001",
+      "affected_paths": [
+        "C:\\Users\\Alice\\Documents\\report.docx",
+        "C:\\Users\\Alice\\Desktop\\notes.txt",
+        "C:\\Windows\\System32\\drivers\\etc\\hosts"
+      ]
     }
   }
 }

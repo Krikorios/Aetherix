@@ -75,8 +75,22 @@ const FILTER_TABS: { key: string; label: string }[] = [
   { key: "awaiting_approval", label: "Awaiting Approval" },
   { key: "completed", label: "Completed" },
   { key: "failed", label: "Failed" },
+  { key: "denied", label: "Denied" },
   { key: "cancelled", label: "Cancelled" },
 ];
+
+function approvalRoute(item: QueuedActionItem, decision: "approve" | "deny"): string | null {
+  if (item.action === "quarantine_restore") {
+    return `/endpoints/${item.target_id}/quarantine-restore/${item.id}/${decision}`;
+  }
+  if (item.action === "rollback_intent") {
+    return `/endpoints/${item.target_id}/rollback-intent/${item.id}/${decision}`;
+  }
+  if (item.action === "rollback_restore") {
+    return `/endpoints/${item.target_id}/rollback-restore/${item.id}/${decision}`;
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Page component
@@ -92,6 +106,7 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
   const [actionFilter, setActionFilter] = useState<string>("");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
@@ -112,12 +127,18 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
       if (!silent) setIsLoading(true);
       else setIsRefreshing(true);
       try {
-        const params = new URLSearchParams();
-        if (statusFilter) params.set("status", statusFilter);
-        if (actionFilter.trim()) params.set("action", actionFilter.trim());
-        params.set("limit", "200");
-        const qs = params.toString() ? `?${params.toString()}` : "";
-        const data = await apiGet<QueuedActionItem[]>(`/actions/queue${qs}`);
+        let data: QueuedActionItem[];
+        try {
+          data = await apiGet<QueuedActionItem[]>("/actions/queue?limit=500");
+        } catch (err) {
+          // 404 means the queue endpoint is not yet available — treat as empty queue
+          const msg = err instanceof Error ? err.message : "";
+          if (msg === "Not Found" || msg.startsWith("404")) {
+            data = [];
+          } else {
+            throw err;
+          }
+        }
 
         setItems((prev) => {
           // Detect status transitions and log them
@@ -155,12 +176,12 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
         else setIsRefreshing(false);
       }
     },
-    [statusFilter, actionFilter, addLog],
+    [addLog],
   );
 
-  // Initial load + re-load when filters change
+  // Initial load
   useEffect(() => {
-    void fetchQueue(false);
+    queueMicrotask(() => void fetchQueue(false));
   }, [fetchQueue]);
 
   // Auto-refresh every 4 s
@@ -200,16 +221,50 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
     }
   };
 
+  const handleApprovalDecision = async (item: QueuedActionItem, decision: "approve" | "deny") => {
+    const route = approvalRoute(item, decision);
+    if (!route) {
+      setError(`${formatAction(item.action)} does not support queue-page approval decisions yet.`);
+      return;
+    }
+
+    const reason = prompt(
+      decision === "approve" ? "Enter approval reason (optional):" : "Enter denial reason:",
+    );
+    if (reason === null) return;
+
+    setDecidingId(item.id);
+    setError(null);
+    try {
+      const updated = await apiPost<QueuedActionItem>(route, { reason });
+      const statusLabel = decision === "approve" ? "approved and queued" : "denied";
+      addLog(`[${item.hostname}] ${formatAction(item.action)} ${statusLabel}`, decision === "approve" ? "success" : "warn");
+      setSuccess(`${formatAction(item.action)} on ${item.hostname} ${statusLabel}.`);
+      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...updated, hostname: i.hostname, customer_name: i.customer_name } : i)));
+      void fetchQueue(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to ${decision} action.`);
+      addLog(`Failed to ${decision} ${formatAction(item.action)} on ${item.hostname}`, "error");
+    } finally {
+      setDecidingId(null);
+    }
+  };
+
   // Derived counts for the summary bar
   const counts = {
     queued: items.filter((i) => i.status === "queued").length,
     awaiting_approval: items.filter((i) => i.status === "awaiting_approval").length,
     completed: items.filter((i) => i.status === "completed").length,
     failed: items.filter((i) => i.status === "failed").length,
+    denied: items.filter((i) => i.status === "denied").length,
     cancelled: items.filter((i) => i.status === "cancelled").length,
   };
 
-  const visibleItems = items; // already filtered server-side; client-side action text filter
+  const visibleItems = items.filter((item) => {
+    if (statusFilter && item.status !== statusFilter) return false;
+    if (actionFilter && item.action !== actionFilter) return false;
+    return true;
+  });
   const actionTypes = [...new Set(items.map((i) => i.action))].sort();
 
   return (
@@ -269,18 +324,6 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
 
         {/* ── Filters ── */}
         <div className="queueFilters">
-          <div className="queueFilterTabs">
-            {FILTER_TABS.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                className={`queueFilterTab${statusFilter === tab.key ? " active" : ""}`}
-                onClick={() => setStatusFilter(tab.key)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
           <div className="queueFilterRight">
             <select
               className="queueActionSelect"
@@ -322,7 +365,7 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
                     <th>Requested By</th>
                     <th>Created</th>
                     <th>Finished</th>
-                    <th style={{ width: 100 }}>Actions</th>
+                    <th className="queueActionsHead">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -359,7 +402,7 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
                               <span className="queueMuted">—</span>
                             )}
                           </td>
-                          <td onClick={(e) => e.stopPropagation()}>
+                          <td className="queueActionsCell" onClick={(e) => e.stopPropagation()}>
                             <span className={`queueStatusBadge ${STATUS_CLASS[item.status]}`}>
                               {STATUS_ICON[item.status]}
                               {STATUS_LABEL[item.status]}
@@ -400,6 +443,29 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
                                 )}
                                 Cancel
                               </button>
+                            ) : item.status === "awaiting_approval" ? (
+                              <div className="queueDecisionActions">
+                                <button
+                                  type="button"
+                                  className="btn queueDenyBtn"
+                                  disabled={decidingId === item.id || approvalRoute(item, "deny") === null}
+                                  onClick={() => void handleApprovalDecision(item, "deny")}
+                                  title="Deny this pending action"
+                                >
+                                  {decidingId === item.id ? <Loader2 size={12} className="spin" /> : <Ban size={12} />}
+                                  Deny
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn queueApproveBtn"
+                                  disabled={decidingId === item.id || approvalRoute(item, "approve") === null || item.requested_by === me.account.id || item.requested_by === me.account.email}
+                                  onClick={() => void handleApprovalDecision(item, "approve")}
+                                  title="Approve and queue this action"
+                                >
+                                  {decidingId === item.id ? <Loader2 size={12} className="spin" /> : <CheckCircle size={12} />}
+                                  Approve
+                                </button>
+                              </div>
                             ) : null}
                           </td>
                         </tr>

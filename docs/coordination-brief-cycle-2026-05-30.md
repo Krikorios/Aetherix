@@ -66,4 +66,6 @@ The correlation engine (`app/services/correlation.py`) now matches on **both** f
 2. **Agent 3**: Wire actual DLP↔EDR correlation (`correlate_new_edr_alert` checking `dlp_events` by endpoint_id + observed_at proximity, and `correlate_dlp_event` for the reverse). Add process_path_hash matching as a third correlation type.
 3. **Agent 1**: Begin Phase 1 implementation — `RollbackProvider` trait + `NoopRollbackProvider` + canary-driven recovery point hints.
 
-Reference: `multi-agent-coordination-protocol.md`, `current-capabilities-snapshot-2026-05-29.md`.
+Reference: `multi-agent-coordination-protocol.md`, `current-capabilities-snapshot-2026-05-29.md`, `console-ui-audit-2026-05-28.md`.
+
+> **Console UI note for Agent 2**: A full 34-item UI consistency audit was completed on 2026-05-28 (`docs/console-ui-audit-2026-05-28.md`). Two parse errors (AntimalwareBehavior.tsx, EASMPage.tsx) are P0 blockers for demos. Seven nav↔page-title mismatches and three instances of raw backend content visible to users are P1. Address P0 and P1 items alongside the correlation wiring work this cycle.

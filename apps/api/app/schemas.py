@@ -226,7 +226,7 @@ class YaraStringMatch(BaseModel):
 
 
 class EdrEvent(BaseModel):
-    kind: Literal["yara_match", "ioc_match", "ransomware_canary", "suspicious_process_chain", "response_action"]
+    kind: Literal["yara_match", "ioc_match", "ransomware_canary", "ransomware_rollback", "suspicious_process_chain", "response_action"]
     rule_id: str
     action: Literal["monitor", "review", "quarantine", "quarantine_list", "quarantine_restore", "kill", "isolate", "rollback", "rollback_restore"]
     process_path: str | None = None
@@ -244,11 +244,14 @@ class EdrEvent(BaseModel):
     matched_rules: list[str] = []
     evidence_controls: list[str] = []
     response: dict[str, Any] | None = None
+    recovery_hints: dict[str, Any] | None = None
+    rollback_evidence: dict[str, Any] | None = None
     # Populated by the agent when a rollback completes: the file paths
     # that were successfully restored from a recovery point.  The
     # correlation engine uses this list to link the rollback alert back
     # to prior FIM/DLP events on the same paths.
     rollback_file_paths: list[str] = []
+    decision_trace: list[str] = []
 
 
 class CisCheckResult(BaseModel):
@@ -551,13 +554,25 @@ class PendingQuarantineRestore(BaseModel):
 
 class PendingRollbackIntent(BaseModel):
     """Approval-inbox entry: a single awaiting-approval rollback intent plus the
-    endpoint context needed to render the row."""
+    endpoint context needed to render the row.
+
+    ``simulation_id`` and the companion summary fields are promoted from
+    ``action.payload`` so the console approval queue can render simulation
+    confidence and expiry state without drilling into the raw payload.
+    """
 
     action: ModuleActionResult
     endpoint_id: str
     hostname: str | None = None
     customer_id: UUID | None = None
     rollback_readiness: RollbackReadiness | None = None
+    # Simulation context promoted from action.payload for easy console consumption.
+    simulation_id: str | None = None
+    simulation_confidence: float | None = None
+    simulation_valid_until: datetime | None = None
+    simulation_is_expired: bool | None = None
+    simulation_candidate_count: int | None = None
+    simulation_restorable_count: int | None = None
 
 
 class RollbackIntentRequest(BaseModel):
@@ -1374,6 +1389,260 @@ class AgentDlpEvidenceIngest(BaseModel):
     event_type: Literal["paste", "upload", "copy"]
     policy_action_field: Literal["paste_sensitive", "upload_restricted", "copy_to_genai"]
     process_name: str | None = Field(default=None, max_length=255)
+
+
+RollbackPathOutcome = Literal["restored", "skipped", "failed_integrity", "refused_out_of_scope"]
+
+
+class RollbackPathDecision(BaseModel):
+    """Per-path decision produced by a rollback simulation.
+
+    Mirrors the agent's ``RollbackPathDecision`` Rust struct so simulation
+    results posted to ``POST /agent/rollback-simulation`` round-trip without
+    data loss.  ``extra="allow"`` keeps future agent fields from being silently
+    dropped.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    path: str = Field(min_length=1)
+    outcome: RollbackPathOutcome
+    reason: str = ""
+    bytes_affected: int = Field(default=0, ge=0)
+    hash_before: str | None = None
+    hash_after: str | None = None
+    metadata_diff: list[str] | None = None
+
+
+class AgentRollbackSimulation(BaseModel):
+    """Simulation result posted by an agent after calling ``simulate_restore()``.
+
+    Extends the agent-side ``RollbackSimulation`` struct with ``provider``,
+    ``recovery_point_id``, and ``affected_paths`` so the control plane can
+    correlate the result with the matching readiness snapshot and validate it
+    when the operator later submits a ``RollbackIntentRequest``.
+
+    ``skipped_paths`` carries only *non-restored* path decisions (matching the
+    Rust implementation which filters ``outcome != Restored``).
+
+    ``extra="allow"`` ensures Agent 1 can add fields incrementally without
+    breaking this endpoint.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    simulation_id: str = Field(min_length=1, max_length=256)
+    candidate_set_hash: str = Field(min_length=1, max_length=256)
+    candidate_count: int = Field(default=0, ge=0)
+    restorable_count: int = Field(default=0, ge=0)
+    skipped_paths: list[RollbackPathDecision] = Field(default_factory=list)
+    destructive: bool = False
+    valid_until: datetime
+    decision_trace: list[str] = Field(default_factory=list)
+    # Extension fields supplied by the agent when posting to this route.
+    # Not present in the core Rust ``RollbackSimulation`` struct but added
+    # here so the control plane can tie the result to a readiness snapshot.
+    provider: str | None = Field(default=None, max_length=64)
+    recovery_point_id: str | None = Field(default=None, max_length=256)
+    affected_paths: list[str] = Field(default_factory=list)
+
+    @property
+    def simulation_confidence(self) -> float:
+        """Fraction of candidates the provider believes are safely restorable."""
+        if self.candidate_count == 0:
+            return 0.0
+        return round(self.restorable_count / self.candidate_count, 4)
+
+
+class AgentRollbackSimulationAck(BaseModel):
+    """Response returned to the agent after ``POST /agent/rollback-simulation``."""
+
+    simulation_id: str
+    accepted: bool
+    evidence_event_id: UUID | None = None
+    simulation_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Simulation query response models (operator-facing)
+# ---------------------------------------------------------------------------
+
+
+class RollbackSimulationSummary(BaseModel):
+    """Lightweight view of a stored simulation — used in list responses."""
+
+    model_config = ConfigDict(extra="allow")
+
+    simulation_id: str
+    endpoint_id: str
+    candidate_set_hash: str
+    candidate_count: int
+    restorable_count: int
+    simulation_confidence: float
+    destructive: bool
+    valid_until: datetime
+    provider: str | None
+    recovery_point_id: str | None
+    affected_paths: list[str]
+    created_at: datetime
+    is_expired: bool
+
+
+class RollbackSimulationDetail(RollbackSimulationSummary):
+    """Full simulation detail including per-path decisions and trace log."""
+
+    skipped_paths: list[RollbackPathDecision] = Field(default_factory=list)
+    decision_trace: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Real restore execution result — agent → control plane
+# ---------------------------------------------------------------------------
+
+
+class RestoreMetadataPreservation(BaseModel):
+    """Metadata preservation summary reported by the agent after a restore.
+
+    Captures the outcome of ACL, ADS (alternate data stream), and timestamp
+    restoration so compliance evidence reflects whether file metadata was
+    faithfully reconstructed alongside file content.
+
+    All fields are optional — Agent 1 populates them incrementally as support
+    is added to each provider.  ``extra="allow"`` absorbs any future provider-
+    specific extensions without schema breakage.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # ACL preservation
+    acl_preserved: bool | None = None
+    """True when all file ACLs were successfully restored from the snapshot."""
+    acl_details: str | None = None
+    """Provider-specific ACL note (e.g. 'DACL+SACL restored', 'POSIX mode bits')."""
+    original_acl_sha256: str | None = None
+    """SHA-256 of the original ACL blob as reported by the VSS snapshot."""
+
+    # Alternate Data Streams (Windows)
+    ads_preserved: bool | None = None
+    """True when ADS (Zone.Identifier, Aetherix.Marker, …) were restored."""
+    ads_streams: list[str] | None = None
+    """Names of ADS streams that were handled (restored or intentionally skipped)."""
+
+    # Timestamp preservation
+    timestamps_preserved: bool | None = None
+    """True when created/modified/accessed timestamps were restored to pre-attack values."""
+
+    # Free-form trace
+    preservation_notes: list[str] | None = None
+    """Free-form trace messages from the provider about metadata restoration steps."""
+
+
+class RollbackPathResult(BaseModel):
+    """Per-path outcome of an *executed* (non-simulated) rollback restore.
+
+    Mirrors the agent-side ``RollbackPathDecision`` struct but adds
+    ``bytes_restored``, ``error_message``, and ``metadata_preservation`` so
+    the control plane can surface execution-specific detail in the compliance
+    evidence, including whether ACLs/ADS/timestamps were preserved.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    path: str = Field(min_length=1)
+    outcome: RollbackPathOutcome
+    bytes_restored: int = Field(default=0, ge=0)
+    hash_before: str | None = None
+    hash_after: str | None = None
+    error_message: str | None = None
+    metadata_preservation: RestoreMetadataPreservation | None = None
+    """Per-path metadata preservation detail (ACLs, ADS, timestamps). Populated
+    by Agent 1 once per-path metadata support is enabled."""
+
+
+class AgentRollbackRestoreResult(BaseModel):
+    """Posted by an agent after ``restore()`` completes (success *or* failure).
+
+    ``execution_id`` is a unique identifier for this restore attempt so the
+    control plane can upsert idempotently.  ``simulation_id`` links back to
+    the simulation that was used to plan the restore.
+
+    ``metadata_preservation_summary`` captures the aggregate outcome of ACL,
+    ADS, and timestamp restoration.  It is optional so existing agents that
+    do not yet populate it continue to work unchanged.
+
+    ``extra="allow"`` ensures Agent 1 can add fields without breaking this
+    endpoint.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    execution_id: str = Field(min_length=1, max_length=256)
+    simulation_id: str = Field(min_length=1, max_length=256)
+    candidate_set_hash: str = Field(min_length=1, max_length=256)
+    success: bool
+    paths_attempted: int = Field(default=0, ge=0)
+    paths_restored: int = Field(default=0, ge=0)
+    paths_failed: int = Field(default=0, ge=0)
+    path_results: list[RollbackPathResult] = Field(default_factory=list)
+    error_message: str | None = None
+    recovery_point_id: str | None = Field(default=None, max_length=256)
+    provider: str | None = Field(default=None, max_length=64)
+    executed_at: datetime | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+    metadata_preservation_summary: RestoreMetadataPreservation | None = None
+    """Aggregate metadata preservation outcome for the whole restore.  Populated
+    once Agent 1 enables metadata preservation and the VSS/APFS provider supports
+    ACL+ADS+timestamp reconstruction."""
+
+    @property
+    def restore_success_rate(self) -> float:
+        """Fraction of attempted paths that were actually restored."""
+        if self.paths_attempted == 0:
+            return 0.0
+        return round(self.paths_restored / self.paths_attempted, 4)
+
+
+class AgentRollbackRestoreResultAck(BaseModel):
+    """Response returned to the agent after ``POST /agent/rollback-restore-result``."""
+
+    execution_id: str
+    accepted: bool
+    evidence_event_id: UUID | None = None
+    restore_success_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Restore execution history — operator-facing
+# ---------------------------------------------------------------------------
+
+
+class RollbackRestoreResultSummary(BaseModel):
+    """Lightweight view of a stored restore execution — used in list responses.
+
+    Surfaced via ``GET /endpoints/{id}/rollback-restore-results`` so operators
+    can review what restores have been executed for an endpoint without
+    fetching the full path-level detail.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    execution_id: str
+    simulation_id: str | None
+    endpoint_id: str
+    candidate_set_hash: str
+    success: bool
+    paths_attempted: int
+    paths_restored: int
+    paths_failed: int
+    restore_success_rate: float
+    error_message: str | None
+    recovery_point_id: str | None
+    provider: str | None
+    executed_at: datetime | None
+    duration_ms: int | None
+    created_at: datetime
+    has_metadata_preservation: bool
+    """True when the agent posted a ``metadata_preservation_summary``."""
 
 
 class AgentPolicyAckRequest(BaseModel):

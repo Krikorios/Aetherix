@@ -233,11 +233,7 @@ const COLUMN_DEFS: ColumnDef[] = [
       const used = sumUsed(row.license);
       const reserved = row.license.reserved_seats;
       const available = Math.max(0, row.license.total_seats - used - reserved);
-      return (
-        <span style={{ fontSize: 12.5 }}>
-          {used} used &middot; {reserved} reserved &middot; {available} available
-        </span>
-      );
+      return <span className="usageBreakdown">{used} used &middot; {reserved} reserved &middot; {available} available</span>;
     },
   },
   {
@@ -249,7 +245,7 @@ const COLUMN_DEFS: ColumnDef[] = [
       if (!row.license) return <span className="muted">—</span>;
       const used = sumUsed(row.license);
       const overflow = Math.max(0, used - row.license.total_seats);
-      return overflow > 0 ? <strong style={{ color: "#b3261e" }}>{overflow}</strong> : <span>0</span>;
+      return overflow > 0 ? <strong className="overflowCount">{overflow}</strong> : <span>0</span>;
     },
   },
   {
@@ -517,7 +513,7 @@ export function CompaniesPage() {
       <>
         <PageHeader
           eyebrow="MSP tenant foundation"
-          title="Companies + Licensing"
+          title="Companies"
           subtitle="Sign in to load tenant-scoped data."
         />
         {error ? <ErrorBanner message={error} /> : null}
@@ -529,7 +525,7 @@ export function CompaniesPage() {
     <>
       <PageHeader
         eyebrow={me.scope.is_platform ? "Platform owner" : me.scope.partner_ids.length ? "MSP partner" : "Company user"}
-        title="Companies + Licensing"
+        title="Companies"
         subtitle={`Signed in as ${me.account.email}. ${rows.length} ${rows.length === 1 ? "company" : "companies"} in scope.`}
       />
       {error ? <ErrorBanner message={error} /> : null}
@@ -642,7 +638,7 @@ export function CompaniesPage() {
                   />
                 </th>
                 {orderedVisibleColumns.map((col) => (
-                  <th key={col.id} style={{ textAlign: col.align ?? "left" }}>{col.label}</th>
+                  <th key={col.id} className={col.align === "right" ? "textRight" : undefined}>{col.label}</th>
                 ))}
                 <th className="checkboxCell" />
               </tr>
@@ -683,11 +679,11 @@ export function CompaniesPage() {
                       />
                     </td>
                     {orderedVisibleColumns.map((col) => (
-                      <td key={col.id} style={{ textAlign: col.align ?? "left" }}>
+                      <td key={col.id} className={col.align === "right" ? "textRight" : undefined}>
                         {col.render(row, { subscriptions })}
                       </td>
                     ))}
-                    <td className="checkboxCell" style={{ display: "flex", gap: 4 }}>
+                    <td className="checkboxCell actionCell">
                       <span
                         className="linkLike"
                         role="button"
@@ -939,7 +935,7 @@ function CreateCompanySheet({
               onChange={(event) => setCompanyType(event.target.value as typeof companyType)}
             >
               {COMPANY_TYPES.map((type) => (
-                <option key={type} value={type} style={{ textTransform: "capitalize" }}>
+                <option key={type} value={type} className="capitalize">
                   {type}
                 </option>
               ))}
@@ -1560,7 +1556,7 @@ function AiTab({
   return (
     <form className="tabPanel" onSubmit={save}>
       <div className="muted formIntro">
-        <Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+        <Sparkles size={14} className="sparklesIcon" />
         Choose how semantic DLP and alert summarization route AI calls for{" "}
         <strong>{row.customer.name}</strong>. BYO API keys are encrypted at rest and never
         returned by the API.
@@ -1631,7 +1627,7 @@ function AiTab({
           <div className="formRow">
             <label htmlFor="aiKey">
               API key
-              <span className="muted" style={{ marginLeft: 8 }}>
+              <span className="muted withMargin">
                 {hasStoredKey
                   ? `stored · ****${settings?.api_key_last4 ?? ""}`
                   : "not configured"}
@@ -1787,29 +1783,17 @@ const TTL_OPTIONS: { value: number; label: string }[] = [
   { value: 604_800, label: "7 days" },
 ];
 
-function getSigningBadge(signingStatus: string | null | undefined, buildStatus: string): { label: string; style: React.CSSProperties } {
+function getSigningBadge(signingStatus: string | null | undefined, buildStatus: string): { label: string; variant: "pending" | "notarized" | "signed" | "unsigned" } {
   if (buildStatus === "queued") {
-    return {
-      label: "Verification Pending",
-      style: { color: "var(--warning, #b45018)", borderColor: "var(--warning, #b45018)", background: "rgba(180, 80, 24, 0.07)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
-    };
+    return { label: "Verification Pending", variant: "pending" };
   }
   if (signingStatus === "notarized") {
-    return {
-      label: "Notarized (Apple Dev / Microsoft WHQL)",
-      style: { color: "var(--healthy, #1d6b40)", borderColor: "var(--healthy, #1d6b40)", background: "rgba(29, 107, 64, 0.09)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
-    };
+    return { label: "Notarized (Apple Dev / Microsoft WHQL)", variant: "notarized" };
   }
   if (signingStatus === "signed") {
-    return {
-      label: "Signed (Symantec EV)",
-      style: { color: "var(--healthy, #1d6b40)", borderColor: "var(--healthy, #1d6b40)", background: "rgba(29, 107, 64, 0.09)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
-    };
+    return { label: "Signed (Symantec EV)", variant: "signed" };
   }
-  return {
-    label: "Unsigned (Warning)",
-    style: { color: "var(--danger, #b3261e)", borderColor: "var(--danger, #b3261e)", background: "rgba(179, 38, 30, 0.08)", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: "600", display: "inline-flex", alignItems: "center" }
-  };
+  return { label: "Unsigned (Warning)", variant: "unsigned" };
 }
 
 function getTtlRemainingText(expiresAtStr: string | null | undefined): string {
@@ -1951,12 +1935,12 @@ function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: strin
               const signing = getSigningBadge(build.signing_status, build.status);
               const remaining = getTtlRemainingText(build.expires_at);
               return (
-                <div className="installerRow" key={build.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "16px", padding: "12px 14px", alignItems: "center" }}>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "6px" }}>
+                <div className="installerRow" key={build.id}>
+                  <div className="installerRowMain">
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                      <strong style={{ fontWeight: 600, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' }}>{build.platform}</strong>
+                      <span className="platformName">{build.platform}</span>
                       <em className={`statusPill status-${build.status === "ready" ? "active" : build.status === "failed" ? "expired" : "trial"}`}>{build.status}</em>
-                      <span style={signing.style}>{signing.label}</span>
+                      <span className={`signingBadge ${signing.variant}`}>{signing.label}</span>
                     </div>
                     {build.artifact_sha256 && (
                       <div style={{ marginTop: "4px" }}>
@@ -1968,10 +1952,10 @@ function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: strin
                       </div>
                     )}
                   </div>
-                  <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" }}>
+                  <span className="installerRowMeta">
                     <Clock size={12} /> {remaining}
                   </span>
-                  <div style={{ display: "flex", gap: "6px" }}>
+                  <div className="installerRowActions">
                     {build.artifact_url ? (
                       <>
                         <button
@@ -1987,7 +1971,6 @@ function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: strin
                           href={build.artifact_url}
                           download
                           className="iconBtn"
-                          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", textDecoration: "none", color: "inherit" }}
                           aria-label="Download artifact"
                           title="Download installer file"
                         >
@@ -2012,15 +1995,15 @@ function DeployTab({ row, onError }: { row: CompanyRow; onError: (message: strin
             {links.map((link) => {
               const remaining = getTtlRemainingText(link.expires_at);
               return (
-                <div className="installerRow" key={link.id} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "16px", padding: "12px 14px", alignItems: "center" }}>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "4px" }}>
+                <div className="installerRow" key={link.id}>
+                  <div className="installerRowMain">
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                      <strong style={{ fontWeight: 600, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace' }}>{link.platform ?? "any"}</strong>
+                      <span className="platformName">{link.platform ?? "any"}</span>
                       <em className="muted" style={{ fontSize: "11px", fontStyle: "normal" }}>{link.download_count}{link.max_downloads ? ` / ${link.max_downloads}` : ""} downloads</em>
                     </div>
                     <code style={{ fontSize: "11px", color: "var(--muted)", wordBreak: "break-all" }}>{link.url}</code>
                   </div>
-                  <span className="muted" style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "12px" }}>
+                  <span className="installerRowMeta">
                     <Clock size={12} /> {remaining}
                   </span>
                   <button type="button" className="iconBtn" onClick={() => void copy(link.url)} aria-label="Copy link" title="Copy quick deploy link">

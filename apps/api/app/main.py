@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, AgentActionAck, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, QuarantineInventoryResponse, QuarantineListRequest, QuarantineRestoreDecision, QuarantineRestoreRequest, RollbackRestoreRequest, PendingQuarantineRestore, PendingRollbackIntent, RollbackIntentRequest, RollbackIntentDecision, QueuedActionItem, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
+from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, AgentActionAck, AgentRollbackSimulation, AgentRollbackSimulationAck, AgentRollbackRestoreResult, AgentRollbackRestoreResultAck, RollbackSimulationSummary, RollbackSimulationDetail, RollbackRestoreResultSummary, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, QuarantineInventoryResponse, QuarantineListRequest, QuarantineRestoreDecision, QuarantineRestoreRequest, RollbackRestoreRequest, PendingQuarantineRestore, PendingRollbackIntent, RollbackIntentRequest, RollbackIntentDecision, QueuedActionItem, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
 from app.services import audit
 from app.services import compliance
 from app.schemas import ComplianceAttestationCreate, ComplianceAttestation, ComplianceReviewCreate, ComplianceReview, ComplianceReviewQueueItem, ComplianceSourceTable
@@ -64,6 +64,15 @@ async def lifespan(_: FastAPI):
     # Postgres is the single source of truth. Ensure the schema exists
     # before serving the first request; do not seed any sample data.
     init_schema()
+
+    # OpenSearch event indexing plane (best-effort). Safe to call even if
+    # AETHERIX_OPENSEARCH_URL is not configured.
+    try:
+        from app.services import event_index as os_index
+        os_index.warmup()
+    except Exception:  # noqa: BLE001
+        pass
+
     try:
         yield
     finally:
@@ -294,7 +303,7 @@ def scan_dlp(request: DlpScanRequest, http_request: Request) -> DlpScanResponse:
     # Persist DLP event for correlation pipeline (includes DLP↔EDR matching)
     try:
         from app.services.state import persist_dlp_event
-        persist_dlp_event(
+        dlp_event_id = persist_dlp_event(
             customer_id=request.customer_id,
             endpoint_id=request.endpoint_id,
             source=request.source or "manual",
@@ -303,6 +312,35 @@ def scan_dlp(request: DlpScanRequest, http_request: Request) -> DlpScanResponse:
             risk_band=response.risk_band,
             sha256_hash=request.sha256_hash,
         )
+
+        # OpenSearch dual-write for DLP event (best effort)
+        if dlp_event_id:
+            try:
+                from app.services import event_index as os_index
+                from app.services.customers import agent_tenant_context  # reuse for partner resolution if needed
+
+                # Best effort partner lookup
+                partner_id = None
+                try:
+                    t = agent_tenant_context(request.endpoint_id) if request.endpoint_id else None
+                    partner_id = t.get("partner_id") if t else None
+                except Exception:
+                    pass
+
+                os_index.index_dlp_event(
+                    partner_id=partner_id,
+                    customer_id=str(request.customer_id),
+                    endpoint_id=request.endpoint_id,
+                    dlp_event_id=str(dlp_event_id),
+                    source=request.source or "manual",
+                    action=response.action,
+                    entity_types=[f.entity_type for f in response.findings],
+                    risk_band=response.risk_band,
+                    sha256_hash=request.sha256_hash,
+                    observed_at=datetime.now(UTC),
+                )
+            except Exception:
+                pass
     except Exception:
         pass
     # Audit the scan decision. The raw scan text is hashed, never stored.
@@ -731,17 +769,154 @@ def audit_verify(_: Account = Depends(require_platform_owner)) -> dict[str, obje
     return {"ok": ok, "first_bad_seq": first_bad}
 
 
+@app.post("/internal/opensearch/smoke", tags=["internal"])
+def opensearch_smoke(
+    customer_id: UUID = Query(...),
+    _: Account = Depends(require_platform_owner),
+) -> dict[str, object]:
+    """Platform-owner only smoke test for the OpenSearch event plane.
+
+    Indexes a synthetic security alert document for the given customer and
+    performs a simple search. Useful for verifying docker-compose + wiring.
+    """
+    from app.services import event_index as os_index
+
+    if not os_index.is_enabled():
+        return {"enabled": False, "message": "AETHERIX_OPENSEARCH_URL not configured or client failed to initialize"}
+
+    # Ensure template exists
+    os_index.ensure_templates()
+
+    success = os_index.index_security_alert(
+        partner_id=None,  # will fall back in index name
+        customer_id=str(customer_id),
+        agent_id="smoke-test-agent",
+        alert_id=str(uuid.uuid4()),
+        severity="medium",
+        category="test",
+        payload={"message": "OpenSearch smoke test from /internal/opensearch/smoke", "synthetic": True},
+        evidence_controls=["test.smoke"],
+        created_at=datetime.now(UTC),
+    )
+
+    # Simple verification search
+    client = os_index.get_client()
+    search_result: dict[str, Any] = {}
+    if client:
+        try:
+            idx = f"aetherix-events-*-{str(customer_id).replace('-', '_')}"
+            resp = client.search(index=idx, body={"query": {"match_all": {}}, "size": 1})
+            search_result = {"hits": resp.get("hits", {}).get("total", 0)}
+        except Exception as exc:  # noqa: BLE001
+            search_result = {"error": str(exc)}
+
+    return {
+        "enabled": True,
+        "indexed": success,
+        "search": search_result,
+        "index_pattern_hint": f"aetherix-events-*-{str(customer_id).replace('-', '_')}",
+        "note": "Using OpenSearch Data Streams + ILM (see event_index.py)",
+    }
+
+
+@app.get("/customers/{customer_id}/events/search")
+def search_customer_events(
+    customer_id: UUID,
+    q: str = Query("", description="Simple text query across payload and common fields"),
+    from_ts: str | None = Query(None, description="ISO-8601 start timestamp for time-range filter (inclusive)"),
+    to_ts: str | None = Query(None, description="ISO-8601 end timestamp for time-range filter (inclusive)"),
+    size: int = Query(50, ge=1, le=200),
+    account: Account = Depends(current_account),
+) -> dict[str, object]:
+    """Tenant-scoped search over the customer's security events in OpenSearch.
+
+    This is the foundation for Live Search / investigation experiences.
+    Currently returns raw-ish hits; will be shaped further as the console UI evolves.
+    """
+    _require_customer_access(customer_id, account, "incidents", "view")
+
+    from app.services import event_index as os_index
+
+    if not os_index.is_enabled():
+        raise HTTPException(status_code=503, detail="OpenSearch event store is not available")
+
+    # Build text clause
+    if q:
+        text_clause: dict = {
+            "multi_match": {
+                "query": q,
+                "fields": ["payload.*", "file_path", "process_path", "entity_types", "category", "severity"],
+                "type": "best_fields",
+            }
+        }
+    else:
+        text_clause = {"match_all": {}}
+
+    # Wrap with a time-range filter when from_ts/to_ts provided
+    if from_ts or to_ts:
+        ts_range: dict = {}
+        if from_ts:
+            ts_range["gte"] = from_ts
+        if to_ts:
+            ts_range["lte"] = to_ts
+        query: dict = {
+            "bool": {
+                "must": [text_clause],
+                "filter": [{"range": {"timestamp": ts_range}}],
+            }
+        }
+    else:
+        query = text_clause
+
+    result = os_index.search_events(
+        customer_id=str(customer_id),
+        query=query,
+        size=size,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=f"Search backend error: {result['error']}")
+
+    hits = result.get("hits", {}).get("hits", [])
+    return {
+        "total": result.get("hits", {}).get("total", 0),
+        "returned": len(hits),
+        "data_stream": f"aetherix-events-*-{str(customer_id).replace('-', '_')}",
+        "note": "Searching OpenSearch Data Stream (managed by ILM)",
+        "events": [
+            {
+                "id": h.get("_id"),
+                "data_stream": h.get("_index"),
+                "timestamp": h.get("_source", {}).get("@timestamp") or h.get("_source", {}).get("timestamp"),
+                "event_type": h.get("_source", {}).get("event_type"),
+                "severity": h.get("_source", {}).get("severity"),
+                "payload": h.get("_source", {}).get("payload"),
+                "postgres_ref": h.get("_source", {}).get("postgres_ref"),
+            }
+            for h in hits
+        ],
+    }
+
+
 @app.get("/compliance/export")
 def compliance_export(
     customer_id: UUID = Query(...),
     framework: str = Query(...),
+    format: str = Query("json"),
     account: Account = Depends(current_account),
-) -> dict[str, object]:
+):
+    from fastapi.responses import Response
     if get_customer(customer_id) is None:
         raise HTTPException(status_code=404, detail="Customer not found")
-    _require_customer_access(customer_id, account, "companies", "view")
+    _require_customer_access(customer_id, account, "incidents", "view")
     try:
-        return compliance.export_bundle(customer_id, framework)
+        if format == "pdf":
+            pdf_bytes = compliance.export_bundle_pdf(customer_id, framework)
+            return Response(content=bytes(pdf_bytes), media_type="application/pdf", headers={
+                "Content-Disposition": f"attachment; filename=compliance-{framework}.pdf"
+            })
+        else:
+            return compliance.export_bundle(customer_id, framework)
     except compliance.ComplianceExportError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1577,6 +1752,39 @@ def queue_rollback_restore(
     if customer_id is not None:
         _require_customer_access(customer_id, account, "incidents", "edit")
 
+    # Guard: if simulation_id and candidate_set_hash are provided, require a
+    # matching, non-expired simulation record.
+    if payload.simulation_id and payload.candidate_set_hash:
+        _now_restore = datetime.now(UTC)
+        with db.connection() as _rr_conn, _rr_conn.cursor() as _rr_cur:
+            _rr_cur.execute(
+                """
+                select valid_until from rollback_simulations
+                 where simulation_id = %s and candidate_set_hash = %s
+                   and endpoint_id = %s
+                """,
+                (payload.simulation_id, payload.candidate_set_hash, endpoint_id),
+            )
+            _rr_sim = _rr_cur.fetchone()
+        if _rr_sim is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "no simulation record found for this candidate set; "
+                    "the agent must run simulate_restore and post to "
+                    "/agent/rollback-simulation before a rollback can be queued"
+                ),
+            )
+        _rr_vu = _rr_sim["valid_until"]
+        if _rr_vu is not None:
+            if _rr_vu.tzinfo is None:
+                _rr_vu = _rr_vu.replace(tzinfo=UTC)
+            if _rr_vu <= _now_restore:
+                raise HTTPException(
+                    status_code=400,
+                    detail="the stored simulation has expired; a new simulate_restore run is required",
+                )
+
     rollback_readiness = _latest_rollback_readiness_snapshot(endpoint_id)
     provider_metadata = payload.provider_metadata if payload.provider_metadata is not None else None
 
@@ -1662,14 +1870,66 @@ def queue_rollback_intent(
     if valid_until <= now:
         raise HTTPException(status_code=400, detail="simulation has expired (valid_until is in the past)")
 
+    # Guard: require a stored simulation before queuing the intent.
+    # This ensures operators cannot approve a rollback for which no simulation
+    # evidence exists, and gives the approval inbox extra context (confidence
+    # score, skipped paths) from the DB record rather than only the payload.
+    with db.connection() as _sim_conn, _sim_conn.cursor() as _sim_cur:
+        _sim_cur.execute(
+            """
+            select simulation_id, valid_until, candidate_count, restorable_count,
+                   skipped_paths
+              from rollback_simulations
+             where simulation_id = %s and candidate_set_hash = %s
+               and endpoint_id = %s
+            """,
+            (payload.simulation_id, payload.candidate_set_hash, endpoint_id),
+        )
+        _sim_row = _sim_cur.fetchone()
+    if _sim_row is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "no simulation record found for this candidate set; "
+                "the agent must run simulate_restore and post to "
+                "/agent/rollback-simulation before a rollback intent can be queued"
+            ),
+        )
+    # Double-check DB valid_until (payload was already validated above, but the
+    # DB record could differ if a future agent version posts an extended window).
+    _sim_vu = _sim_row["valid_until"]
+    if _sim_vu is not None and _sim_vu.tzinfo is None:
+        _sim_vu = _sim_vu.replace(tzinfo=UTC)
+    if _sim_vu is not None and _sim_vu <= now:
+        raise HTTPException(
+            status_code=400,
+            detail="the stored simulation has expired; a new simulate_restore run is required",
+        )
+
     customer_id = _resolve_endpoint_or_404(endpoint_id)
     if customer_id is not None:
         _require_customer_access(customer_id, account, "incidents", "edit")
 
     rollback_readiness = _latest_rollback_readiness_snapshot(endpoint_id)
 
+    # Embed simulation summary from the DB record into the action payload so the
+    # approval inbox can show confidence/skipped counts without a second lookup.
+    _sim_candidate_count = _sim_row.get("candidate_count") or 0
+    _sim_restorable_count = _sim_row.get("restorable_count") or 0
+    _sim_confidence = (
+        round(_sim_restorable_count / _sim_candidate_count, 4)
+        if _sim_candidate_count > 0 else 0.0
+    )
+    _sim_skipped_count = len(_sim_row.get("skipped_paths") or [])
+
     approval_required = payload.severity_hint in {"high", "critical"}
     action_payload = payload.model_dump(mode="json")
+    action_payload["simulation_summary"] = {
+        "simulation_confidence": _sim_confidence,
+        "candidate_count": _sim_candidate_count,
+        "restorable_count": _sim_restorable_count,
+        "skipped_count": _sim_skipped_count,
+    }
     if rollback_readiness is not None:
         action_payload["rollback_readiness"] = rollback_readiness
     result = _module_action(
@@ -1783,6 +2043,37 @@ def approve_rollback_intent(
                     )
             except (TypeError, ValueError):
                 pass
+        # Also verify the simulation DB record still exists and has not expired.
+        # This prevents approving intents whose backing simulation was superseded.
+        _approve_sim_id = orig_payload.get("simulation_id")
+        _approve_sim_hash = orig_payload.get("candidate_set_hash")
+        if _approve_sim_id and _approve_sim_hash:
+            cur.execute(
+                """
+                select valid_until from rollback_simulations
+                 where simulation_id = %s and candidate_set_hash = %s
+                   and endpoint_id = %s
+                """,
+                (_approve_sim_id, _approve_sim_hash, endpoint_id),
+            )
+            _approve_sim_row = cur.fetchone()
+            if _approve_sim_row is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "no simulation record found for this candidate set; "
+                        "a new simulate_restore run is required before approval"
+                    ),
+                )
+            _approve_sim_vu = _approve_sim_row["valid_until"]
+            if _approve_sim_vu is not None:
+                if _approve_sim_vu.tzinfo is None:
+                    _approve_sim_vu = _approve_sim_vu.replace(tzinfo=UTC)
+                if _approve_sim_vu <= now:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="the stored simulation has expired; a new simulate_restore run is required before approval",
+                    )
         merged_payload = dict(orig_payload)
         if reason:
             merged_payload["approval_reason"] = reason
@@ -2036,14 +2327,14 @@ def list_pending_quarantine_restores(
     ]
     params: list[object] = []
     if customer_id is not None:
-        clauses.append("ma.customer_id = %s")
+        clauses.append("coalesce(ma.customer_id, ea.customer_id) = %s")
         params.append(customer_id)
     else:
         scope = tenancy.compute_scope(account)
         if not scope.is_platform:
             tenant_clauses: list[str] = []
             if scope.customer_ids:
-                tenant_clauses.append("ma.customer_id = any(%s)")
+                tenant_clauses.append("coalesce(ma.customer_id, ea.customer_id) = any(%s)")
                 params.append(scope.customer_ids)
             if scope.partner_ids:
                 # join through enrolled_agents -> customers to honor
@@ -2117,14 +2408,14 @@ def list_pending_rollback_intents(
     ]
     params: list[object] = []
     if customer_id is not None:
-        clauses.append("ma.customer_id = %s")
+        clauses.append("coalesce(ma.customer_id, ea.customer_id) = %s")
         params.append(customer_id)
     else:
         scope = tenancy.compute_scope(account)
         if not scope.is_platform:
             tenant_clauses: list[str] = []
             if scope.customer_ids:
-                tenant_clauses.append("ma.customer_id = any(%s)")
+                tenant_clauses.append("coalesce(ma.customer_id, ea.customer_id) = any(%s)")
                 params.append(scope.customer_ids)
             if scope.partner_ids:
                 # join through enrolled_agents -> customers to honor
@@ -2159,7 +2450,30 @@ def list_pending_rollback_intents(
         )
         rows = cur.fetchall()
     out: list[PendingRollbackIntent] = []
+    now = datetime.now(UTC)
     for row in rows:
+        action_payload: dict[str, Any] = dict(row.get("payload") or {})
+        sim_id: str | None = action_payload.get("simulation_id")
+        sim_summary: dict[str, Any] = action_payload.get("simulation_summary") or {}
+        sim_confidence: float | None = sim_summary.get("simulation_confidence")
+        sim_candidate_count: int | None = sim_summary.get("candidate_count")
+        sim_restorable_count: int | None = sim_summary.get("restorable_count")
+
+        # Determine whether the simulation has expired by checking valid_until
+        # stored in the action payload (set at queue time).
+        sim_valid_until: datetime | None = None
+        sim_is_expired: bool | None = None
+        valid_until_str: str | None = action_payload.get("valid_until")
+        if valid_until_str:
+            try:
+                vu = datetime.fromisoformat(valid_until_str)
+                if vu.tzinfo is None:
+                    vu = vu.replace(tzinfo=UTC)
+                sim_valid_until = vu
+                sim_is_expired = vu <= now
+            except (TypeError, ValueError):
+                pass
+
         out.append(
             PendingRollbackIntent(
                 action=_module_action_result_from_row(row),
@@ -2167,6 +2481,12 @@ def list_pending_rollback_intents(
                 hostname=row.get("ea_hostname"),
                 customer_id=row.get("resolved_customer_id"),
                 rollback_readiness=row.get("rollback_readiness"),
+                simulation_id=sim_id,
+                simulation_confidence=sim_confidence,
+                simulation_valid_until=sim_valid_until,
+                simulation_is_expired=sim_is_expired,
+                simulation_candidate_count=sim_candidate_count,
+                simulation_restorable_count=sim_restorable_count,
             )
         )
     return out
@@ -2192,14 +2512,14 @@ def list_action_queue(
     params: list[object] = []
 
     if customer_id is not None:
-        clauses.append("ma.customer_id = %s")
+        clauses.append("coalesce(ma.customer_id, ea.customer_id) = %s")
         params.append(customer_id)
     else:
         scope = tenancy.compute_scope(account)
         if not scope.is_platform:
             tenant_clauses: list[str] = []
             if scope.customer_ids:
-                tenant_clauses.append("ma.customer_id = any(%s)")
+                tenant_clauses.append("coalesce(ma.customer_id, ea.customer_id) = any(%s)")
                 params.append(scope.customer_ids)
             if scope.partner_ids:
                 tenant_clauses.append(
@@ -2277,8 +2597,9 @@ def cancel_action(
             select ma.id, ma.endpoint_id, ma.action, ma.payload, ma.status,
                    ma.approval_required, ma.evidence_controls, ma.created_at,
                    ma.result, ma.processed_at, ma.requested_by, ma.approved_by,
-                   ma.approved_at, ma.customer_id
+                   ma.approved_at, coalesce(ma.customer_id, ea.customer_id) as customer_id
               from module_actions ma
+              left join enrolled_agents ea on ea.agent_id = ma.endpoint_id
              where ma.id = %s
             """,
             (action_id,),
@@ -4394,6 +4715,233 @@ def agent_dlp_evidence_route(
         )
     except policy_v2_service.PolicyV2Error as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+@app.post("/agent/rollback-simulation", response_model=AgentRollbackSimulationAck, status_code=201)
+def agent_rollback_simulation_route(
+    payload: AgentRollbackSimulation,
+    endpoint_id: str = Query(..., min_length=1),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    token: str | None = Query(default=None, min_length=8),
+) -> AgentRollbackSimulationAck:
+    """Receive a VSS rollback simulation result from an enrolled agent.
+
+    The simulation is persisted in ``rollback_simulations`` and a
+    ``endpoint.rollback.simulated`` compliance evidence event is emitted.
+    Idempotent: posting the same ``simulation_id`` twice is safe (upsert).
+    """
+    resolved = _resolve_agent_token(authorization, token)
+    try:
+        return policy_v2_service.ingest_agent_rollback_simulation(
+            endpoint_id=endpoint_id,
+            token=resolved,
+            payload=payload,
+        )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+@app.post(
+    "/agent/rollback-restore-result",
+    response_model=AgentRollbackRestoreResultAck,
+    status_code=201,
+)
+def agent_rollback_restore_result_route(
+    payload: AgentRollbackRestoreResult,
+    endpoint_id: str = Query(..., min_length=1),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    token: str | None = Query(default=None, min_length=8),
+) -> AgentRollbackRestoreResultAck:
+    """Receive a real VSS rollback restore execution result from an enrolled agent.
+
+    The result is persisted in ``rollback_restore_results`` and a
+    ``endpoint.rollback.executed`` (success) or ``endpoint.rollback.failed``
+    compliance evidence event is emitted.  Idempotent: posting the same
+    ``execution_id`` twice is safe (upsert updates success/paths/error_message).
+    """
+    resolved = _resolve_agent_token(authorization, token)
+    try:
+        return policy_v2_service.ingest_agent_rollback_restore_result(
+            endpoint_id=endpoint_id,
+            token=resolved,
+            payload=payload,
+        )
+    except policy_v2_service.PolicyV2Error as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+def _simulation_record_from_row(row: dict[str, Any], now: datetime) -> RollbackSimulationSummary:
+    """Map a ``rollback_simulations`` DB row to a ``RollbackSimulationSummary``."""
+    valid_until = row["valid_until"]
+    if valid_until is not None and valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=UTC)
+    candidate_count = row.get("candidate_count") or 0
+    restorable_count = row.get("restorable_count") or 0
+    confidence = round(restorable_count / candidate_count, 4) if candidate_count > 0 else 0.0
+    return RollbackSimulationSummary(
+        simulation_id=row["simulation_id"],
+        endpoint_id=row["endpoint_id"],
+        candidate_set_hash=row["candidate_set_hash"],
+        candidate_count=candidate_count,
+        restorable_count=restorable_count,
+        simulation_confidence=confidence,
+        destructive=bool(row.get("destructive", False)),
+        valid_until=valid_until,
+        provider=row.get("provider"),
+        recovery_point_id=row.get("recovery_point_id"),
+        affected_paths=list(row.get("affected_paths") or []),
+        created_at=row["created_at"],
+        is_expired=valid_until is not None and valid_until <= now,
+    )
+
+
+@app.get(
+    "/endpoints/{endpoint_id}/rollback-simulations",
+    response_model=list[RollbackSimulationSummary],
+)
+def list_endpoint_rollback_simulations(
+    endpoint_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    include_expired: bool = Query(default=False),
+    account: Account = Depends(current_account),
+) -> list[RollbackSimulationSummary]:
+    """List stored rollback simulation results for an endpoint.
+
+    Ordered by ``valid_until`` descending so the most-recent simulation is
+    first.  Pass ``include_expired=false`` to show only simulations whose
+    ``valid_until`` is still in the future.
+    """
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+
+    now = datetime.now(UTC)
+    extra_clause = "" if include_expired else "and valid_until > now()"
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select simulation_id, endpoint_id, candidate_set_hash, candidate_count,
+                   restorable_count, destructive, valid_until, provider,
+                   recovery_point_id, affected_paths, created_at
+              from rollback_simulations
+             where endpoint_id = %s {extra_clause}
+             order by valid_until desc
+             limit %s
+            """,
+            (endpoint_id, limit),
+        )
+        rows = cur.fetchall()
+    return [_simulation_record_from_row(row, now) for row in rows]
+
+
+@app.get(
+    "/endpoints/{endpoint_id}/rollback-simulations/{simulation_id}",
+    response_model=RollbackSimulationDetail,
+)
+def get_endpoint_rollback_simulation(
+    endpoint_id: str,
+    simulation_id: str,
+    account: Account = Depends(current_account),
+) -> RollbackSimulationDetail:
+    """Fetch the full detail of a single rollback simulation (including skipped
+    paths and decision trace).  Returns 404 if not found or if the simulation
+    belongs to a different endpoint."""
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select simulation_id, endpoint_id, candidate_set_hash, candidate_count,
+                   restorable_count, destructive, valid_until, provider,
+                   recovery_point_id, affected_paths, created_at,
+                   skipped_paths, decision_trace
+              from rollback_simulations
+             where endpoint_id = %s and simulation_id = %s
+            """,
+            (endpoint_id, simulation_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"simulation '{simulation_id}' not found for endpoint '{endpoint_id}'",
+        )
+    summary = _simulation_record_from_row(row, now)
+    return RollbackSimulationDetail(
+        **summary.model_dump(),
+        skipped_paths=list(row.get("skipped_paths") or []),
+        decision_trace=list(row.get("decision_trace") or []),
+    )
+
+
+@app.get(
+    "/endpoints/{endpoint_id}/rollback-restore-results",
+    response_model=list[RollbackRestoreResultSummary],
+)
+def list_endpoint_rollback_restore_results(
+    endpoint_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    account: Account = Depends(current_account),
+) -> list[RollbackRestoreResultSummary]:
+    """List stored rollback restore execution results for an endpoint.
+
+    Returns the most-recent executions first.  Each row indicates success,
+    path counts, restore success rate, and whether a metadata preservation
+    summary was attached (ACLs, ADS, timestamps).
+
+    Operators can use this endpoint to review the execution history and audit
+    whether restores completed as expected after the simulation → approve flow.
+    """
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select execution_id, simulation_id, endpoint_id, candidate_set_hash,
+                   success, paths_attempted, paths_restored, paths_failed,
+                   error_message, recovery_point_id, provider,
+                   executed_at, duration_ms, created_at,
+                   (metadata_preservation_summary is not null) as has_metadata_preservation
+              from rollback_restore_results
+             where endpoint_id = %s
+             order by created_at desc
+             limit %s
+            """,
+            (endpoint_id, limit),
+        )
+        rows = cur.fetchall()
+
+    results: list[RollbackRestoreResultSummary] = []
+    for row in rows:
+        paths_attempted = row.get("paths_attempted") or 0
+        paths_restored = row.get("paths_restored") or 0
+        rate = round(paths_restored / paths_attempted, 4) if paths_attempted > 0 else 0.0
+        results.append(
+            RollbackRestoreResultSummary(
+                execution_id=row["execution_id"],
+                simulation_id=row.get("simulation_id"),
+                endpoint_id=row["endpoint_id"],
+                candidate_set_hash=row["candidate_set_hash"],
+                success=bool(row.get("success", False)),
+                paths_attempted=paths_attempted,
+                paths_restored=paths_restored,
+                paths_failed=row.get("paths_failed") or 0,
+                restore_success_rate=rate,
+                error_message=row.get("error_message"),
+                recovery_point_id=row.get("recovery_point_id"),
+                provider=row.get("provider"),
+                executed_at=row.get("executed_at"),
+                duration_ms=row.get("duration_ms"),
+                created_at=row["created_at"],
+                has_metadata_preservation=bool(row.get("has_metadata_preservation", False)),
+            )
+        )
+    return results
 
 
 @app.post("/agent/policy/ack", response_model=AgentPolicyAck, status_code=201)

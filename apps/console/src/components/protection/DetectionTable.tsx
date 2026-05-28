@@ -8,6 +8,10 @@ interface DetectionTableProps {
   selectedId: string | null;
   onSelect: (detection: Detection) => void;
   isLoading?: boolean;
+  /** Context-specific panel heading (default: "Detections & Rules Security Alerts") */
+  panelTitle?: string;
+  /** Context-specific panel subtitle (default: "Filtered list of active violations") */
+  panelSubtitle?: string;
 }
 
 type SortField = "created_at" | "risk_score" | "confidence" | "title" | "endpoint_name";
@@ -18,6 +22,8 @@ export function DetectionTable({
   selectedId,
   onSelect,
   isLoading = false,
+  panelTitle = "Detections & Rules Security Alerts",
+  panelSubtitle = "Filtered list of active violations",
 }: DetectionTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [riskFilter, setRiskFilter] = useState<string>("all");
@@ -61,8 +67,8 @@ export function DetectionTable({
     <article className="panel" style={{ flex: 1.5, display: "flex", flexDirection: "column", minWidth: "400px" }}>
       <div className="panelHeader" style={{ paddingBottom: "12px", borderBottom: "1px solid var(--line)" }}>
         <div>
-          <h2 style={{ fontSize: "16px", margin: 0 }}>Detections & Rules Security Alerts</h2>
-          <span style={{ fontSize: "12px", color: "var(--muted)" }}>Filtered list of active violations</span>
+          <h2 style={{ fontSize: "16px", margin: 0 }}>{panelTitle}</h2>
+          <span style={{ fontSize: "12px", color: "var(--muted)" }}>{panelSubtitle}</span>
         </div>
       </div>
 

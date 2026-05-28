@@ -427,7 +427,8 @@ Run these via `#[cfg(windows)] #[cfg(test)]`:
 | `parses_shadow_copy_json_array_and_single_object` | CIM JSON output handles one or many shadows |
 | `maps_shadow_copy_to_verified_recovery_point_shape` | `Win32_ShadowCopy` fields map into `RecoveryPoint` |
 | `filters_verified_non_expired_scope_matching_points` | Verified, non-expired, protected-root filtering |
-| `test_vss_restore_methods_remain_unavailable` | Restore/simulate stay explicitly gated for later slices |
+| `synthetic_shadow_like_restore_copies_content_and_verifies_hash` | Synthetic CI guard for copy-out, hash verification, and evidence shape using separate temp directories. This is **not** proof of Win32_ShadowCopy device access. |
+| `real_vss_shadow_copy_restore_end_to_end` | Ignored by default. On a Windows admin/VSS host, creates a real VSS shadow, modifies a live file, runs `simulate_restore()` and `restore()`, verifies content plus `hash_before`/`hash_after`, and attempts shadow cleanup. |
 
 ### 9.2 Integration Tests (requires Windows with VSS)
 
@@ -435,6 +436,27 @@ Manual or CI-gated:
 - Create a VSS shadow copy via `vssadmin create shadow /for=C:`
 - Run `simulate_restore` → verify `RollbackSimulation` with real file hash
 - Run `restore` → verify `RollbackEvidence` with restored path, hash_before/after, metadata preserved
+
+Concrete agent test command on a Windows machine with admin privileges and VSS enabled:
+
+```powershell
+cd agent
+$env:AETHERIX_RUN_REAL_VSS_TEST = "1"
+# Optional: choose a disposable test root on C:
+$env:AETHERIX_REAL_VSS_TEST_ROOT = "C:\AetherixVssRollbackTest"
+cargo test real_vss_shadow_copy_restore_end_to_end -- --ignored --nocapture
+```
+
+The test is intentionally ignored by default because it is destructive to a
+disposable live test file and requires `vssadmin` privileges. It writes only to
+the live test file under `AETHERIX_REAL_VSS_TEST_ROOT`; it never writes to or
+deletes snapshot device contents. Snapshot deletion is limited to a best-effort
+cleanup of the test-created shadow via `vssadmin delete shadows /Shadow={id}`.
+
+Validation status note: macOS/Linux CI can only run the synthetic copy-out test.
+Real acceptance requires the ignored Windows test above to pass on a Windows
+runner/VM with VSS. Do not treat the synthetic test as evidence that
+`\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy{N}` access works.
 
 ### 9.3 Cross-Platform Compilation Assurance
 

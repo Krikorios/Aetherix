@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { ShieldCheck, Plus, AlertTriangle, Globe2, ScanEye } from "lucide-react";
+import { Plus, AlertTriangle, Globe2, ScanEye } from "lucide-react";
 import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
@@ -23,6 +23,12 @@ const EASM_STATUS_TO_DETECTION: Record<string, DetectionStatus> = {
   remediated: "resolved",
   false_positive: "resolved",
 };
+
+const EASM_ACTIONS = [
+  { value: "investigate", label: "Open Investigation", destructive: false },
+  { value: "remediate", label: "Mark Remediated", destructive: true },
+  { value: "mark_reviewed", label: "Mark as Reviewed / Accept Risk", destructive: false },
+];
 
 function exposureToDetection(exposure: EASMExposure): Detection {
   const portInfo = exposure.open_ports.length ? ` (ports: ${exposure.open_ports.join(", ")})` : "";
@@ -55,13 +61,13 @@ function exposureToDetection(exposure: EASMExposure): Detection {
   };
 }
 
-export function EASMPage({ me }: { me?: MeResponse }) {
+export function EASMPage({ me, embedded = false }: { me?: MeResponse; embedded?: boolean }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [policy, setPolicy] = useState<EffectivePolicy>({
+  const [policy, setPolicy] = useState<EffectivePolicy>(() => ({
     policy_version: "v2.1.0",
     last_updated: new Date(Date.now() - 3600000).toISOString(),
     status: "protected",
@@ -72,7 +78,7 @@ export function EASMPage({ me }: { me?: MeResponse }) {
       "cloud_storage_exposure": true,
       "subdomain_takeover_prevention": true,
     },
-  });
+  }));
 
   const [detections, setDetections] = useState<Detection[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -117,7 +123,7 @@ export function EASMPage({ me }: { me?: MeResponse }) {
   );
 
   useEffect(() => {
-    void loadExposures();
+    queueMicrotask(() => void loadExposures());
   }, [loadExposures]);
 
   const selectedDetection = detections.find((d) => d.id === selectedId) || null;
@@ -207,6 +213,8 @@ export function EASMPage({ me }: { me?: MeResponse }) {
         await apiPost(`/easm/exposures/${selectedDetection.id}/investigate`, {});
       } else if (selectedAction === "remediate") {
         await apiPost(`/easm/exposures/${selectedDetection.id}/remediate`, {});
+      } else if (selectedAction !== "mark_reviewed") {
+        throw new Error("Unsupported EASM action selected.");
       }
       setStagedActions((current) =>
         current.map((s) => (s.id === optimistic.id ? { ...s, status: "approved" } : s)),
@@ -230,15 +238,16 @@ export function EASMPage({ me }: { me?: MeResponse }) {
   };
 
   if (isLoading) {
-    return (
+    const loadingState = (
       <div style={{ padding: "40px", width: "100%" }}>
         <LoadingState message="Discovering external assets and probing for exposures..." />
       </div>
     );
+    return embedded ? loadingState : <ConsolePage>{loadingState}</ConsolePage>;
   }
 
-  return (
-    <ConsolePage>
+  const content = (
+    <>
       <ModuleHeader
         title="External Attack Surface (EASM)"
         eyebrow="Asset Discovery Module"
@@ -283,6 +292,8 @@ export function EASMPage({ me }: { me?: MeResponse }) {
             handleActionChange(d.recommended_action);
           }}
           isLoading={isLoading}
+          panelTitle="Attack Surface Exposures"
+          panelSubtitle="Discovered external assets and open vulnerabilities"
         />
 
         <DetailPanel detection={selectedDetection} />
@@ -296,11 +307,7 @@ export function EASMPage({ me }: { me?: MeResponse }) {
           onActionChange={handleActionChange}
           onSimulate={simulateAction}
           onStage={() => stageAction()}
-          availableActions={[
-            { value: "request_takedown", label: "Request Infrastructure Takedown", destructive: true },
-            { value: "mark_reviewed", label: "Mark as Reviewed / Accept Risk", destructive: false },
-            { value: "dismiss_alert", label: "Dismiss warning manually", destructive: false },
-          ]}
+          availableActions={EASM_ACTIONS}
         />
       </section>
 
@@ -399,6 +406,8 @@ export function EASMPage({ me }: { me?: MeResponse }) {
           </section>
         </div>
       )}
-    </ConsolePage>
+    </>
   );
+
+  return embedded ? content : <ConsolePage>{content}</ConsolePage>;
 }

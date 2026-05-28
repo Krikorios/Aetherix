@@ -285,7 +285,7 @@ export function WebProtectionPage({ me }: { me?: MeResponse }) {
     <ConsolePage>
       
       <ModuleHeader
-        title="Web Protection & GenAI Guardrails"
+        title="Web & Email Protection"
         eyebrow="Endpoint Protection Module"
         icon={Globe}
         status={policy.status}
@@ -328,6 +328,8 @@ export function WebProtectionPage({ me }: { me?: MeResponse }) {
             handleActionChange(d.recommended_action);
           }}
           isLoading={isLoading}
+          panelTitle="Web Threat Alerts"
+          panelSubtitle="Blocked domains, GenAI guardrail violations, and URL policy events"
         />
 
         <DetailPanel detection={selectedDetection} />

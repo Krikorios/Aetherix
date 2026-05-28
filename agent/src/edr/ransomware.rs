@@ -71,6 +71,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
             response: None,
             recovery_hints: None,
             rollback_evidence: None,
+            rollback_file_paths: Vec::new(),
         });
     }
 
@@ -100,6 +101,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
                     response: None,
                     recovery_hints: None,
                     rollback_evidence: None,
+                    rollback_file_paths: Vec::new(),
                 });
             }
         }
@@ -135,6 +137,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
                 response: None,
                 recovery_hints: None,
                 rollback_evidence: None,
+                rollback_file_paths: Vec::new(),
             });
         }
     }

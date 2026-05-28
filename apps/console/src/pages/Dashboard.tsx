@@ -85,6 +85,9 @@ export function DashboardPage() {
       />
 
       {error ? <ErrorBanner message={error} /> : null}
+      {!policy && !isLoading && (
+        <ErrorBanner message="No active policy assigned — endpoints are operating without centralized policy enforcement." />
+      )}
 
       {/* Metrics */}
       <section className="metrics" aria-label="Security metrics">

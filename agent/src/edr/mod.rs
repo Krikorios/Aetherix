@@ -195,6 +195,8 @@ pub struct EdrEvent {
     pub recovery_hints: Option<rollback::RecoveryPointHint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rollback_evidence: Option<rollback::RollbackEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rollback_file_paths: Vec<String>,
 }
 
 impl EdrEvent {
@@ -220,6 +222,7 @@ impl EdrEvent {
             response: None,
             recovery_hints: None,
             rollback_evidence: None,
+            rollback_file_paths: Vec::new(),
         }
     }
 }

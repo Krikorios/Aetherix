@@ -123,7 +123,7 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
 
   return (
     <ConsolePage>
-      <PageHeader eyebrow="MSP Governance" title="Policy Assignments" />
+      <PageHeader eyebrow="PROTECTION" title="Policy Assignments" />
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "24px" }}>
         <button className="btn" onClick={handleSync} disabled={isSyncing}>
           <RefreshCw size={14} className={isSyncing ? "spin" : ""} />
@@ -234,7 +234,7 @@ export function PolicyAssignmentsPage({ me }: { me: MeResponse }) {
                   <button className="btn" onClick={() => setShowDiff(!showDiff)}>
                     <Eye size={13} /> {showDiff ? "Hide" : "View"} Diff
                   </button>
-                  <button className="btn" disabled={isWorking}>
+                  <button className="btn" disabled title="Assignment editing is not available yet">
                     <Edit3 size={13} /> Edit
                   </button>
                 </div>

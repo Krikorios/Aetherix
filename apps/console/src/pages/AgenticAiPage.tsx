@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import {
   Brain,
   RefreshCw,
@@ -75,20 +75,24 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
 
   const selectedCase = cases.find((c) => c.id === selectedId) ?? null;
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await apiGet<AgentCase[]>("/agentic/cases");
-        setCases(data);
-        if (data.length > 0) setSelectedId(data[0].id);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load agentic investigation cases.");
-      } finally {
-        setIsLoading(false);
-      }
+  const loadCases = useCallback(async (sync = false) => {
+    if (sync) setIsSyncing(true);
+    try {
+      const data = await apiGet<AgentCase[]>("/agentic/cases");
+      setCases(data);
+      setSelectedId((current) => (current && data.some((item) => item.id === current) ? current : data[0]?.id ?? null));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load agentic investigation cases.");
+    } finally {
+      setIsLoading(false);
+      if (sync) setIsSyncing(false);
     }
-    void load();
-  }, [me]);
+  }, []);
+
+  useEffect(() => {
+    void loadCases();
+  }, [loadCases, me]);
 
   const handleApprove = async () => {
     if (!selectedCase) return;
@@ -135,9 +139,9 @@ export function AgenticAiPage({ me }: { me: MeResponse }) {
   return (
     <ConsolePage>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "12px", marginBottom: "20px" }}>
-        <PageHeader eyebrow="Autonomous Response" title="Agentic AI" subtitle="AI-driven investigation and response agents that correlate endpoint telemetry, DLP events, and threat intelligence." />
+        <PageHeader eyebrow="Autonomous Response" title="Agentic AI Investigation" subtitle="AI-driven investigation and response agents that correlate endpoint telemetry, DLP events, and threat intelligence." />
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button className="btn" onClick={() => setIsSyncing(true)} disabled={isSyncing}>
+          <button className="btn" onClick={() => void loadCases(true)} disabled={isSyncing}>
             <RefreshCw size={14} className={isSyncing ? "spin" : ""} />
             {isSyncing ? "Syncing…" : "Refresh"}
           </button>

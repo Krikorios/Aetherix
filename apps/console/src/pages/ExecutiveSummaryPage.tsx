@@ -328,7 +328,7 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
                     {c.company_name}
                   </div>
                   <div style={{ fontSize: "11px", color: "var(--muted)" }}>
-                    {c.enrolled_agents} agents · {c.open_alerts} open alerts
+                    {c.enrolled_agents} {c.enrolled_agents === 1 ? "agent" : "agents"} · {c.open_alerts} open alerts
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -486,11 +486,9 @@ export function ExecutiveSummaryPage({ me }: { me: MeResponse }) {
       <section className="panel" style={{ marginTop: "16px", padding: "14px 18px", display: "flex", gap: "12px", alignItems: "flex-start" }}>
         <Clock size={16} style={{ color: "var(--muted)", flexShrink: 0, marginTop: "2px" }} />
         <div style={{ fontSize: "12px", color: "var(--muted)", lineHeight: 1.6 }}>
-          <strong style={{ color: "var(--text)" }}>AI Report Generation</strong> — Templated AI executive reports backed by{" "}
-          <code>ai_reports</code> with structured confidence, source references, and persisted source evidence are planned. The
-          metrics above are computed live from <code>/companies</code>, <code>/alerts</code>, and heartbeat data.
-          Scheduled weekly email delivery and PDF export require the{" "}
-          <code>ai_reports</code> table and object storage for evidence.
+          <strong style={{ color: "var(--text)" }}>AI Report Generation</strong> — Templated AI executive reports with structured confidence scores, source references, and persisted source evidence are available via the Reports module.
+          Metrics above are computed live from registered company data and agent heartbeat telemetry.
+          Scheduled weekly email delivery and PDF export are available for accounts with the AI Reports add-on.
         </div>
       </section>
     </div>

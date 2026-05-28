@@ -130,7 +130,7 @@ Aetherix will be built around four strategic pillars.
 - Endpoint agent: Rust core with OS-specific collectors and enforcement modules. Linux uses eBPF where appropriate, Windows uses ETW and service integrations, and macOS uses Endpoint Security APIs.
 - API backend: FastAPI for AI/DLP workflows and Go services for high-throughput ingestion paths as the system scales.
 - Policy engine: Versioned policy model with simulation, staged rollout, rollback, and hot-reload support.
-- Data layer: PostgreSQL for authoritative state, Redis for cache and queues, and Qdrant or Pinecone for vector search.
+- Data layer: PostgreSQL for authoritative state + compliance hash chain, OpenSearch for high-volume time-series security events / logs / telemetry with native ILM retention and investigative search (see architecture.md §3.3.1), Redis for cache/queues, and Qdrant or Pinecone for vector search.
 - LLM gateway: Provider abstraction for OpenAI, Anthropic, Grok, Azure OpenAI, or self-hosted vLLM/Ollama deployments.
 - Frontend: React/Next.js with TypeScript, focused operator workflows, and accessible enterprise UI patterns.
 - Observability: OpenTelemetry, Prometheus, Grafana, Loki, structured audit logs, and cost telemetry for LLM usage.
@@ -276,7 +276,7 @@ and let MSPs approve once across many similar companies when policy allows it.
 | Detection | Presidio-compatible scanner plus semantic classifier | Deterministic PII detection plus contextual understanding. |
 | Backend | Python/FastAPI plus Go where throughput requires it | Fast AI iteration with a path to high-scale ingestion. |
 | Orchestration | LangGraph or CrewAI plus LiteLLM-style gateway | Agentic workflows and provider abstraction. |
-| Data | PostgreSQL, Redis, Qdrant | ACID state, queue/cache layer, and semantic search. |
+| Data | PostgreSQL (authoritative + compliance chain), OpenSearch (events/logs + ILM retention + search), Redis, Qdrant | ACID + tamper-evident chain in Postgres; scalable searchable retention + SIEM analytics in OpenSearch; queue/cache + semantic layers as before. |
 | Frontend | React/Next.js, TypeScript, Tailwind-style system | Strong operator UX and maintainable component model. |
 | Infrastructure | Kubernetes, Terraform, Argo CD | GitOps, scale, and portable enterprise deployment. |
 | Observability | OpenTelemetry, Prometheus, Grafana, Loki | Full-stack visibility with cost-effective tooling. |

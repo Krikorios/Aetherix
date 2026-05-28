@@ -908,6 +908,7 @@ def correlate_new_rollback_event(
     file_paths: list[str],
     created_at: datetime,
     original_alert_id: uuid.UUID | None = None,
+    decision_trace: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Link a completed rollback alert to prior FIM/DLP evidence on the same paths.
 
@@ -935,7 +936,34 @@ def correlate_new_rollback_event(
     Returns the list of recorded link records (FIM + DLP witness links).
     """
 
-    if not file_paths:
+    hint_fim_paths = []
+    hint_dlp_paths = []
+    hint_fim_event_ids = []
+    hint_dlp_event_ids = []
+
+    for item in (decision_trace or []):
+        if not isinstance(item, str):
+            continue
+        if item.startswith("correlation_hint:"):
+            parts = item[len("correlation_hint:"):].split("=", 1)
+            if len(parts) == 2:
+                key, val = parts[0].strip(), parts[1].strip()
+                if key == "fim_path":
+                    hint_fim_paths.append(val)
+                elif key == "dlp_path":
+                    hint_dlp_paths.append(val)
+                elif key == "fim_event_id":
+                    hint_fim_event_ids.append(val)
+                elif key == "dlp_event_id":
+                    hint_dlp_event_ids.append(val)
+
+    # Merge hint paths into the query paths
+    all_file_paths = list(file_paths or [])
+    for p in hint_fim_paths + hint_dlp_paths:
+        if p and p not in all_file_paths:
+            all_file_paths.append(p)
+
+    if not all_file_paths and not hint_fim_event_ids and not hint_dlp_event_ids:
         return []
 
     window = _window_seconds()
@@ -944,7 +972,7 @@ def correlate_new_rollback_event(
 
     recorded: list[dict[str, Any]] = []
 
-    for raw_path in file_paths:
+    for raw_path in all_file_paths:
         path_norm = _normalize_path(raw_path)
         if not path_norm:
             continue
@@ -965,29 +993,30 @@ def correlate_new_rollback_event(
             (agent_id, customer_id, path_norm, cutoff_lo, cutoff_hi),
         )
         for row in cur.fetchall():
-            link = _record_link(
-                cur,
-                customer_id=customer_id,
-                security_alert_id=rollback_alert_id,
-                related_kind="fim_event",
-                related_id=str(row["id"]),
-                correlation_type="rollback_action",
-                score=_TYPE_SCORE["rollback_action"],
-                window_seconds=window,
-                evidence={
-                    "file_path": row["file_path"],
-                    "event_type": row["event_type"],
-                    "sha256_hash": row["sha256_hash"],
-                    "observed_at": row["observed_at"].isoformat()
-                    if isinstance(row["observed_at"], datetime)
-                    else str(row["observed_at"]),
-                    "agent_id": agent_id,
-                    "correlation_subtype": "rollback_action",
-                    "rollback_path": raw_path,
-                },
-                created_at=created_at,
-            )
-            recorded.append(link)
+            if not any(str(l.get("related_id")) == str(row["id"]) and l.get("related_kind") == "fim_event" for l in recorded):
+                link = _record_link(
+                    cur,
+                    customer_id=customer_id,
+                    security_alert_id=rollback_alert_id,
+                    related_kind="fim_event",
+                    related_id=str(row["id"]),
+                    correlation_type="rollback_action",
+                    score=_TYPE_SCORE["rollback_action"],
+                    window_seconds=window,
+                    evidence={
+                        "file_path": row["file_path"],
+                        "event_type": row["event_type"],
+                        "sha256_hash": row["sha256_hash"],
+                        "observed_at": row["observed_at"].isoformat()
+                        if isinstance(row["observed_at"], datetime)
+                        else str(row["observed_at"]),
+                        "agent_id": agent_id,
+                        "correlation_subtype": "rollback_action",
+                        "rollback_path": raw_path,
+                    },
+                    created_at=created_at,
+                )
+                recorded.append(link)
 
         # Find recent DLP events on this endpoint within the window
         cur.execute(
@@ -1004,31 +1033,118 @@ def correlate_new_rollback_event(
             (customer_id, agent_id, cutoff_lo, cutoff_hi),
         )
         for row in cur.fetchall():
-            link = _record_link(
-                cur,
-                customer_id=customer_id,
-                security_alert_id=rollback_alert_id,
-                related_kind="dlp_event",
-                related_id=str(row["id"]),
-                correlation_type="rollback_action",
-                score=_TYPE_SCORE["rollback_action"],
-                window_seconds=window,
-                evidence={
-                    "source": row["source"],
-                    "action": row["action"],
-                    "entity_types": row["entity_types"],
-                    "risk_band": row["risk_band"],
-                    "sha256_hash": row["sha256_hash"],
-                    "observed_at": row["observed_at"].isoformat()
-                    if isinstance(row["observed_at"], datetime)
-                    else str(row["observed_at"]),
-                    "agent_id": agent_id,
-                    "correlation_subtype": "rollback_action",
-                    "rollback_path": raw_path,
-                },
-                created_at=created_at,
-            )
-            recorded.append(link)
+            if not any(str(l.get("related_id")) == str(row["id"]) and l.get("related_kind") == "dlp_event" for l in recorded):
+                link = _record_link(
+                    cur,
+                    customer_id=customer_id,
+                    security_alert_id=rollback_alert_id,
+                    related_kind="dlp_event",
+                    related_id=str(row["id"]),
+                    correlation_type="rollback_action",
+                    score=_TYPE_SCORE["rollback_action"],
+                    window_seconds=window,
+                    evidence={
+                        "source": row["source"],
+                        "action": row["action"],
+                        "entity_types": row["entity_types"],
+                        "risk_band": row["risk_band"],
+                        "sha256_hash": row["sha256_hash"],
+                        "observed_at": row["observed_at"].isoformat()
+                        if isinstance(row["observed_at"], datetime)
+                        else str(row["observed_at"]),
+                        "agent_id": agent_id,
+                        "correlation_subtype": "rollback_action",
+                        "rollback_path": raw_path,
+                    },
+                    created_at=created_at,
+                )
+                recorded.append(link)
+
+    # Find explicit FIM events by ID
+    for f_id_str in hint_fim_event_ids:
+        try:
+            f_uuid = uuid.UUID(f_id_str)
+        except (TypeError, ValueError):
+            continue
+        cur.execute(
+            """
+            select id, event_type, file_path, sha256_hash, observed_at
+            from fim_events
+            where id = %s and customer_id = %s
+            """,
+            (f_uuid, customer_id),
+        )
+        row = cur.fetchone()
+        if row:
+            if not any(str(l.get("related_id")) == str(row["id"]) and l.get("related_kind") == "fim_event" for l in recorded):
+                link = _record_link(
+                    cur,
+                    customer_id=customer_id,
+                    security_alert_id=rollback_alert_id,
+                    related_kind="fim_event",
+                    related_id=str(row["id"]),
+                    correlation_type="rollback_action",
+                    score=_TYPE_SCORE["rollback_action"],
+                    window_seconds=window,
+                    evidence={
+                        "file_path": row["file_path"],
+                        "event_type": row["event_type"],
+                        "sha256_hash": row["sha256_hash"],
+                        "observed_at": row["observed_at"].isoformat()
+                        if isinstance(row["observed_at"], datetime)
+                        else str(row["observed_at"]),
+                        "agent_id": agent_id,
+                        "correlation_subtype": "rollback_action",
+                        "rollback_path": row["file_path"],
+                        "hint_matched": True,
+                    },
+                    created_at=created_at,
+                )
+                recorded.append(link)
+
+    # Find explicit DLP events by ID
+    for d_id_str in hint_dlp_event_ids:
+        try:
+            d_uuid = uuid.UUID(d_id_str)
+        except (TypeError, ValueError):
+            continue
+        cur.execute(
+            """
+            select id, source, action, entity_types, risk_band, sha256_hash, observed_at
+            from dlp_events
+            where id = %s and customer_id = %s
+            """,
+            (d_uuid, customer_id),
+        )
+        row = cur.fetchone()
+        if row:
+            if not any(str(l.get("related_id")) == str(row["id"]) and l.get("related_kind") == "dlp_event" for l in recorded):
+                link = _record_link(
+                    cur,
+                    customer_id=customer_id,
+                    security_alert_id=rollback_alert_id,
+                    related_kind="dlp_event",
+                    related_id=str(row["id"]),
+                    correlation_type="rollback_action",
+                    score=_TYPE_SCORE["rollback_action"],
+                    window_seconds=window,
+                    evidence={
+                        "source": row["source"],
+                        "action": row["action"],
+                        "entity_types": row["entity_types"],
+                        "risk_band": row["risk_band"],
+                        "sha256_hash": row["sha256_hash"],
+                        "observed_at": row["observed_at"].isoformat()
+                        if isinstance(row["observed_at"], datetime)
+                        else str(row["observed_at"]),
+                        "agent_id": agent_id,
+                        "correlation_subtype": "rollback_action",
+                        "rollback_path": "",
+                        "hint_matched": True,
+                    },
+                    created_at=created_at,
+                )
+                recorded.append(link)
 
     # ---------------------------------------------------------------------------
     # Severity uplift on the original behavior alert
@@ -1067,7 +1183,7 @@ def correlate_new_rollback_event(
                 evidence={
                     "rollback_alert_id": str(rollback_alert_id),
                     "agent_id": agent_id,
-                    "rollback_paths": file_paths,
+                    "rollback_paths": all_file_paths,
                     "correlation_subtype": "rollback_action",
                     "occurred_at": created_at.isoformat(),
                 },
@@ -1103,7 +1219,7 @@ def correlate_new_rollback_event(
                            severity_uplifted_from = %s,
                            payload = %s::jsonb,
                            evidence_controls = %s::jsonb
-                     where id = %s
+                      where id = %s
                     """,
                     (
                         uplifted,
@@ -1117,7 +1233,7 @@ def correlate_new_rollback_event(
                     customer_id=customer_id,
                     alert_id=original_alert_id,
                     agent_id=agent_id,
-                    file_path=file_paths[0] if file_paths else "",
+                    file_path=all_file_paths[0] if all_file_paths else "",
                     before=current_severity,
                     after=uplifted,
                     direction="rollback_to_edr",
@@ -1130,7 +1246,7 @@ def correlate_new_rollback_event(
             customer_id=customer_id,
             alert_id=rollback_alert_id,
             agent_id=agent_id,
-            file_paths=file_paths,
+            file_paths=all_file_paths,
             related=recorded,
             created_at=created_at,
         )
