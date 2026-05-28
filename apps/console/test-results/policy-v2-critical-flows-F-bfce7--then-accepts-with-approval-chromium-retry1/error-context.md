@@ -7,571 +7,552 @@
 # Test info
 
 - Name: policy-v2-critical-flows.spec.ts >> Flow D: Destructive gate rejects promotion before simulation, then accepts with approval
-- Location: e2e/policy-v2-critical-flows.spec.ts:569:1
+- Location: e2e/policy-v2-critical-flows.spec.ts:768:1
 
 # Error details
 
 ```
-Error: expect(locator).toBeVisible() failed
+Test timeout of 30000ms exceeded.
+```
 
-Locator: getByRole('dialog', { name: 'Production Promotion gate' })
-Expected: visible
-Timeout: 5000ms
-Error: element(s) not found
-
+```
+Error: locator.click: Test timeout of 30000ms exceeded.
 Call log:
-  - Expect "toBeVisible" with timeout 5000ms
-  - waiting for getByRole('dialog', { name: 'Production Promotion gate' })
+  - waiting for getByRole('button', { name: 'Simulate selected' })
 
 ```
 
+# Page snapshot
+
 ```yaml
-- main:
-  - complementary "Primary navigation":
-    - strong: Aetherix
-    - text: MSP Console
-    - button "Collapse navigation"
-    - navigation "OVERVIEW":
-      - button "OVERVIEW" [expanded]
-      - button "Dashboard"
-      - button "Executive Summary"
-      - button "Health & Attack Surface"
-    - navigation "INCIDENTS & RESPONSE":
-      - button "INCIDENTS & RESPONSE" [expanded]
-      - button "Alerts"
-      - button "Search"
-      - button "Blocklist"
-      - button "Custom Rules"
-      - button "Threats Xplorer"
-    - navigation "PROTECTION":
-      - button "PROTECTION" [expanded]
-      - button "Policies"
-      - button "Policy Assignments"
-      - button "Antimalware & Behavior"
-      - button "Web & Email Protection"
-      - button "Device Control"
-    - navigation "RISK & EXTERNAL":
-      - button "RISK & EXTERNAL" [expanded]
-      - button "Risk Management"
-      - button "Digital Risk (DRP)"
-      - button "External Attack Surface (EASM)"
-      - button "Reports"
-      - button "Compliance Center"
-    - navigation "MSP CONTROL":
-      - button "MSP CONTROL" [expanded]
-      - button "Network"
-      - button "Companies"
-      - button "Accounts"
-      - button "Installers"
-    - navigation "ADD-ONS & INTEGRATIONS":
-      - button "ADD-ONS & INTEGRATIONS" [expanded]
-      - button "Sandbox Analyzer"
-      - button "Email Security"
-      - button "Mobile Security"
-      - button "Data Insights"
-      - button "Integrations"
-      - button "Configuration"
-    - text: Signed in as
-    - strong: MSP Partner
-    - code: msp@partner.test
-    - emphasis: MSP Partner
-    - button "Sign out"
-  - complementary "Policy settings navigation":
-    - textbox "Search policy settings":
-      - /placeholder: Search (min. 3 characters)
-    - navigation:
-      - heading "General" [level=2]:
-        - button "General" [expanded]
-      - button "Policy"
-      - button "Inheritance rules"
-      - button "Agent 2/3"
-      - button "Toggle Agent Section"
-      - button "Notifications On"
-      - button "Agent Settings": Settings
-      - button "Agent Communication": Communication
-      - button "Agent Update": Update On
-      - button "Security Telemetry Off"
-      - button "Relay"
-      - button "Toggle Relay Section"
-      - button "Relay Communication": Communication
-      - button "Relay Update": Update
-      - button "Aetherix modules"
-      - heading "Protection & Monitoring" [level=2]:
-        - button "Protection & Monitoring" [expanded]
-      - button "Antimalware 4/6"
-      - button "Toggle Antimalware Section"
-      - button "Antimalware On-Access": On-Access On
-      - button "Antimalware On-Execute": On-Execute 3/4
-      - button "Antimalware On-Demand": On-Demand Off
-      - button "Antimalware Anti-Tampering": Anti-Tampering On
-      - button "Antimalware Hyper Detect": Hyper Detect On
-      - button "Antimalware Advanced Anti-Exploit": Advanced Anti-Exploit On
-      - button "Antimalware Security Servers": Security Servers
-      - button "Antimalware Settings": Settings
-      - button "Antimalware Exclusions": Exclusions
-      - button "Sandbox Analyzer Off"
-      - button "Toggle Sandbox Section"
-      - button "Sandbox Endpoint Sensor": Endpoint Sensor Off
-      - button "Firewall On"
-      - button "Toggle Firewall Section"
-      - button "Firewall General": General 1/2
-      - button "Firewall Settings": Settings
-      - button "Firewall Rules": Rules
-      - button "Network Protection 2/5"
-      - button "Toggle Network Section"
-      - button "Network Protection General": General On
-      - button "Network Protection Content Control": Content Control Off
-      - button "Network Protection Web Protection": Web Protection 2/3
-      - button "Network Protection Network Attacks": Network Attacks On
-      - button "Network Protection Custom Pages": Custom Pages Off
-      - button "Patch Management Off"
-      - button "Device Control On"
-      - button "Integrity Monitoring Off"
-      - button "Exchange Protection Off"
-      - button "Encryption Off"
-      - button "Incidents Sensor On"
-      - button "Storage Protection Off"
-      - button "Risk Management Off"
-      - button "Toggle Risk Management Section"
-      - button "Blocklist Off"
-      - button "Live Search Off"
-      - button "Web, DLP & GenAI 5/7"
-      - button "SIEM / HIDS 2/4"
-      - button "Agentic Response On"
-      - button "Digital Risk & EASM Off"
-      - button "Compliance Evidence On"
-      - button "Integrations & Branding 2/2"
-  - button "Policies"
-  - text: /
-  - strong: Inherited Base
-  - text: / Aetherix /
-  - strong: Aetherix modules
-  - heading "Inherited Base" [level=1]
-  - paragraph: Inherited Base
-  - link "Get help from Support Center":
-    - /url: https://support.aetherix.local
-  - status: "Simulation complete: 2 module(s) trigger approval gates."
-  - main:
-    - region "Policy engine modules":
-      - heading "Policy engine modules" [level=2]
-      - paragraph: Configure the Aetherix runtime modules, entitlement locks, simulations, promotions, and assignments for this policy.
-      - button "Simulate selected"
-      - button "Promote selected"
-      - button "Assign selected"
-      - text: Company scope
-      - combobox "Company scope":
-        - option "Global / Partner-level"
-        - option "Acme Co" [selected]
-      - text: Parent policy
-      - combobox "Parent policy":
-        - option "None" [selected]
-        - option "Inherited Base (v2)"
-      - text: Inheritance mode
-      - combobox "Inheritance mode":
-        - option "Inherit with overrides" [selected]
-        - option "Replace"
-      - article:
-        - button "General general":
-          - strong: General
-          - text: general
-        - checkbox "Enabled" [checked]
-        - text: Enabled Update channel
-        - combobox "Update channel":
-          - option "stable" [selected]
-          - option "slow"
-          - option "fast"
-      - article:
-        - button "Tenant Scope tenant_scope":
-          - strong: Tenant Scope
-          - text: tenant_scope
-      - article:
-        - button "Entitlements entitlements":
-          - strong: Entitlements
-          - text: entitlements
-      - article:
-        - button "Deployment Profile deployment_profile":
-          - strong: Deployment Profile
-          - text: deployment_profile
-      - article:
-        - button "Antimalware antimalware":
-          - strong: Antimalware
-          - text: antimalware
-        - checkbox "Enabled" [checked]
-        - text: Enabled Response action
-        - combobox "Response action":
-          - option "allow"
-          - option "review" [selected]
-          - option "block"
-      - article:
-        - button "Behavior Monitoring behavior_monitoring":
-          - strong: Behavior Monitoring
-          - text: behavior_monitoring
-      - article:
-        - button "Anti Exploit anti_exploit":
-          - strong: Anti Exploit
-          - text: anti_exploit
-      - article:
-        - button "Ransomware Mitigation ransomware_mitigation":
-          - strong: Ransomware Mitigation
-          - text: ransomware_mitigation
-      - article:
-        - button "Firewall firewall":
-          - strong: Firewall
-          - text: firewall
-      - article:
-        - button "Network Protection network_protection":
-          - strong: Network Protection
-          - text: network_protection
-      - article:
-        - button "Web Protection web_protection":
-          - strong: Web Protection
-          - text: web_protection
-      - article:
-        - button "Classification & Labeling classification_labeling":
-          - strong: Classification & Labeling
-          - text: classification_labeling
-      - article:
-        - button "Semantic DLP semantic_dlp":
-          - strong: Semantic DLP
-          - text: semantic_dlp
-        - checkbox "Enabled" [checked]
-        - text: Enabled Sensitivity labels (comma-separated)
-        - textbox "Sensitivity labels (comma-separated)": Public, Internal, Confidential, Restricted
-        - text: GenAI destinations (comma-separated)
-        - textbox "GenAI destinations (comma-separated)": copilot, claude, gemini, chatgpt, custom
-        - text: Paste sensitive action
-        - combobox "Paste sensitive action":
-          - option "allow"
-          - option "review" [selected]
-          - option "block"
-        - text: Upload restricted action
-        - combobox "Upload restricted action":
-          - option "allow"
-          - option "review"
-          - option "block" [selected]
-        - text: Copy to GenAI action
-        - combobox "Copy to GenAI action":
-          - option "allow"
-          - option "review" [selected]
-          - option "block"
-        - checkbox "Use Presidio detector" [checked]
-        - text: Use Presidio detector
-        - checkbox "Use LLM semantic detector" [checked]
-        - text: Use LLM semantic detector Custom classifiers (comma-separated)
-        - textbox "Custom classifiers (comma-separated)": finance, source_code
-      - article:
-        - button "GenAI Guardrails genai_guardrails":
-          - strong: GenAI Guardrails
-          - text: genai_guardrails
-      - article:
-        - button "Device Control device_control":
-          - strong: Device Control
-          - text: device_control
-      - article:
-        - button "Sandbox Analyzer sandbox_analyzer Locked":
-          - strong: Sandbox Analyzer
-          - text: sandbox_analyzer
-          - emphasis: Locked
-      - article:
-        - button "Patch Management patch_management Locked":
-          - strong: Patch Management
-          - text: patch_management
-          - emphasis: Locked
-      - article:
-        - button "SIEM / HIDS siem_hids Locked":
-          - strong: SIEM / HIDS
-          - text: siem_hids
-          - emphasis: Locked
-      - article:
-        - button "Integrity Monitoring integrity_monitoring Locked":
-          - strong: Integrity Monitoring
-          - text: integrity_monitoring
-          - emphasis: Locked
-      - article:
-        - button "Vulnerability Inventory vulnerability_inventory Locked":
-          - strong: Vulnerability Inventory
-          - text: vulnerability_inventory
-          - emphasis: Locked
-      - article:
-        - button "Digital Risk Protection digital_risk_protection Locked":
-          - strong: Digital Risk Protection
-          - text: digital_risk_protection
-          - emphasis: Locked
-      - article:
-        - button "External Attack Surface Management external_attack_surface_management Locked":
-          - strong: External Attack Surface Management
-          - text: external_attack_surface_management
-          - emphasis: Locked
-      - article:
-        - button "Threat Intelligence threat_intelligence Locked":
-          - strong: Threat Intelligence
-          - text: threat_intelligence
-          - emphasis: Locked
-      - article:
-        - button "Takedown Workflows takedown_workflows Locked":
-          - strong: Takedown Workflows
-          - text: takedown_workflows
-          - emphasis: Locked
-      - article:
-        - button "Incident Correlation incident_correlation Locked":
-          - strong: Incident Correlation
-          - text: incident_correlation
-          - emphasis: Locked
-      - article:
-        - button "Agentic Response agentic_response Locked":
-          - strong: Agentic Response
-          - text: agentic_response
-          - emphasis: Locked
-      - article:
-        - button "AI Settings ai_settings Locked":
-          - strong: AI Settings
-          - text: ai_settings
-          - emphasis: Locked
-      - article:
-        - button "AI Reports ai_reports Locked":
-          - strong: AI Reports
-          - text: ai_reports
-          - emphasis: Locked
-      - article:
-        - button "Compliance Evidence compliance_evidence":
-          - strong: Compliance Evidence
-          - text: compliance_evidence
-      - article:
-        - button "Integrations integrations":
-          - strong: Integrations
-          - text: integrations
-      - article:
-        - button "Platform Observability platform_observability":
-          - strong: Platform Observability
-          - text: platform_observability
-      - article:
-        - button "White Label white_label":
-          - strong: White Label
-          - text: white_label
-      - heading "Simulation Center & Impact Analysis" [level=3]
-      - text: Security Posture Impact -48% Risk Delta ▼ Improved
-      - paragraph: Expected risk exposure reduction based on activated detection & isolation engines.
-      - text: Target Surface Size 14 Endpoints queued
-      - paragraph: Active devices currently assigned inside this company tenant hierarchy.
-      - strong: "Total Modules:"
-      - text: "30"
-      - strong: "Enabled:"
-      - text: "17"
-      - strong: "Block Actions:"
-      - text: "2"
-      - strong: "Network Isolations:"
-      - text: "0"
-      - strong: "Rollbacks:"
-      - text: 0 PROMOTION GATE ACTIVE
-      - paragraph: This policy configuration implements destructive threat defense protocols. Promoting this version requires manual operator sign-off and simulation logging evidence.
-      - text: semantic_dlp block
-  - button "Save"
-  - button "Cancel"
+- main [ref=e3]:
+  - complementary "Primary navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e6]
+      - generic [ref=e9]:
+        - strong [ref=e10]: Aetherix
+        - generic [ref=e11]: MSP Console
+      - button "Collapse navigation" [ref=e12] [cursor=pointer]:
+        - img [ref=e13]
+    - navigation "OVERVIEW" [ref=e15]:
+      - button "OVERVIEW" [expanded] [ref=e16] [cursor=pointer]:
+        - generic [ref=e17]: OVERVIEW
+        - img [ref=e18]
+      - generic [ref=e20]:
+        - button "Dashboard" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+          - generic [ref=e27]: Dashboard
+        - button "Executive Summary" [ref=e28] [cursor=pointer]:
+          - img [ref=e29]
+          - generic [ref=e31]: Executive Summary
+        - button "Health & Attack Surface" [ref=e32] [cursor=pointer]:
+          - img [ref=e33]
+          - generic [ref=e35]: Health & Attack Surface
+    - navigation "INCIDENTS & RESPONSE" [ref=e36]:
+      - button "INCIDENTS & RESPONSE" [expanded] [ref=e37] [cursor=pointer]:
+        - generic [ref=e38]: INCIDENTS & RESPONSE
+        - img [ref=e39]
+      - generic [ref=e41]:
+        - button "Alerts" [ref=e42] [cursor=pointer]:
+          - img [ref=e43]
+          - generic [ref=e46]: Alerts
+        - button "Search" [ref=e47] [cursor=pointer]:
+          - img [ref=e48]
+          - generic [ref=e51]: Search
+        - button "Blocklist" [ref=e52] [cursor=pointer]:
+          - img [ref=e53]
+          - generic [ref=e56]: Blocklist
+        - button "Custom Rules" [ref=e57] [cursor=pointer]:
+          - img [ref=e58]
+          - generic [ref=e61]: Custom Rules
+        - button "Threats Xplorer" [ref=e62] [cursor=pointer]:
+          - img [ref=e63]
+          - generic [ref=e67]: Threats Xplorer
+    - navigation "PROTECTION" [ref=e68]:
+      - button "PROTECTION" [expanded] [ref=e69] [cursor=pointer]:
+        - generic [ref=e70]: PROTECTION
+        - img [ref=e71]
+      - generic [ref=e73]:
+        - button "Policies" [ref=e74] [cursor=pointer]:
+          - img [ref=e75]
+          - generic [ref=e78]: Policies
+        - button "Policy Assignments" [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+          - generic [ref=e84]: Policy Assignments
+        - button "Antimalware & Behavior" [ref=e85] [cursor=pointer]:
+          - img [ref=e86]
+          - generic [ref=e95]: Antimalware & Behavior
+        - button "Web & Email Protection" [ref=e96] [cursor=pointer]:
+          - img [ref=e97]
+          - generic [ref=e100]: Web & Email Protection
+        - button "Device Control" [ref=e101] [cursor=pointer]:
+          - img [ref=e102]
+          - generic [ref=e110]: Device Control
+    - navigation "RISK & EXTERNAL" [ref=e111]:
+      - button "RISK & EXTERNAL" [expanded] [ref=e112] [cursor=pointer]:
+        - generic [ref=e113]: RISK & EXTERNAL
+        - img [ref=e114]
+      - generic [ref=e116]:
+        - button "Risk Management" [ref=e117] [cursor=pointer]:
+          - img [ref=e118]
+          - generic [ref=e120]: Risk Management
+        - button "Digital Risk (DRP)" [ref=e121] [cursor=pointer]:
+          - img [ref=e122]
+          - generic [ref=e125]: Digital Risk (DRP)
+        - button "External Attack Surface (EASM)" [ref=e126] [cursor=pointer]:
+          - img [ref=e127]
+          - generic [ref=e132]: External Attack Surface (EASM)
+        - button "Reports" [ref=e133] [cursor=pointer]:
+          - img [ref=e134]
+          - generic [ref=e137]: Reports
+        - button "Compliance Center" [ref=e138] [cursor=pointer]:
+          - img [ref=e139]
+          - generic [ref=e143]: Compliance Center
+    - navigation "MSP CONTROL" [ref=e144]:
+      - button "MSP CONTROL" [expanded] [ref=e145] [cursor=pointer]:
+        - generic [ref=e146]: MSP CONTROL
+        - img [ref=e147]
+      - generic [ref=e149]:
+        - button "Network" [ref=e150] [cursor=pointer]:
+          - img [ref=e151]
+          - generic [ref=e156]: Network
+        - button "Companies" [ref=e157] [cursor=pointer]:
+          - img [ref=e158]
+          - generic [ref=e162]: Companies
+        - button "Accounts" [ref=e163] [cursor=pointer]:
+          - img [ref=e164]
+          - generic [ref=e169]: Accounts
+        - button "Installers" [ref=e170] [cursor=pointer]:
+          - img [ref=e171]
+          - generic [ref=e175]: Installers
+        - button "Queue" [ref=e176] [cursor=pointer]:
+          - img [ref=e177]
+          - generic [ref=e180]: Queue
+    - navigation "ADD-ONS & INTEGRATIONS" [ref=e181]:
+      - button "ADD-ONS & INTEGRATIONS" [expanded] [ref=e182] [cursor=pointer]:
+        - generic [ref=e183]: ADD-ONS & INTEGRATIONS
+        - img [ref=e184]
+      - generic [ref=e186]:
+        - button "Sandbox Analyzer" [ref=e187] [cursor=pointer]:
+          - img [ref=e188]
+          - generic [ref=e190]: Sandbox Analyzer
+        - button "Email Security" [ref=e191] [cursor=pointer]:
+          - img [ref=e192]
+          - generic [ref=e195]: Email Security
+        - button "Mobile Security" [ref=e196] [cursor=pointer]:
+          - img [ref=e197]
+          - generic [ref=e199]: Mobile Security
+        - button "Data Insights" [ref=e200] [cursor=pointer]:
+          - img [ref=e201]
+          - generic [ref=e202]: Data Insights
+        - button "Integrations" [ref=e203] [cursor=pointer]:
+          - img [ref=e204]
+          - generic [ref=e206]: Integrations
+        - button "Configuration" [ref=e207] [cursor=pointer]:
+          - img [ref=e208]
+          - generic [ref=e211]: Configuration
+    - generic [ref=e212]:
+      - generic [ref=e213]: Signed in as
+      - strong [ref=e214]: MSP Partner
+      - code [ref=e215]: msp@partner.test
+      - emphasis [ref=e216]: MSP Partner
+      - button "Sign out" [ref=e218] [cursor=pointer]:
+        - img [ref=e219]
+        - text: Sign out
+  - generic [ref=e223]:
+    - generic [ref=e224]:
+      - button "Back to Policies" [ref=e225] [cursor=pointer]:
+        - img [ref=e226]
+        - text: Back to Policies
+      - heading "Edit Policy" [level=1] [ref=e228]
+    - generic [ref=e229]:
+      - generic [ref=e230]:
+        - generic [ref=e231]:
+          - text: Policy Name *
+          - textbox "Policy Name *" [ref=e232]:
+            - /placeholder: Enter policy name
+            - text: Inherited Base
+        - generic [ref=e233]:
+          - text: Company Scope
+          - combobox "Company Scope" [ref=e234]:
+            - option "Global / Partner-level"
+            - option "Acme Co" [selected]
+        - generic [ref=e235]:
+          - text: Parent Policy
+          - combobox "Parent Policy" [ref=e236]:
+            - option "None (Standalone)" [selected]
+        - generic [ref=e237]:
+          - text: Inheritance Mode
+          - combobox "Inheritance Mode" [ref=e238]:
+            - option "Inherit with overrides" [selected]
+            - option "Replace (no inheritance)"
+      - heading "Modules" [level=2] [ref=e239]
+      - generic [ref=e240]:
+        - article [ref=e241]:
+          - button "General (general)" [ref=e242] [cursor=pointer]:
+            - generic [ref=e243]:
+              - strong [ref=e244]: General
+              - generic [ref=e245]: (general)
+            - img [ref=e247]
+          - generic [ref=e250]:
+            - generic [ref=e251]:
+              - checkbox "Enabled" [checked] [ref=e252]
+              - text: Enabled
+            - generic [ref=e253]:
+              - text: Update channel
+              - combobox "Update channel" [ref=e254]:
+                - option "stable" [selected]
+                - option "slow"
+                - option "fast"
+        - article [ref=e255]:
+          - button "Tenant Scope (tenant_scope)" [ref=e256] [cursor=pointer]:
+            - generic [ref=e257]:
+              - strong [ref=e258]: Tenant Scope
+              - generic [ref=e259]: (tenant_scope)
+            - img [ref=e261]
+        - article [ref=e263]:
+          - button "Entitlements (entitlements)" [ref=e264] [cursor=pointer]:
+            - generic [ref=e265]:
+              - strong [ref=e266]: Entitlements
+              - generic [ref=e267]: (entitlements)
+            - img [ref=e269]
+        - article [ref=e271]:
+          - button "Deployment Profile (deployment_profile)" [ref=e272] [cursor=pointer]:
+            - generic [ref=e273]:
+              - strong [ref=e274]: Deployment Profile
+              - generic [ref=e275]: (deployment_profile)
+            - img [ref=e277]
+        - article [ref=e279]:
+          - button "Antimalware (antimalware)" [ref=e280] [cursor=pointer]:
+            - generic [ref=e281]:
+              - strong [ref=e282]: Antimalware
+              - generic [ref=e283]: (antimalware)
+            - img [ref=e285]
+          - generic [ref=e288]:
+            - generic [ref=e289]:
+              - checkbox "Enabled" [checked] [ref=e290]
+              - text: Enabled
+            - generic [ref=e291]:
+              - text: Response action
+              - combobox "Response action" [ref=e292]:
+                - option "allow"
+                - option "review" [selected]
+                - option "block"
+        - article [ref=e293]:
+          - button "Behavior Monitoring (behavior_monitoring)" [ref=e294] [cursor=pointer]:
+            - generic [ref=e295]:
+              - strong [ref=e296]: Behavior Monitoring
+              - generic [ref=e297]: (behavior_monitoring)
+            - img [ref=e299]
+        - article [ref=e301]:
+          - button "Anti Exploit (anti_exploit)" [ref=e302] [cursor=pointer]:
+            - generic [ref=e303]:
+              - strong [ref=e304]: Anti Exploit
+              - generic [ref=e305]: (anti_exploit)
+            - img [ref=e307]
+        - article [ref=e309]:
+          - button "Ransomware Mitigation (ransomware_mitigation)" [ref=e310] [cursor=pointer]:
+            - generic [ref=e311]:
+              - strong [ref=e312]: Ransomware Mitigation
+              - generic [ref=e313]: (ransomware_mitigation)
+            - img [ref=e315]
+        - article [ref=e317]:
+          - button "Firewall (firewall)" [ref=e318] [cursor=pointer]:
+            - generic [ref=e319]:
+              - strong [ref=e320]: Firewall
+              - generic [ref=e321]: (firewall)
+            - img [ref=e323]
+        - article [ref=e325]:
+          - button "Network Protection (network_protection)" [ref=e326] [cursor=pointer]:
+            - generic [ref=e327]:
+              - strong [ref=e328]: Network Protection
+              - generic [ref=e329]: (network_protection)
+            - img [ref=e331]
+        - article [ref=e333]:
+          - button "Web Protection (web_protection)" [ref=e334] [cursor=pointer]:
+            - generic [ref=e335]:
+              - strong [ref=e336]: Web Protection
+              - generic [ref=e337]: (web_protection)
+            - img [ref=e339]
+        - article [ref=e341]:
+          - button "Classification & Labeling (classification_labeling)" [ref=e342] [cursor=pointer]:
+            - generic [ref=e343]:
+              - strong [ref=e344]: Classification & Labeling
+              - generic [ref=e345]: (classification_labeling)
+            - img [ref=e347]
+        - article [ref=e349]:
+          - button "Semantic DLP (semantic_dlp)" [ref=e350] [cursor=pointer]:
+            - generic [ref=e351]:
+              - strong [ref=e352]: Semantic DLP
+              - generic [ref=e353]: (semantic_dlp)
+            - img [ref=e355]
+          - generic [ref=e358]:
+            - generic [ref=e359]:
+              - checkbox "Enabled" [checked] [ref=e360]
+              - text: Enabled
+            - generic [ref=e361]:
+              - text: Sensitivity labels (comma-separated)
+              - textbox "Sensitivity labels (comma-separated)" [ref=e362]: Public, Internal, Confidential, Restricted
+            - generic [ref=e363]:
+              - text: GenAI destinations (comma-separated)
+              - textbox "GenAI destinations (comma-separated)" [ref=e364]: copilot, claude, gemini, chatgpt, custom
+            - generic [ref=e365]:
+              - text: Paste sensitive action
+              - combobox "Paste sensitive action" [ref=e366]:
+                - option "allow"
+                - option "review" [selected]
+                - option "block"
+            - generic [ref=e367]:
+              - text: Upload restricted action
+              - combobox "Upload restricted action" [ref=e368]:
+                - option "allow"
+                - option "review"
+                - option "block" [selected]
+            - generic [ref=e369]:
+              - text: Copy to GenAI action
+              - combobox "Copy to GenAI action" [ref=e370]:
+                - option "allow"
+                - option "review" [selected]
+                - option "block"
+            - generic [ref=e371]:
+              - checkbox "Use Presidio detector" [checked] [ref=e372]
+              - text: Use Presidio detector
+            - generic [ref=e373]:
+              - checkbox "Use LLM semantic detector" [checked] [ref=e374]
+              - text: Use LLM semantic detector
+            - generic [ref=e375]:
+              - text: Custom classifiers (comma-separated)
+              - textbox "Custom classifiers (comma-separated)" [ref=e376]: finance, source_code
+        - article [ref=e377]:
+          - button "GenAI Guardrails (genai_guardrails)" [ref=e378] [cursor=pointer]:
+            - generic [ref=e379]:
+              - strong [ref=e380]: GenAI Guardrails
+              - generic [ref=e381]: (genai_guardrails)
+            - img [ref=e383]
+        - article [ref=e385]:
+          - button "Device Control (device_control)" [ref=e386] [cursor=pointer]:
+            - generic [ref=e387]:
+              - strong [ref=e388]: Device Control
+              - generic [ref=e389]: (device_control)
+            - img [ref=e391]
+        - article [ref=e393]:
+          - button "Sandbox Analyzer (sandbox_analyzer)" [ref=e394] [cursor=pointer]:
+            - generic [ref=e395]:
+              - strong [ref=e396]: Sandbox Analyzer
+              - generic [ref=e397]: (sandbox_analyzer)
+            - img [ref=e399]
+        - article [ref=e401]:
+          - button "Patch Management (patch_management)" [ref=e402] [cursor=pointer]:
+            - generic [ref=e403]:
+              - strong [ref=e404]: Patch Management
+              - generic [ref=e405]: (patch_management)
+            - img [ref=e407]
+        - article [ref=e409]:
+          - button "SIEM / HIDS (siem_hids)" [ref=e410] [cursor=pointer]:
+            - generic [ref=e411]:
+              - strong [ref=e412]: SIEM / HIDS
+              - generic [ref=e413]: (siem_hids)
+            - img [ref=e415]
+        - article [ref=e417]:
+          - button "Integrity Monitoring (integrity_monitoring)" [ref=e418] [cursor=pointer]:
+            - generic [ref=e419]:
+              - strong [ref=e420]: Integrity Monitoring
+              - generic [ref=e421]: (integrity_monitoring)
+            - img [ref=e423]
+        - article [ref=e425]:
+          - button "Vulnerability Inventory (vulnerability_inventory)" [ref=e426] [cursor=pointer]:
+            - generic [ref=e427]:
+              - strong [ref=e428]: Vulnerability Inventory
+              - generic [ref=e429]: (vulnerability_inventory)
+            - img [ref=e431]
+        - article [ref=e433]:
+          - button "Digital Risk Protection (digital_risk_protection)" [ref=e434] [cursor=pointer]:
+            - generic [ref=e435]:
+              - strong [ref=e436]: Digital Risk Protection
+              - generic [ref=e437]: (digital_risk_protection)
+            - img [ref=e439]
+        - article [ref=e441]:
+          - button "External Attack Surface Management (external_attack_surface_management)" [ref=e442] [cursor=pointer]:
+            - generic [ref=e443]:
+              - strong [ref=e444]: External Attack Surface Management
+              - generic [ref=e445]: (external_attack_surface_management)
+            - img [ref=e447]
+        - article [ref=e449]:
+          - button "Threat Intelligence (threat_intelligence)" [ref=e450] [cursor=pointer]:
+            - generic [ref=e451]:
+              - strong [ref=e452]: Threat Intelligence
+              - generic [ref=e453]: (threat_intelligence)
+            - img [ref=e455]
+        - article [ref=e457]:
+          - button "Takedown Workflows (takedown_workflows)" [ref=e458] [cursor=pointer]:
+            - generic [ref=e459]:
+              - strong [ref=e460]: Takedown Workflows
+              - generic [ref=e461]: (takedown_workflows)
+            - img [ref=e463]
+        - article [ref=e465]:
+          - button "Incident Correlation (incident_correlation)" [ref=e466] [cursor=pointer]:
+            - generic [ref=e467]:
+              - strong [ref=e468]: Incident Correlation
+              - generic [ref=e469]: (incident_correlation)
+            - img [ref=e471]
+        - article [ref=e473]:
+          - button "Agentic Response (agentic_response)" [ref=e474] [cursor=pointer]:
+            - generic [ref=e475]:
+              - strong [ref=e476]: Agentic Response
+              - generic [ref=e477]: (agentic_response)
+            - img [ref=e479]
+        - article [ref=e481]:
+          - button "AI Settings (ai_settings)" [ref=e482] [cursor=pointer]:
+            - generic [ref=e483]:
+              - strong [ref=e484]: AI Settings
+              - generic [ref=e485]: (ai_settings)
+            - img [ref=e487]
+        - article [ref=e489]:
+          - button "AI Reports (ai_reports)" [ref=e490] [cursor=pointer]:
+            - generic [ref=e491]:
+              - strong [ref=e492]: AI Reports
+              - generic [ref=e493]: (ai_reports)
+            - img [ref=e495]
+        - article [ref=e497]:
+          - button "Compliance Evidence (compliance_evidence)" [ref=e498] [cursor=pointer]:
+            - generic [ref=e499]:
+              - strong [ref=e500]: Compliance Evidence
+              - generic [ref=e501]: (compliance_evidence)
+            - img [ref=e503]
+        - article [ref=e505]:
+          - button "Integrations (integrations)" [ref=e506] [cursor=pointer]:
+            - generic [ref=e507]:
+              - strong [ref=e508]: Integrations
+              - generic [ref=e509]: (integrations)
+            - img [ref=e511]
+        - article [ref=e513]:
+          - button "Platform Observability (platform_observability)" [ref=e514] [cursor=pointer]:
+            - generic [ref=e515]:
+              - strong [ref=e516]: Platform Observability
+              - generic [ref=e517]: (platform_observability)
+            - img [ref=e519]
+        - article [ref=e521]:
+          - button "White Label (white_label)" [ref=e522] [cursor=pointer]:
+            - generic [ref=e523]:
+              - strong [ref=e524]: White Label
+              - generic [ref=e525]: (white_label)
+            - img [ref=e527]
+      - generic [ref=e529]:
+        - generic [ref=e530]:
+          - button "Save Changes" [ref=e531] [cursor=pointer]
+          - button "Run Simulation & Impact Analysis" [ref=e532]
+          - button "Simulate Promotion" [ref=e533] [cursor=pointer]
+        - paragraph [ref=e534]: This dedicated editor will support live simulation, destructive action warnings, inheritance previews, and direct promotion — all without leaving the powerful editing experience.
 ```
 
 # Test source
 
 ```ts
-  381 | 
-  382 |     if (url.pathname === "/companies/summary" && method === "GET") {
-  383 |       await fulfill(route, {
-  384 |         items: [
-  385 |           {
-  386 |             customer: {
-  387 |               id: "customer-1",
-  388 |               partner_id: "partner-1",
-  389 |               customer_number: "C-001",
-  390 |               company_type: "customer",
-  391 |               name: "Acme Co",
-  392 |               industry: null,
-  393 |               country: null,
-  394 |               company_size: null,
-  395 |               status: "active",
-  396 |               created_by: "tests",
-  397 |               created_at: "2026-05-23T00:00:00Z",
-  398 |               default_group_id: "group-1",
-  399 |               assigned_policy_package_id: null,
-  400 |               assigned_policy_name: null,
-  401 |             },
-  402 |             license: {
-  403 |               subscription_sku: "core",
-  404 |               addons: ["semantic_dlp"],
-  405 |             },
-  406 |           },
-  407 |         ],
-  408 |         total: 1,
-  409 |         limit: 250,
-  410 |         offset: 0,
-  411 |       });
-  412 |       return;
-  413 |     }
-  414 | 
-  415 |     if (url.pathname === "/endpoints" && method === "GET") {
-  416 |       await fulfill(route, [
-  417 |         {
-  418 |           id: "endpoint-1",
-  419 |           hostname: "eng-laptop",
-  420 |           os: "macOS",
-  421 |           status: "healthy",
-  422 |           risk_score: 20,
-  423 |           last_seen: "2026-05-23T00:00:00Z",
-  424 |           policy_version: "2",
-  425 |           agent_version: "0.1.0",
-  426 |         },
-  427 |       ]);
-  428 |       return;
-  429 |     }
-  430 | 
-  431 |     if (url.pathname === "/subscriptions" && method === "GET") {
-  432 |       await fulfill(route, [{ id: "sub-1", sku: "core", core_features: [] }]);
-  433 |       return;
-  434 |     }
-  435 | 
-  436 |     if (url.pathname === "/customers/customer-1/groups" && method === "GET") {
-  437 |       await fulfill(route, [{ id: "group-1", customer_id: "customer-1", name: "Engineering", created_at: "2026-05-23T00:00:00Z" }]);
-  438 |       return;
-  439 |     }
-  440 | 
-  441 |     if (url.pathname === "/agent/policy" && method === "GET") {
-  442 |       await fulfill(route, {
-  443 |         endpoint_id: url.searchParams.get("endpoint_id"),
-  444 |         policy_version_hash: "hash",
-  445 |         resolved_policy: {
-  446 |           schema_version: "2.0",
-  447 |           name: "Agent effective",
-  448 |           scope: { partner_id: "partner-1", customer_id: "customer-1", group_id: "group-1", endpoint_id: "endpoint-1" },
-  449 |           lineage: { parent_policy_id: null, inheritance_mode: "inherit_with_overrides" },
-  450 |           modules: {
-  451 |             semantic_dlp: { enabled: true },
-  452 |             genai_guardrails: { enabled: true },
-  453 |             digital_risk_protection: { enabled: false, locked: true },
-  454 |           },
-  455 |           white_label_names: {},
-  456 |         },
-  457 |         evidence_controls: ["iso27001-2022:A.8.16"],
-  458 |       });
-  459 |       return;
-  460 |     }
-  461 | 
-  462 |     await fulfill(route, { detail: `Unhandled mock route ${method} ${url.pathname}` }, 404);
-  463 |   });
-  464 | 
-  465 |   await page.addInitScript(() => {
-  466 |     const header = btoa(JSON.stringify({ alg: "none", typ: "JWT" }))
-  467 |       .replace(/\+/g, "-")
-  468 |       .replace(/\//g, "_")
-  469 |       .replace(/=+$/g, "");
-  470 |     const payload = btoa(JSON.stringify({ sub: "account-1", exp: 4_102_444_800 }))
-  471 |       .replace(/\+/g, "-")
-  472 |       .replace(/\//g, "_")
-  473 |       .replace(/=+$/g, "");
-  474 |     window.localStorage.setItem("aetherix.access_token", `${header}.${payload}.sig`);
-  475 |   });
-  476 | }
-  477 | 
-  478 | 
-  479 | async function approvePromotion(page: Page) {
-  480 |   const promotionSheet = page.getByRole("dialog", { name: "Production Promotion gate" });
-> 481 |   await expect(promotionSheet).toBeVisible();
-      |                                ^ Error: expect(locator).toBeVisible() failed
-  482 |   await promotionSheet.getByRole("checkbox").check();
-  483 |   await promotionSheet.getByRole("textbox").fill("Approved during policy E2E validation");
-  484 |   await promotionSheet.getByRole("button", { name: "Confirm & Promote" }).click();
-  485 | }
-  486 | 
-  487 | 
-  488 | test("Flow A: MSP creates, simulates, promotes, assigns policy", async ({ page }) => {
-  489 |   await installPolicyApiMocks(page, "msp_partner");
-  490 |   await page.goto("/");
-  491 | 
-  492 |   await page.getByRole("button", { name: "Policies" }).click();
-  493 |   await page.getByRole("button", { name: /Add policy/i }).click();
-  494 |   await page.locator("label.policyNameField input").fill("Flow A Policy");
-  495 |   await page.getByRole("button", { name: "Save" }).click();
-  496 |   await expect(page.getByText(/Created draft/i)).toBeVisible();
-  497 | 
-  498 |   await page.getByRole("button", { name: "Aetherix modules" }).click();
-  499 |   await page.getByRole("button", { name: "Simulate selected" }).click();
-  500 |   await expect(page.getByText(/Simulation complete:/i)).toBeVisible();
-  501 | 
-  502 |   await page.getByRole("button", { name: "Promote selected" }).click();
-  503 |   await approvePromotion(page);
-  504 |   await expect(page.getByText("Policy promoted successfully.")).toBeVisible();
-  505 | 
-  506 |   await page.getByRole("button", { name: "Assign selected" }).click();
-  507 |   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
-  508 |   await expect(assignDialog).toBeVisible();
-  509 |   await assignDialog.getByLabel("Company").selectOption("customer-1");
-  510 |   await page.getByRole("button", { name: "Assign policy" }).click();
-  511 |   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
-  512 | });
-  513 | 
-  514 | 
-  515 | test("Flow B: Company Admin creates group override and preview resolves inheritance", async ({ page }) => {
-  516 |   await installPolicyApiMocks(page, "company_admin");
-  517 |   await page.goto("/");
-  518 | 
-  519 |   await page.getByRole("button", { name: "Policies" }).click();
-  520 |   await page.getByRole("button", { name: /Add policy/i }).click();
-  521 |   await page.locator("label.policyNameField input").fill("Flow B Group Override");
-  522 |   await page.getByRole("button", { name: "Aetherix modules" }).click();
-  523 |   await page.getByLabel("Parent policy").selectOption("policy-1");
-  524 | 
-  525 |   await page.getByRole("button", { name: "Save" }).click();
-  526 |   await page.getByRole("button", { name: "Simulate selected" }).click();
-  527 |   await page.getByRole("button", { name: "Promote selected" }).click();
-  528 |   await approvePromotion(page);
-  529 | 
-  530 |   await page.getByRole("button", { name: "Assign selected" }).click();
-  531 |   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
-  532 |   await expect(assignDialog).toBeVisible();
-  533 |   await page.getByRole("button", { name: "group" }).click();
-  534 |   await assignDialog.getByLabel("Company").selectOption("customer-1");
-  535 |   await assignDialog.getByLabel("Group").selectOption("group-1");
-  536 |   await page.getByRole("button", { name: "Assign policy" }).click();
-  537 |   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
-  538 | });
-  539 | 
-  540 | 
-  541 | test("Flow C: Agent fetch includes semantic/genai modules and entitlement filtering", async ({ page }) => {
-  542 |   await installPolicyApiMocks(page, "msp_partner");
-  543 |   await page.goto("/");
-  544 | 
-  545 |   await page.getByRole("button", { name: "Policies" }).click();
-  546 |   await page.getByRole("button", { name: "Inherited Base" }).click();
-  547 |   await page.getByRole("button", { name: "Aetherix modules" }).click();
-  548 |   await page.getByRole("button", { name: "Assign selected" }).click();
-  549 |   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
-  550 |   await expect(assignDialog).toBeVisible();
-  551 |   await assignDialog.getByRole("button", { name: /^endpoint$/i }).click();
-  552 |   await assignDialog.locator("label").filter({ hasText: "Endpoint" }).locator("select").selectOption("endpoint-1");
-  553 |   await page.getByRole("button", { name: "Assign policy" }).click();
-  554 |   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
-  555 | 
-  556 |   const body = await page.evaluate(async () => {
-  557 |     const res = await fetch("http://127.0.0.1:8000/agent/policy?endpoint_id=endpoint-1&token=agent-token");
-  558 |     if (!res.ok) {
-  559 |       throw new Error(`agent fetch failed with ${res.status}`);
-  560 |     }
-  561 |     return res.json();
-  562 |   });
-  563 |   expect(body.resolved_policy.modules.semantic_dlp.enabled).toBeTruthy();
-  564 |   expect(body.resolved_policy.modules.genai_guardrails.enabled).toBeTruthy();
-  565 |   expect(body.resolved_policy.modules.digital_risk_protection.locked).toBeTruthy();
-  566 | });
-  567 | 
-  568 | 
-  569 | test("Flow D: Destructive gate rejects promotion before simulation, then accepts with approval", async ({ page }) => {
-  570 |   await installPolicyApiMocks(page, "msp_partner");
-  571 |   await page.goto("/");
-  572 | 
-  573 |   const deniedStatus = await page.evaluate(async () => {
-  574 |     const denied = await fetch("http://127.0.0.1:8000/policies/policy-1/promote", {
-  575 |       method: "POST",
-  576 |       headers: { "content-type": "application/json" },
-  577 |       body: JSON.stringify({
-  578 |         simulation_id: "missing-simulation",
-  579 |         operator_approved: true,
-  580 |         approval_reason: "manual",
-  581 |       }),
+  688 | 
+  689 | 
+  690 | test("Flow A: MSP creates, simulates, promotes, assigns policy", async ({ page }) => {
+  691 |   await installPolicyApiMocks(page, "msp_partner");
+  692 |   await page.goto("/?harness=true&role=msp_partner&page=policies");
+  693 | 
+  694 |   await page.getByRole("button", { name: /Add policy/i }).click();
+  695 |   await fillPolicyNameField(page, "Flow A Policy");
+  696 |   await page.getByRole("button", { name: "Save" }).click();
+  697 |   await expect(page.getByText(/created successfully/i)).toBeVisible();
+  698 | 
+  699 |   await openModulesPanelIfPresent(page);
+  700 |   await page.getByRole("button", { name: "Simulate selected" }).click();
+  701 |   await expect(page.getByText(/Simulation complete:/i)).toBeVisible();
+  702 | 
+  703 |   await page.getByRole("button", { name: "Promote selected" }).click();
+  704 |   await approvePromotion(page);
+  705 |   await expect(page.getByText("Policy promoted successfully.")).toBeVisible();
+  706 | 
+  707 |   await page.getByRole("button", { name: "Assign selected" }).click();
+  708 |   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
+  709 |   await expect(assignDialog).toBeVisible();
+  710 |   await assignDialog.getByLabel("Company").selectOption("customer-1");
+  711 |   await page.getByRole("button", { name: "Assign policy" }).click();
+  712 |   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
+  713 | });
+  714 | 
+  715 | 
+  716 | test("Flow B: Company Admin creates group override and preview resolves inheritance", async ({ page }) => {
+  717 |   await installPolicyApiMocks(page, "company_admin");
+  718 |   await page.goto("/?harness=true&role=company_admin&page=policies");
+  719 | 
+  720 |   await page.getByRole("button", { name: /Add policy/i }).click();
+  721 |   await fillPolicyNameField(page, "Flow B Group Override");
+  722 |   await openModulesPanelIfPresent(page);
+  723 |   await page.getByLabel("Parent policy").selectOption("policy-1");
+  724 | 
+  725 |   await page.getByRole("button", { name: "Save" }).click();
+  726 |   await page.getByRole("button", { name: "Simulate selected" }).click();
+  727 |   await page.getByRole("button", { name: "Promote selected" }).click();
+  728 |   await approvePromotion(page);
+  729 | 
+  730 |   await page.getByRole("button", { name: "Assign selected" }).click();
+  731 |   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
+  732 |   await expect(assignDialog).toBeVisible();
+  733 |   await page.getByRole("button", { name: "group" }).click();
+  734 |   await assignDialog.getByLabel("Company").selectOption("customer-1");
+  735 |   await assignDialog.getByLabel("Group").selectOption("group-1");
+  736 |   await page.getByRole("button", { name: "Assign policy" }).click();
+  737 |   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
+  738 | });
+  739 | 
+  740 | 
+  741 | test("Flow C: Agent fetch includes semantic/genai modules and entitlement filtering", async ({ page }) => {
+  742 |   await installPolicyApiMocks(page, "msp_partner");
+  743 |   await page.goto("/?harness=true&role=msp_partner&page=policies");
+  744 | 
+  745 |   await page.getByRole("button", { name: "Inherited Base" }).click();
+  746 |   await openModulesPanelIfPresent(page);
+  747 |   await page.getByRole("button", { name: "Assign selected" }).click();
+  748 |   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
+  749 |   await expect(assignDialog).toBeVisible();
+  750 |   await assignDialog.getByRole("button", { name: /^endpoint$/i }).click();
+  751 |   await assignDialog.locator("label").filter({ hasText: "Endpoint" }).locator("select").selectOption("endpoint-1");
+  752 |   await page.getByRole("button", { name: "Assign policy" }).click();
+  753 |   await expect(page.getByText("Policy assigned successfully.")).toBeVisible();
+  754 | 
+  755 |   const body = await page.evaluate(async () => {
+  756 |     const res = await fetch("http://127.0.0.1:8000/agent/policy?endpoint_id=endpoint-1&token=agent-token");
+  757 |     if (!res.ok) {
+  758 |       throw new Error(`agent fetch failed with ${res.status}`);
+  759 |     }
+  760 |     return res.json();
+  761 |   });
+  762 |   expect(body.resolved_policy.modules.semantic_dlp.enabled).toBeTruthy();
+  763 |   expect(body.resolved_policy.modules.genai_guardrails.enabled).toBeTruthy();
+  764 |   expect(body.resolved_policy.modules.digital_risk_protection.locked).toBeTruthy();
+  765 | });
+  766 | 
+  767 | 
+  768 | test("Flow D: Destructive gate rejects promotion before simulation, then accepts with approval", async ({ page }) => {
+  769 |   await installPolicyApiMocks(page, "msp_partner");
+  770 |   await page.goto("/?harness=true&role=msp_partner&page=policies");
+  771 | 
+  772 |   const deniedStatus = await page.evaluate(async () => {
+  773 |     const denied = await fetch("http://127.0.0.1:8000/policies/policy-1/promote", {
+  774 |       method: "POST",
+  775 |       headers: { "content-type": "application/json" },
+  776 |       body: JSON.stringify({
+  777 |         simulation_id: "missing-simulation",
+  778 |         operator_approved: true,
+  779 |         approval_reason: "manual",
+  780 |       }),
+  781 |     });
+  782 |     return denied.status;
+  783 |   });
+  784 |   expect(deniedStatus).toBe(400);
+  785 | 
+  786 |   await page.getByRole("button", { name: "Inherited Base" }).click();
+  787 |   await openModulesPanelIfPresent(page);
+> 788 |   await page.getByRole("button", { name: "Simulate selected" }).click();
+      |                                                                 ^ Error: locator.click: Test timeout of 30000ms exceeded.
+  789 |   await page.getByRole("button", { name: "Promote selected" }).click();
+  790 |   await approvePromotion(page);
+  791 |   await expect(page.getByText("Policy promoted successfully.")).toBeVisible();
+  792 | });
+  793 | 
 ```
