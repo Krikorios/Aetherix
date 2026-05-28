@@ -27,6 +27,7 @@ pub mod ioc;
 pub mod process_tree;
 pub mod ransomware;
 pub mod response;
+pub mod rollback;
 pub mod yara_scan;
 
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,7 @@ pub enum EdrDetectionKind {
     YaraMatch,
     IocMatch,
     RansomwareCanary,
+    RansomwareRollback,
     SuspiciousProcessChain,
     ResponseAction,
 }
@@ -55,6 +57,11 @@ pub enum EdrAction {
     QuarantineRestore,
     Kill,
     Isolate,
+    /// Snapshot-based ransomware rollback via a RollbackProvider.
+    /// Policy-gated as a destructive action, requires operator approval.
+    /// Not dispatched through the legacy execute() — handled by the
+    /// rollback provider in poll_and_execute_actions (main.rs).
+    Rollback,
 }
 
 /// KDF parameters required to recover a quarantined artifact after agent
@@ -184,6 +191,10 @@ pub struct EdrEvent {
     pub evidence_controls: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<ResponseEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_hints: Option<rollback::RecoveryPointHint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_evidence: Option<rollback::RollbackEvidence>,
 }
 
 impl EdrEvent {
@@ -207,6 +218,8 @@ impl EdrEvent {
             matched_rules: Vec::new(),
             evidence_controls: Vec::new(),
             response: None,
+            recovery_hints: None,
+            rollback_evidence: None,
         }
     }
 }

@@ -1,0 +1,964 @@
+//! Ransomware rollback provider trait and Phase 1 scaffolding.
+//!
+//! Defined in `docs/edr-ransomware-rollback-interface.md` §Provider Boundary.
+//! This module implements Phase 1 of the 3-phase rollback plan described
+//! in the 2026-05-30 coordination brief:
+//!
+//! Phase 1 (this cycle):
+//!   - `RollbackProvider` trait + supporting types
+//!   - `NoopRollbackProvider` (always provider_unavailable)
+//!   - Canary-driven recovery point hints on EdrEvent
+//!   - RollbackReadiness for heartbeat telemetry
+//!
+//! Phase 2 (next cycle):
+//!   - Handle `rollback` action in response.rs
+//!   - Validate approved intents (action_id, simulation_id, candidate_set_hash, expiry)
+//!   - Idempotency enforcement via consumed-IDs file
+//!
+//! Phase 3 (next+1 cycle):
+//!   - OS-native providers (VSS, APFS, LVM/Btrfs/ZFS)
+//!   - simulate_restore() per provider
+//!   - FimHint emission for correlation fast-path
+//!
+//! Non-negotiable constraints (from docs/multi-agent-coordination-protocol.md §6):
+//!   - Deterministic before probabilistic — no ML here.
+//!   - Default monitor / opt-in enforce — rollback stays monitor/review by default.
+//!   - Evidence by construction — RollbackEvidence carries evidence_controls.
+//!   - No host mutation without policy promotion + operator approval.
+
+use super::{EdrDetectionKind, EdrEvent};
+
+// ---------------------------------------------------------------------------
+// Supporting types
+// ---------------------------------------------------------------------------
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Supporting types
+// ---------------------------------------------------------------------------
+
+/// What a RollbackProvider advertises to the agent.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackCapabilities {
+    pub provider_name: String,
+    pub provider_version: String,
+    pub available: bool,
+    pub supported_os: Vec<String>,
+    pub supported_filesystems: Vec<String>,
+    pub privilege_context: String,
+}
+
+/// Detector-emitted scope that triggers recovery-point lookup.
+///
+/// See `docs/edr-ransomware-rollback-interface.md` §Data Model Sketch.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackScope {
+    pub incident_id: String,
+    pub detector_rule_id: String,
+    pub affected_paths: Vec<String>,
+    pub observed_at: String,
+}
+
+/// A single recovery point from a provider (VSS snapshot, APFS snapshot, …).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoveryPoint {
+    pub id: String,
+    pub provider: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub protected_roots: Vec<String>,
+    pub read_only: bool,
+    pub verified: bool,
+}
+
+/// Lightweight summary of a recovery point for heartbeat telemetry.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoveryPointSummary {
+    pub id: String,
+    pub provider: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub protected_root: String,
+    pub verified: bool,
+}
+
+/// Assembled candidate set for a single provider-root-point triple.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackCandidateSet {
+    pub scope: RollbackScope,
+    pub recovery_point_id: String,
+    pub paths: Vec<String>,
+    pub total_bytes_estimate: u64,
+    pub max_depth: u8,
+    pub candidate_set_hash: String,
+}
+
+/// Simulation result — produced before any host-mutating restore.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackSimulation {
+    pub simulation_id: String,
+    pub candidate_set_hash: String,
+    pub candidate_count: usize,
+    pub restorable_count: usize,
+    pub skipped_paths: Vec<RollbackPathDecision>,
+    pub destructive: bool,
+    pub valid_until: String,
+    pub decision_trace: Vec<String>,
+}
+
+/// Per-path decision within a simulation or restore result.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackPathDecision {
+    pub path: String,
+    pub outcome: String,
+    // "restored" | "skipped" | "failed_integrity" | "refused_out_of_scope"
+    pub reason: String,
+    pub bytes_affected: u64,
+    pub hash_before: Option<String>,
+    pub hash_after: Option<String>,
+    pub metadata_diff: Option<Vec<String>>,
+}
+
+/// Rich evidence emitted by a restore attempt.
+///
+/// Aligned with `ResponseEvidence` shape from the existing evidence pipeline
+/// and the full schema in `docs/edr-ransomware-rollback-interface.md`
+/// §Evidence Requirements.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackEvidence {
+    pub status: String,
+    // "staged" | "executed" | "failed" | "not_applicable"
+    pub decision_trace: Vec<String>,
+    pub evidence_controls: Vec<String>,
+    pub endpoint_id: String,
+    pub customer_id: Option<String>,
+    pub policy_version: String,
+    pub requester_id: String,
+    pub approver_ids: Vec<String>,
+
+    pub simulation_id: String,
+    pub candidate_set_hash: String,
+    pub approved_action_id: String,
+    pub provider: String,
+    pub recovery_point_id: String,
+    pub recovery_point_created_at: String,
+    pub recovery_point_expires_at: Option<String>,
+    pub recovery_point_verified: bool,
+    pub metadata_preserved: Option<bool>,
+    pub provider_refusal: Option<String>,
+
+    pub restored_paths: Vec<RollbackPathDecision>,
+    pub failed_paths: Vec<RollbackPathDecision>,
+    pub skipped_paths: Vec<RollbackPathDecision>,
+
+    pub provider_version: String,
+    pub os_platform: String,
+    pub privilege_context: String,
+}
+
+/// In-band recovery point hint carried on an EdrEvent when a ransomware
+/// detector fires and a rollback provider has available recovery points.
+///
+/// This is the "canary-driven recovery point hint" mechanism from
+/// Phase 1. It lets the control plane see rollback readiness alongside
+/// the detection event without a separate heartbeat field.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoveryPointHint {
+    pub provider: String,
+    pub recovery_points: Vec<RecoveryPointSummary>,
+    pub incident_id: Option<String>,
+}
+
+/// Rollback readiness summary reported in heartbeats.
+///
+/// Gives the control plane visibility into whether this endpoint has
+/// snapshot capability and what recovery points are available per mount.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackReadiness {
+    pub provider_available: bool,
+    pub provider_name: String,
+    pub provider_version: String,
+    pub recovery_points: Vec<RecoveryPointSummary>,
+    pub os_platform: String,
+}
+
+// ---------------------------------------------------------------------------
+// Provider trait
+// ---------------------------------------------------------------------------
+
+/// Interface for snapshot-based ransomware rollback.
+///
+/// Every method returns deterministic results. Providers that are not
+/// available (NoopRollbackProvider, uninitialised OS providers) return
+/// empty/refusal results rather than erroring.
+///
+/// Refusal states (from the interface doc):
+///   - provider_unavailable
+///   - recovery_point_unverified
+///   - candidate_scope_mismatch
+///   - unsafe_target_state
+///   - privilege_boundary
+pub trait RollbackProvider: Send + Sync {
+    /// Advertise what this provider supports.
+    fn capabilities(&self) -> RollbackCapabilities;
+
+    /// List recovery points that could cover paths in the given scope.
+    fn list_recovery_points(&self, scope: &RollbackScope) -> anyhow::Result<Vec<RecoveryPoint>>;
+
+    /// Simulate a restore from the given candidate set without mutating the host.
+    fn simulate_restore(&self, candidates: &RollbackCandidateSet) -> anyhow::Result<RollbackSimulation>;
+
+    /// Execute a restore after operator approval.
+    fn restore(
+        &self,
+        candidates: &RollbackCandidateSet,
+        approved_action_id: &str,
+    ) -> anyhow::Result<RollbackEvidence>;
+}
+
+// ---------------------------------------------------------------------------
+// NoopRollbackProvider — safe fallback when no OS provider is available
+// ---------------------------------------------------------------------------
+
+/// No-op fallback that always reports `available = false`.
+///
+/// This is the default provider. It satisfies the trait contract so all
+/// call sites that expect a `&dyn RollbackProvider` work without `Option`
+/// unwrapping. Real providers (VSS, APFS, …) are wired in Phase 3.
+pub struct NoopRollbackProvider;
+
+impl RollbackProvider for NoopRollbackProvider {
+    fn capabilities(&self) -> RollbackCapabilities {
+        RollbackCapabilities {
+            provider_name: "noop".to_string(),
+            provider_version: "0.1.0".to_string(),
+            available: false,
+            supported_os: vec![],
+            supported_filesystems: vec![],
+            privilege_context: "none".to_string(),
+        }
+    }
+
+    fn list_recovery_points(&self, _scope: &RollbackScope) -> anyhow::Result<Vec<RecoveryPoint>> {
+        Ok(Vec::new())
+    }
+
+    fn simulate_restore(&self, candidates: &RollbackCandidateSet) -> anyhow::Result<RollbackSimulation> {
+        Ok(RollbackSimulation {
+            simulation_id: uuid::Uuid::new_v4().to_string(),
+            candidate_set_hash: candidates.candidate_set_hash.clone(),
+            candidate_count: 0,
+            restorable_count: 0,
+            skipped_paths: vec![],
+            destructive: false,
+            valid_until: chrono::Utc::now().to_rfc3339(),
+            decision_trace: vec![
+                "noop provider: simulation not available; no OS snapshot provider configured".to_string(),
+            ],
+        })
+    }
+
+    fn restore(
+        &self,
+        candidates: &RollbackCandidateSet,
+        approved_action_id: &str,
+    ) -> anyhow::Result<RollbackEvidence> {
+        Ok(RollbackEvidence {
+            status: "not_applicable".to_string(),
+            decision_trace: vec![
+                "noop provider: restore not available".to_string(),
+                format!("noop provider has no snapshot capability; approved_action_id={}", approved_action_id),
+                "provider_refusal=provider_unavailable".to_string(),
+            ],
+            evidence_controls: vec![],
+            endpoint_id: String::new(),
+            customer_id: None,
+            policy_version: String::new(),
+            requester_id: String::new(),
+            approver_ids: vec![],
+            simulation_id: String::new(),
+            candidate_set_hash: candidates.candidate_set_hash.clone(),
+            approved_action_id: approved_action_id.to_string(),
+            provider: "noop".to_string(),
+            recovery_point_id: String::new(),
+            recovery_point_created_at: String::new(),
+            recovery_point_expires_at: None,
+            recovery_point_verified: false,
+            metadata_preserved: None,
+            provider_refusal: Some(
+                "provider_unavailable: noop provider has no snapshot capability".to_string(),
+            ),
+            restored_paths: vec![],
+            failed_paths: vec![],
+            skipped_paths: vec![],
+            provider_version: "0.1.0".to_string(),
+            os_platform: std::env::consts::OS.to_string(),
+            privilege_context: "none".to_string(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Intent validation and evidence conversion (Phase 2)
+// ---------------------------------------------------------------------------
+
+/// Parsed rollback intent from a control-plane `module_actions` payload.
+///
+/// All fields required by the approved-action contract:
+///   - simulation_id, candidate_set_hash, recovery_point_id
+///   - valid_until (expiry timestamp)
+///   - affected_paths and size bounds
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RollbackIntent {
+    pub approved_action_id: String,
+    pub simulation_id: String,
+    pub candidate_set_hash: String,
+    pub recovery_point_id: String,
+    pub valid_until: String,
+    pub affected_paths: Vec<String>,
+    pub total_bytes_estimate: u64,
+    pub max_depth: u8,
+}
+
+/// Parse a `RollbackIntent` from a JSON `serde_json::Value` payload.
+///
+/// Returns `None` if any required field is missing or malformed.
+pub fn parse_rollback_intent(action_id: &str, payload: &serde_json::Value) -> Option<RollbackIntent> {
+    let simulation_id = payload.get("simulation_id")?.as_str()?.to_string();
+    let candidate_set_hash = payload.get("candidate_set_hash")?.as_str()?.to_string();
+    let recovery_point_id = payload.get("recovery_point_id")?.as_str()?.to_string();
+    let valid_until = payload.get("valid_until")?.as_str()?.to_string();
+
+    let affected_paths: Vec<String> = payload
+        .get("affected_paths")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let total_bytes_estimate = payload
+        .get("total_bytes_estimate")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let max_depth = payload
+        .get("max_depth")
+        .and_then(|v| v.as_u64())
+        .map(|d| d as u8)
+        .unwrap_or(8);
+
+    Some(RollbackIntent {
+        approved_action_id: action_id.to_string(),
+        simulation_id,
+        candidate_set_hash,
+        recovery_point_id,
+        valid_until,
+        affected_paths,
+        total_bytes_estimate,
+        max_depth,
+    })
+}
+
+/// Validate that a rollback intent is still within its validity window.
+///
+/// Returns `Ok(())` if `valid_until` is in the future, `Err` with a
+/// description if the intent has expired.
+pub fn validate_intent_expiry(intent: &RollbackIntent) -> anyhow::Result<()> {
+    let now = chrono::Utc::now();
+    let valid_until = chrono::DateTime::parse_from_rfc3339(&intent.valid_until)
+        .map_err(|_| anyhow::anyhow!("malformed valid_until timestamp: {}", intent.valid_until))?;
+    if now > valid_until {
+        anyhow::bail!(
+            "rollback intent expired: valid_until={} is in the past",
+            intent.valid_until
+        );
+    }
+    Ok(())
+}
+
+/// Construct a `RollbackCandidateSet` from an approved intent.
+///
+/// The `candidate_set_hash` in the intent has already been computed by
+/// the control plane during simulation. The agent trusts this hash as
+/// the simulation's snapshot of the affected paths. A real provider
+/// would re-verify the hash against the recovery point (Phase 3).
+pub fn intent_to_candidate_set(intent: &RollbackIntent) -> RollbackCandidateSet {
+    RollbackCandidateSet {
+        scope: RollbackScope {
+            incident_id: intent.approved_action_id.clone(),
+            detector_rule_id: intent.simulation_id.clone(),
+            affected_paths: intent.affected_paths.clone(),
+            observed_at: chrono::Utc::now().to_rfc3339(),
+        },
+        recovery_point_id: intent.recovery_point_id.clone(),
+        paths: intent.affected_paths.clone(),
+        total_bytes_estimate: intent.total_bytes_estimate,
+        max_depth: intent.max_depth,
+        candidate_set_hash: intent.candidate_set_hash.clone(),
+    }
+}
+
+/// Convert a `RollbackEvidence` into a standard `ResponseEvidence` for
+/// the existing event pipeline.
+///
+/// The `response` field on `EdrEvent` still carries `ResponseEvidence`
+/// for compatibility with the control-plane evidence schema. The full
+/// `RollbackEvidence` is stored in the event's `rollback_evidence` field.
+pub fn convert_rollback_evidence_to_response(
+    rollback_evidence: &RollbackEvidence,
+) -> super::ResponseEvidence {
+    let status = match rollback_evidence.status.as_str() {
+        "executed" => super::ResponseStatus::Executed,
+        "failed" => super::ResponseStatus::Failed,
+        "not_applicable" => super::ResponseStatus::NotApplicable,
+        _ => super::ResponseStatus::Staged,
+    };
+
+    let mut decision_trace = Vec::with_capacity(
+        rollback_evidence.decision_trace.len() + 4,
+    );
+    decision_trace.push(format!("rollback_provider={}", rollback_evidence.provider));
+    decision_trace.push(format!(
+        "rollback_provider_version={}",
+        rollback_evidence.provider_version
+    ));
+    decision_trace.push(format!(
+        "rollback_provider_refusal={}",
+        rollback_evidence
+            .provider_refusal
+            .as_deref()
+            .unwrap_or("none")
+    ));
+    decision_trace.extend(rollback_evidence.decision_trace.clone());
+    decision_trace.push(format!(
+        "restored_paths={}, failed_paths={}, skipped_paths={}",
+        rollback_evidence.restored_paths.len(),
+        rollback_evidence.failed_paths.len(),
+        rollback_evidence.skipped_paths.len(),
+    ));
+
+    super::ResponseEvidence {
+        action: super::EdrAction::Rollback,
+        status,
+        attempted_at: chrono::Utc::now().to_rfc3339(),
+        policy_version: rollback_evidence.policy_version.clone(),
+        rule_id: rollback_evidence.simulation_id.clone(),
+        target_pid: None,
+        target_path: None,
+        file_sha256: None,
+        platform: rollback_evidence.os_platform.clone(),
+        platform_api: format!(
+            "rollback:{}",
+            rollback_evidence.provider
+        ),
+        decision_trace,
+        error: rollback_evidence.provider_refusal.clone(),
+        quarantine: None,
+        quarantine_items: Vec::new(),
+        evidence_controls: rollback_evidence.evidence_controls.clone(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency guard — consumed action ID tracking
+// ---------------------------------------------------------------------------
+
+/// Path to the consumed action IDs file.
+fn consumed_ids_dir() -> std::path::PathBuf {
+    std::env::var("AETHERIX_ROLLBACK_STATE_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_else(|_| ".".to_string());
+            std::path::PathBuf::from(home).join(".aetherix").join("rollback")
+        })
+}
+
+fn consumed_ids_path() -> std::path::PathBuf {
+    consumed_ids_dir().join("consumed_ids")
+}
+
+/// Load the set of already-consumed action IDs from the state file.
+pub fn load_consumed_ids() -> std::collections::HashSet<String> {
+    let path = consumed_ids_path();
+    if !path.exists() {
+        return std::collections::HashSet::new();
+    }
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|content| {
+            content
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| line.trim().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Persist an action ID as consumed.
+///
+/// Appends the ID to the consumed-IDs file. Duplicates are harmless — they
+/// are deduplicated on read via `HashSet`.
+pub fn mark_action_consumed(action_id: &str) {
+    let dir = consumed_ids_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("aetherix-agent: failed to create rollback state dir: {e}");
+        return;
+    }
+    let path = consumed_ids_path();
+    if let Err(e) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut file| {
+            use std::io::Write;
+            writeln!(file, "{action_id}")
+        })
+    {
+        eprintln!("aetherix-agent: failed to persist consumed action id: {e}");
+    }
+}
+
+/// Check if an action ID has already been consumed (idempotency guard).
+///
+/// Returns `true` if the action was already executed on this endpoint.
+pub fn is_action_consumed(action_id: &str) -> bool {
+    load_consumed_ids().contains(action_id)
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions (Phase 1)
+// ---------------------------------------------------------------------------
+
+/// Build a `RollbackReadiness` from a provider, suitable for heartbeat payload.
+pub fn compute_rollback_readiness(provider: &dyn RollbackProvider) -> RollbackReadiness {
+    let caps = provider.capabilities();
+    // Use an empty scope to probe for generally-available recovery points.
+    let probe_scope = RollbackScope {
+        incident_id: String::new(),
+        detector_rule_id: String::new(),
+        affected_paths: vec![],
+        observed_at: String::new(),
+    };
+    let recovery_points = provider
+        .list_recovery_points(&probe_scope)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|rp| RecoveryPointSummary {
+            id: rp.id,
+            provider: rp.provider,
+            created_at: rp.created_at,
+            expires_at: rp.expires_at,
+            protected_root: rp.protected_roots.first().cloned().unwrap_or_default(),
+            verified: rp.verified,
+        })
+        .collect();
+
+    RollbackReadiness {
+        provider_available: caps.available,
+        provider_name: caps.provider_name,
+        provider_version: caps.provider_version,
+        recovery_points,
+        os_platform: std::env::consts::OS.to_string(),
+    }
+}
+
+/// Enrich ransomware EDR events with recovery point hints from the provider.
+///
+/// Call this after ransomware detection fires so the emitted EdrEvent
+/// carries available recovery point metadata for the control plane.
+/// This is the "canary-driven recovery point hint" mechanism from Phase 1.
+pub fn enrich_events_with_recovery_hints(
+    events: &mut [EdrEvent],
+    provider: &dyn RollbackProvider,
+) {
+    for event in events {
+        if matches!(event.kind, EdrDetectionKind::RansomwareCanary) {
+            let scope = RollbackScope {
+                incident_id: event.rule_id.clone(),
+                detector_rule_id: event.rule_id.clone(),
+                affected_paths: event.file_path.clone().into_iter().collect(),
+                observed_at: event.collected_at.clone(),
+            };
+            if let Ok(points) = provider.list_recovery_points(&scope) {
+                if !points.is_empty() {
+                    event.recovery_hints = Some(RecoveryPointHint {
+                        provider: provider.capabilities().provider_name,
+                        recovery_points: points
+                            .into_iter()
+                            .map(|rp| RecoveryPointSummary {
+                                id: rp.id,
+                                provider: rp.provider,
+                                created_at: rp.created_at,
+                                expires_at: rp.expires_at,
+                                protected_root: rp
+                                    .protected_roots
+                                    .first()
+                                    .cloned()
+                                    .unwrap_or_default(),
+                                verified: rp.verified,
+                            })
+                            .collect(),
+                        incident_id: Some(scope.incident_id),
+                    });
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::edr::{EdrAction, EdrDetectionKind, EdrEvent};
+
+    #[test]
+    fn noop_provider_capabilities_reports_unavailable() {
+        let provider = NoopRollbackProvider;
+        let caps = provider.capabilities();
+        assert!(!caps.available);
+        assert_eq!(caps.provider_name, "noop");
+        assert_eq!(caps.privilege_context, "none");
+    }
+
+    #[test]
+    fn noop_provider_list_recovery_points_is_empty() {
+        let provider = NoopRollbackProvider;
+        let scope = RollbackScope {
+            incident_id: "inc-1".to_string(),
+            detector_rule_id: "rule-1".to_string(),
+            affected_paths: vec!["/home/user/docs".to_string()],
+            observed_at: "2026-05-28T12:00:00Z".to_string(),
+        };
+        let points = provider.list_recovery_points(&scope).unwrap();
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn noop_provider_simulate_restore_returns_zero_candidates() {
+        let provider = NoopRollbackProvider;
+        let scope = RollbackScope {
+            incident_id: "inc-1".to_string(),
+            detector_rule_id: "rule-1".to_string(),
+            affected_paths: vec![],
+            observed_at: String::new(),
+        };
+        let candidates = RollbackCandidateSet {
+            scope,
+            recovery_point_id: String::new(),
+            paths: vec![],
+            total_bytes_estimate: 0,
+            max_depth: 8,
+            candidate_set_hash: "hash-1".to_string(),
+        };
+        let sim = provider.simulate_restore(&candidates).unwrap();
+        assert_eq!(sim.candidate_count, 0);
+        assert_eq!(sim.restorable_count, 0);
+        assert!(sim
+            .decision_trace
+            .first()
+            .map(|d| d.contains("noop"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn noop_provider_restore_returns_not_applicable() {
+        let provider = NoopRollbackProvider;
+        let scope = RollbackScope {
+            incident_id: "inc-1".to_string(),
+            detector_rule_id: "rule-1".to_string(),
+            affected_paths: vec![],
+            observed_at: String::new(),
+        };
+        let candidates = RollbackCandidateSet {
+            scope,
+            recovery_point_id: String::new(),
+            paths: vec![],
+            total_bytes_estimate: 0,
+            max_depth: 8,
+            candidate_set_hash: "hash-1".to_string(),
+        };
+        let evidence = provider.restore(&candidates, "action-1").unwrap();
+        assert_eq!(evidence.status, "not_applicable");
+        assert!(evidence.provider_refusal.is_some());
+        assert!(evidence
+            .provider_refusal
+            .as_ref()
+            .unwrap()
+            .contains("provider_unavailable"));
+    }
+
+    #[test]
+    fn compute_rollback_readiness_reflects_noop_provider() {
+        let provider = NoopRollbackProvider;
+        let readiness = compute_rollback_readiness(&provider);
+        assert!(!readiness.provider_available);
+        assert_eq!(readiness.provider_name, "noop");
+        assert!(readiness.recovery_points.is_empty());
+    }
+
+    #[test]
+    fn enrich_events_does_nothing_for_non_ransomware_events() {
+        let provider = NoopRollbackProvider;
+        let mut event = EdrEvent::new(
+            EdrDetectionKind::YaraMatch,
+            "yara_rule_1",
+            EdrAction::Monitor,
+            "policy-v1",
+        );
+        let original_hints = event.recovery_hints.clone();
+        enrich_events_with_recovery_hints(std::slice::from_mut(&mut event), &provider);
+        assert_eq!(event.recovery_hints, original_hints);
+        assert!(event.recovery_hints.is_none());
+    }
+
+    #[test]
+    fn enrich_events_attaches_hints_for_ransomware_canary() {
+        // With NoopRollbackProvider hint enrichment runs but returns no points,
+        // so the hint stays None. This tests the path is exercised without error.
+        let provider = NoopRollbackProvider;
+        let mut event = EdrEvent::new(
+            EdrDetectionKind::RansomwareCanary,
+            "ransomware_canary_tripped",
+            EdrAction::Monitor,
+            "policy-v1",
+        );
+        event.file_path = Some("/etc/aetherix/aetherix_canary.txt".to_string());
+        enrich_events_with_recovery_hints(std::slice::from_mut(&mut event), &provider);
+        // Noop provider returns empty list, so hint stays None.
+        assert!(event.recovery_hints.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2 intent validation and evidence tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_rollback_intent_extracts_all_fields() {
+        let payload = serde_json::json!({
+            "simulation_id": "sim-1",
+            "candidate_set_hash": "hash-abc",
+            "recovery_point_id": "rp-1",
+            "valid_until": "2126-05-28T12:00:00Z",
+            "affected_paths": ["/a", "/b"],
+            "total_bytes_estimate": 4096,
+            "max_depth": 8,
+        });
+        let intent = parse_rollback_intent("action-1", &payload).unwrap();
+        assert_eq!(intent.approved_action_id, "action-1");
+        assert_eq!(intent.simulation_id, "sim-1");
+        assert_eq!(intent.candidate_set_hash, "hash-abc");
+        assert_eq!(intent.recovery_point_id, "rp-1");
+        assert_eq!(intent.affected_paths, vec!["/a", "/b"]);
+        assert_eq!(intent.total_bytes_estimate, 4096);
+        assert_eq!(intent.max_depth, 8);
+    }
+
+    #[test]
+    fn parse_rollback_intent_missing_fields_returns_none() {
+        let payload = serde_json::json!({
+            "simulation_id": "sim-1",
+        });
+        assert!(parse_rollback_intent("action-1", &payload).is_none());
+    }
+
+    #[test]
+    fn validate_intent_expiry_accepts_future_timestamp() {
+        let intent = RollbackIntent {
+            approved_action_id: "action-1".to_string(),
+            simulation_id: "sim-1".to_string(),
+            candidate_set_hash: "hash-1".to_string(),
+            recovery_point_id: "rp-1".to_string(),
+            valid_until: "2126-05-28T12:00:00Z".to_string(),
+            affected_paths: vec![],
+            total_bytes_estimate: 0,
+            max_depth: 8,
+        };
+        assert!(validate_intent_expiry(&intent).is_ok());
+    }
+
+    #[test]
+    fn validate_intent_expiry_rejects_past_timestamp() {
+        let intent = RollbackIntent {
+            approved_action_id: "action-1".to_string(),
+            simulation_id: "sim-1".to_string(),
+            candidate_set_hash: "hash-1".to_string(),
+            recovery_point_id: "rp-1".to_string(),
+            valid_until: "2020-01-01T00:00:00Z".to_string(),
+            affected_paths: vec![],
+            total_bytes_estimate: 0,
+            max_depth: 8,
+        };
+        let err = validate_intent_expiry(&intent).unwrap_err();
+        assert!(err.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn validate_intent_expiry_rejects_malformed_timestamp() {
+        let intent = RollbackIntent {
+            approved_action_id: "action-1".to_string(),
+            simulation_id: "sim-1".to_string(),
+            candidate_set_hash: "hash-1".to_string(),
+            recovery_point_id: "rp-1".to_string(),
+            valid_until: "not-a-timestamp".to_string(),
+            affected_paths: vec![],
+            total_bytes_estimate: 0,
+            max_depth: 8,
+        };
+        let err = validate_intent_expiry(&intent).unwrap_err();
+        assert!(err.to_string().contains("malformed"));
+    }
+
+    #[test]
+    fn intent_to_candidate_set_preserves_intent_fields() {
+        let intent = RollbackIntent {
+            approved_action_id: "action-1".to_string(),
+            simulation_id: "sim-1".to_string(),
+            candidate_set_hash: "hash-1".to_string(),
+            recovery_point_id: "rp-1".to_string(),
+            valid_until: "2126-05-28T12:00:00Z".to_string(),
+            affected_paths: vec!["/a".to_string(), "/b".to_string()],
+            total_bytes_estimate: 4096,
+            max_depth: 8,
+        };
+        let set = intent_to_candidate_set(&intent);
+        assert_eq!(set.recovery_point_id, "rp-1");
+        assert_eq!(set.candidate_set_hash, "hash-1");
+        assert_eq!(set.paths, vec!["/a", "/b"]);
+        assert_eq!(set.total_bytes_estimate, 4096);
+        assert_eq!(set.max_depth, 8);
+    }
+
+    #[test]
+    fn convert_rollback_evidence_maps_executed_status() {
+        let rbe = RollbackEvidence {
+            status: "executed".to_string(),
+            decision_trace: vec!["trace1".to_string()],
+            evidence_controls: vec![],
+            endpoint_id: "ep-1".to_string(),
+            customer_id: None,
+            policy_version: "pol-v1".to_string(),
+            requester_id: "req-1".to_string(),
+            approver_ids: vec![],
+            simulation_id: "sim-1".to_string(),
+            candidate_set_hash: "hash-1".to_string(),
+            approved_action_id: "action-1".to_string(),
+            provider: "noop".to_string(),
+            recovery_point_id: "rp-1".to_string(),
+            recovery_point_created_at: String::new(),
+            recovery_point_expires_at: None,
+            recovery_point_verified: false,
+            metadata_preserved: None,
+            provider_refusal: None,
+            restored_paths: vec![],
+            failed_paths: vec![],
+            skipped_paths: vec![],
+            provider_version: "0.1.0".to_string(),
+            os_platform: "test".to_string(),
+            privilege_context: "none".to_string(),
+        };
+        let resp = convert_rollback_evidence_to_response(&rbe);
+        assert_eq!(resp.action, crate::edr::EdrAction::Rollback);
+        assert_eq!(resp.status, crate::edr::ResponseStatus::Executed);
+        assert!(resp
+            .decision_trace
+            .iter()
+            .any(|d| d.contains("rollback_provider=noop")));
+    }
+
+    #[test]
+    fn convert_rollback_evidence_maps_failed_status() {
+        let rbe = RollbackEvidence {
+            status: "failed".to_string(),
+            decision_trace: vec![],
+            evidence_controls: vec![],
+            endpoint_id: String::new(),
+            customer_id: None,
+            policy_version: String::new(),
+            requester_id: String::new(),
+            approver_ids: vec![],
+            simulation_id: String::new(),
+            candidate_set_hash: String::new(),
+            approved_action_id: String::new(),
+            provider: "noop".to_string(),
+            recovery_point_id: String::new(),
+            recovery_point_created_at: String::new(),
+            recovery_point_expires_at: None,
+            recovery_point_verified: false,
+            metadata_preserved: None,
+            provider_refusal: Some("provider_error".to_string()),
+            restored_paths: vec![],
+            failed_paths: vec![],
+            skipped_paths: vec![],
+            provider_version: "0.1.0".to_string(),
+            os_platform: "test".to_string(),
+            privilege_context: "none".to_string(),
+        };
+        let resp = convert_rollback_evidence_to_response(&rbe);
+        assert_eq!(resp.status, crate::edr::ResponseStatus::Failed);
+        assert_eq!(resp.error, Some("provider_error".to_string()));
+    }
+
+    #[test]
+    fn rollback_serialization_roundtrip() {
+        let evidence = RollbackEvidence {
+            status: "executed".to_string(),
+            decision_trace: vec!["trace-1".to_string()],
+            evidence_controls: vec!["nist-csf-2.0:RS.MI".to_string()],
+            endpoint_id: "ep-1".to_string(),
+            customer_id: Some("cust-1".to_string()),
+            policy_version: "pol-v1".to_string(),
+            requester_id: "req-1".to_string(),
+            approver_ids: vec!["approver-1".to_string()],
+            simulation_id: "sim-1".to_string(),
+            candidate_set_hash: "hash-1".to_string(),
+            approved_action_id: "action-1".to_string(),
+            provider: "vss".to_string(),
+            recovery_point_id: "rp-1".to_string(),
+            recovery_point_created_at: "2026-05-28T10:00:00Z".to_string(),
+            recovery_point_expires_at: Some("2026-06-04T10:00:00Z".to_string()),
+            recovery_point_verified: true,
+            metadata_preserved: Some(true),
+            provider_refusal: None,
+            restored_paths: vec![RollbackPathDecision {
+                path: "/a".to_string(),
+                outcome: "restored".to_string(),
+                reason: "ok".to_string(),
+                bytes_affected: 1024,
+                hash_before: Some("abc".to_string()),
+                hash_after: Some("def".to_string()),
+                metadata_diff: None,
+            }],
+            failed_paths: vec![],
+            skipped_paths: vec![],
+            provider_version: "1.0.0".to_string(),
+            os_platform: "windows".to_string(),
+            privilege_context: "system".to_string(),
+        };
+        let json = serde_json::to_string(&evidence).unwrap();
+        let deserialized: RollbackEvidence = serde_json::from_str(&json).unwrap();
+        assert_eq!(evidence, deserialized);
+    }
+
+    #[test]
+    fn rollback_scope_serialization_roundtrip() {
+        let scope = RollbackScope {
+            incident_id: "inc-1".to_string(),
+            detector_rule_id: "rule-1".to_string(),
+            affected_paths: vec!["/a".to_string(), "/b".to_string()],
+            observed_at: "2026-05-28T12:00:00Z".to_string(),
+        };
+        let json = serde_json::to_string(&scope).unwrap();
+        let deserialized: RollbackScope = serde_json::from_str(&json).unwrap();
+        assert_eq!(scope, deserialized);
+    }
+}

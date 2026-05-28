@@ -8266,7 +8266,6 @@ textarea:focus,
 }
 
 .installHeader {
-  min-height: 74px;
   align-items: center;
   padding: 0 132px 0 0;
   border-bottom: 1px solid var(--line);
@@ -8278,13 +8277,12 @@ textarea:focus,
 .installCreateGeneral h3,
 .installRolesPanel h3 {
   color: var(--ink);
-  font-family: var(--font-display);
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .installHeader h1 {
-  font-size: clamp(28px, 3vw, 42px);
+  font-size: 21px;
 }
 
 .installHeader > div {
@@ -9529,18 +9527,16 @@ textarea:focus,
 }
 
 .networkHeader {
-  min-height: 70px;
-  padding-bottom: 18px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
 
 .networkHeader h1 {
   color: var(--ink);
-  font-family: var(--font-display);
-  font-size: clamp(30px, 3vw, 44px);
+  font-size: 22px;
   font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: -0.03em;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .networkHeader p {
@@ -10058,3 +10054,288 @@ textarea:focus,
   font-size: 11px;
   color: var(--muted);
 }
+
+/* ───────────────────────────────────────────────
+   Action Queue Page
+─────────────────────────────────────────────── */
+.queuePage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  min-height: 100%;
+}
+
+/* Header row with title + refresh controls */
+.queueHeaderRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.queueHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  flex-shrink: 0;
+}
+.queueAutoRefreshToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted, #8a8f9a);
+  cursor: pointer;
+  user-select: none;
+}
+.queueAutoRefreshToggle input { cursor: pointer; }
+
+/* Summary chips */
+.queueSummaryBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.queueSummaryChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border, #2c2f3a);
+  background: var(--surface-raised, #1c1e27);
+  font-size: 12px;
+  color: var(--text-muted, #8a8f9a);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.queueSummaryChip:hover { border-color: var(--accent, #6366f1); color: var(--text, #e2e4ec); }
+.queueSummaryChip.active { border-color: var(--accent, #6366f1); background: rgba(99,102,241,0.12); color: var(--text, #e2e4ec); }
+.queueSummaryChip strong { font-weight: 700; }
+
+/* Filter row */
+.queueFilters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.queueFilterTabs {
+  display: flex;
+  gap: 4px;
+}
+.queueFilterTab {
+  padding: 5px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted, #8a8f9a);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.queueFilterTab:hover { background: var(--surface-raised, #1c1e27); color: var(--text, #e2e4ec); }
+.queueFilterTab.active { background: var(--surface-raised, #1c1e27); border-color: var(--border, #2c2f3a); color: var(--text, #e2e4ec); }
+.queueFilterRight { display: flex; gap: 8px; }
+.queueActionSelect {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2c2f3a);
+  background: var(--surface-raised, #1c1e27);
+  color: var(--text, #e2e4ec);
+  cursor: pointer;
+  outline: none;
+}
+.queueActionSelect:focus { border-color: var(--accent, #6366f1); }
+
+/* Workspace split: table + log */
+.queueWorkspace {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 12px;
+  align-items: start;
+  min-height: 0;
+}
+
+/* Table */
+.queueTableWrap {
+  background: var(--surface, #14161e);
+  border: 1px solid var(--border, #2c2f3a);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.queueTable { width: 100%; }
+.queueLoadingCell,
+.queueEmptyCell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 64px 24px;
+  color: var(--text-muted, #8a8f9a);
+  font-size: 13px;
+}
+
+.queueRow { cursor: pointer; }
+.queueRow:hover td { background: var(--surface-raised, #1c1e27); }
+.queueRowActive td { background: rgba(99,102,241,0.04); }
+.queueRowExpanded td { background: var(--surface-raised, #1c1e27); }
+.queueExpandCell { width: 28px; text-align: center; color: var(--text-muted, #8a8f9a); }
+
+.queueActionCell,
+.queueEndpointCell,
+.queueCompanyCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.queueActionIcon { color: var(--accent, #6366f1); flex-shrink: 0; }
+.queueActionName { font-weight: 500; }
+.queueMuted { color: var(--text-muted, #8a8f9a); font-size: 12px; }
+.queueTs { font-size: 12px; color: var(--text-muted, #8a8f9a); }
+
+/* Status badges */
+.queueStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.queueStatusQueued      { background: rgba(234,179,8,0.15);  color: #eab308; }
+.queueStatusPending     { background: rgba(249,115,22,0.15); color: #f97316; }
+.queueStatusDone        { background: rgba(34,197,94,0.15);  color: #22c55e; }
+.queueStatusFailed      { background: rgba(239,68,68,0.15);  color: #ef4444; }
+.queueStatusDenied      { background: rgba(156,163,175,0.15);color: #9ca3af; }
+.queueStatusCancelled   { background: rgba(156,163,175,0.12);color: #9ca3af; }
+
+/* Cancel button */
+.queueCancelBtn {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #ef4444;
+  border-color: rgba(239,68,68,0.35);
+  gap: 4px;
+}
+.queueCancelBtn:hover:not(:disabled) { background: rgba(239,68,68,0.1); }
+
+/* Expanded detail row */
+.queueDetailRow td { background: var(--surface-raised, #1c1e27); padding: 0; }
+.queueDetailBody {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--border, #2c2f3a);
+}
+.queueDetailSection { min-width: 160px; }
+.queueDetailSection h4 {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted, #8a8f9a);
+  margin: 0 0 4px;
+}
+.queueDetailSection span, .queueDetailSection code { font-size: 12px; }
+.queueDetailSection code {
+  font-family: monospace;
+  background: rgba(0,0,0,0.25);
+  padding: 2px 6px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+.queueControlTags { display: flex; flex-wrap: wrap; gap: 4px; }
+.queueControlTag {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: rgba(99,102,241,0.12);
+  color: var(--accent, #6366f1);
+  border-radius: 10px;
+}
+.queueJsonBlock {
+  font-size: 11px;
+  font-family: monospace;
+  background: rgba(0,0,0,0.3);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Activity log panel */
+.queueLogPanel {
+  background: var(--surface, #14161e);
+  border: 1px solid var(--border, #2c2f3a);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  max-height: 640px;
+  overflow: hidden;
+}
+.queueLogHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border, #2c2f3a);
+  font-size: 12px;
+  color: var(--text-muted, #8a8f9a);
+  flex-shrink: 0;
+}
+.queueLogClear {
+  background: none;
+  border: none;
+  color: var(--text-muted, #8a8f9a);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+.queueLogClear:hover { color: var(--text, #e2e4ec); }
+.queueLogBody {
+  overflow-y: auto;
+  flex: 1;
+  padding: 8px 0;
+}
+.queueLogEmpty {
+  display: block;
+  text-align: center;
+  padding: 32px 16px;
+  font-size: 12px;
+  color: var(--text-muted, #8a8f9a);
+}
+.queueLogEntry {
+  display: flex;
+  gap: 8px;
+  padding: 4px 14px;
+  font-size: 11px;
+  line-height: 1.5;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.queueLogTime {
+  flex-shrink: 0;
+  color: var(--text-muted, #8a8f9a);
+  font-family: monospace;
+}
+.queueLogMsg { word-break: break-word; }
+.queueLogInfo    { color: var(--text, #e2e4ec); }
+.queueLogSuccess { color: #22c55e; }
+.queueLogError   { color: #ef4444; }
+.queueLogWarn    { color: #f97316; }
+
+/* Spin animation (reuse or define here) */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+

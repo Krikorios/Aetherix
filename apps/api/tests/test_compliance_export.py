@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import hashlib
+import hmac
 import uuid
-from datetime import UTC, datetime
 from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +14,23 @@ from app import db as app_db
 from app.main import app
 from app.schemas import AccountCreate, CompanyLicenseAssign, RoleAssignmentRequest
 from app.services import jwt_tokens, licensing, tenancy
+
+
+def _enroll_agent(agent_id: str, customer_id: uuid.UUID) -> None:
+    now = datetime.now(UTC)
+    with app_db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into enrolled_agents (agent_id, customer_id, hostname, os, secret, enrolled_at, last_nonce, revoked)
+            values (%s, %s, %s, 'windows', 'e2e-endpoint-secret', %s, 0, false)
+            """,
+            (agent_id, customer_id, agent_id, now),
+        )
+
+
+def _heartbeat_signature(agent_id: str, collected_at: str, nonce: int) -> str:
+    message = f"{agent_id}|vss-guard-host|windows|{collected_at}|policy-vss-guard|{nonce}"
+    return hmac.new(b"e2e-endpoint-secret", message.encode(), hashlib.sha256).hexdigest()
 
 
 def _make_customer() -> uuid.UUID:
@@ -32,6 +53,11 @@ def _make_customer() -> uuid.UUID:
             (customer_id, partner_id, f"C-{customer_id.hex[:8]}", now),
         )
     return customer_id
+
+
+def _load_vss_fixture() -> dict[str, object]:
+    fixture_path = Path(__file__).resolve().parents[3] / "apps/console/src/test/fixtures/vss-smoke.json"
+    return json.loads(fixture_path.read_text())
 
 
 def test_compliance_export_contains_signed_iso_evidence(promote_default_policy) -> None:
@@ -298,3 +324,133 @@ def test_compliance_v0_5_reviews_and_attestation_workflow(auth_headers) -> None:
     )
     assert a_list2.status_code == 200
     assert len(a_list2.json()) == 1
+
+
+def test_compliance_export_includes_rollback_evidence_events(auth_headers) -> None:
+    owner = tenancy.ensure_platform_owner("compliance-rollback@aetherix.test", "Compliance Owner Rollback")
+    customer_id = _make_customer()
+    client = TestClient(app)
+    headers = auth_headers(str(owner.id), **{"X-Aetherix-Customer": str(customer_id)})
+    now = datetime.now(UTC)
+
+    # Insert a full set of rollback and correlation evidence events
+    events = [
+        ("endpoint.rollback.simulation_requested", '["iso27001-2022:A.8.16", "soc2-2017:CC7.2"]'),
+        ("endpoint.rollback.rollback_requested", '["iso27001-2022:A.5.25", "soc2-2017:CC6.3"]'),
+        ("endpoint.rollback.rollback_approved", '["iso27001-2022:A.5.16", "soc2-2017:CC6.3"]'),
+        ("endpoint.rollback.rollback_denied", '["iso27001-2022:A.5.25", "soc2-2017:CC6.3"]'),
+        ("endpoint.rollback.rollback_executed", '["iso27001-2022:A.12.4.1", "soc2-2017:CC7.5"]'),
+        ("endpoint.rollback.rollback_failed", '["iso27001-2022:A.12.6.1", "soc2-2017:CC7.4"]'),
+        ("endpoint.rollback.rollback_refused", '["iso27001-2022:A.12.6.1", "soc2-2017:CC7.4"]'),
+        ("endpoint.rollback.scope_narrowed", '["iso27001-2022:A.12.4.2", "soc2-2017:CC7.3"]'),
+        ("endpoint.rollback.unsafe_overwrite_confirmed", '["iso27001-2022:A.5.25", "soc2-2017:CC6.3"]'),
+        ("correlation.rollback_simulation", '["iso27001-2022:A.8.12", "soc2-2017:CC6.1"]'),
+        ("correlation.rollback_attempted", '["iso27001-2022:A.8.8", "soc2-2017:CC7.4"]'),
+        ("correlation.rollback_triggered", '["iso27001-2022:A.8.8", "soc2-2017:CC7.4"]'),
+    ]
+
+    with app_db.connection() as conn, conn.cursor() as cur:
+        for action, controls in events:
+            cur.execute(
+                """
+                insert into evidence_events (id, action, resource, actor, scope, payload, evidence_controls, created_at)
+                values (%s, %s, 'endpoint:test', 'agent', %s::jsonb, '{}'::jsonb, %s::jsonb, %s)
+                """,
+                (
+                    uuid.uuid4(),
+                    action,
+                    f'{ {"customer_id": str(customer_id)} }'.replace("'", '"'),
+                    controls,
+                    now,
+                ),
+            )
+
+    # 1. Fetch compliance export for ISO-27001
+    resp_iso = client.get(
+        "/compliance/export",
+        headers={"Authorization": f"Bearer {jwt_tokens.issue(str(owner.id))[0]}"},
+        params={"customer_id": str(customer_id), "framework": "iso27001-2022"},
+    )
+    assert resp_iso.status_code == 200, resp_iso.text
+    bundle_iso = resp_iso.json()
+
+    evidence_actions = {item["summary"].split(" on ")[0] for item in bundle_iso["evidence"]}
+    for action, _ in events:
+        assert any(action in summary for summary in evidence_actions), f"expected {action} in compliance evidence summaries"
+
+    # Verify A.8.16 (monitoring activities) has evidence counts
+    controls_iso = {c["control_id"]: c for c in bundle_iso["controls"]}
+    assert controls_iso["A.8.16"]["evidence_count"] >= 1
+
+    # 2. Fetch compliance export for SOC2
+    resp_soc = client.get(
+        "/compliance/export",
+        headers={"Authorization": f"Bearer {jwt_tokens.issue(str(owner.id))[0]}"},
+        params={"customer_id": str(customer_id), "framework": "soc2-2017"},
+    )
+    assert resp_soc.status_code == 200, resp_soc.text
+    bundle_soc = resp_soc.json()
+
+    controls_soc = {c["control_id"]: c for c in bundle_soc["controls"]}
+    assert controls_soc["CC6.1"]["evidence_count"] >= 1
+    assert controls_soc["CC7.2"]["evidence_count"] >= 1
+
+
+def test_vss_provider_metadata_survives_export_and_pending_inbox(auth_headers) -> None:
+    owner = tenancy.ensure_platform_owner("compliance-vss-guard@aetherix.test", "Compliance VSS Guard")
+    customer_id = _make_customer()
+    agent_id = "agent-vss-guard-001"
+    client = TestClient(app)
+    headers = auth_headers(str(owner.id), **{"X-Aetherix-Customer": str(customer_id)})
+    _enroll_agent(agent_id, customer_id)
+    collected_at = datetime.now(UTC).isoformat()
+
+    fixture = _load_vss_fixture()
+    vss_metadata = fixture["provider_metadata"]
+    readiness = fixture["rollback_readiness"]
+    request_payload = fixture["rollback_restore_request"]
+
+    heartbeat = client.post(
+        "/agent/heartbeat",
+        json={
+            "agent_id": agent_id,
+            "hostname": "vss-guard-host",
+            "os": "windows",
+            "policy_version": "policy-vss-guard",
+            "nonce": 1,
+            "collected_at": collected_at,
+            "signature": _heartbeat_signature(agent_id, collected_at, 1),
+            "signals": {"cpu_percent": 5, "memory_percent": 10},
+            "rollback_readiness": readiness,
+        },
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+
+    queue = client.post(
+        f"/endpoints/{agent_id}/rollback-restore",
+        headers=headers,
+        json=request_payload,
+    )
+    assert queue.status_code == 202, queue.text
+    action_id = queue.json()["id"]
+
+    pending = client.get("/rollback-intents/pending", headers=headers)
+    assert pending.status_code == 200, pending.text
+    pending_item = next((item for item in pending.json() if item["action"]["id"] == action_id), None)
+    assert pending_item is not None
+    assert pending_item["action"]["payload"]["provider_metadata"] == vss_metadata
+    assert pending_item["rollback_readiness"]["provider_metadata"] == vss_metadata
+
+    export = client.get(
+        "/compliance/export",
+        headers={"Authorization": f"Bearer {jwt_tokens.issue(str(owner.id))[0]}"},
+        params={"customer_id": str(customer_id), "framework": "iso27001-2022"},
+    )
+    assert export.status_code == 200, export.text
+    evidence_item = next(
+        item for item in export.json()["evidence"]
+        if item["source_table"] == "evidence_events"
+        and item["payload"].get("action_id") == action_id
+    )
+    assert evidence_item["payload"]["provider"] == "vss"
+    assert evidence_item["payload"]["provider_metadata"] == vss_metadata

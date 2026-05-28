@@ -844,3 +844,36 @@ export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
 export function logout(): void {
   setAccessToken(null);
 }
+
+// ---------------------------------------------------------------------------
+// Action queue types
+// ---------------------------------------------------------------------------
+
+export type ModuleActionStatus =
+  | "queued"
+  | "awaiting_approval"
+  | "completed"
+  | "failed"
+  | "denied"
+  | "cancelled";
+
+export type ModuleActionResult = {
+  id: string;
+  target_id: string;
+  action: string;
+  status: ModuleActionStatus;
+  approval_required: boolean;
+  payload: Record<string, unknown> | null;
+  evidence_controls: string[];
+  created_at: string;
+  result: Record<string, unknown> | null;
+  processed_at: string | null;
+  requested_by: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+};
+
+export type QueuedActionItem = ModuleActionResult & {
+  hostname: string;
+  customer_name: string | null;
+};

@@ -1,32 +1,47 @@
-"""Cross-module correlation engine (FIM ↔ EDR ↔ DLP).
+"""Cross-module correlation engine (FIM ↔ EDR ↔ DLP ↔ Rollback).
 
 The correlation engine wires the agent's independent detection streams
-(file integrity monitoring, EDR YARA/IOC/behavior matches, DLP scans)
-together at write time. When a new EDR-derived ``security_alerts`` row
-references a file path or SHA-256 that a recent FIM event or DLP scan
-also touched on the same agent — or vice versa — the engine:
+(file integrity monitoring, EDR YARA/IOC/behavior matches, DLP scans,
+and ransomware rollback recovery) together at write time.  When a new
+EDR-derived ``security_alerts`` row references a file path or SHA-256
+that a recent FIM event or DLP scan also touched on the same agent — or
+vice versa — the engine:
 
 1. Persists an edge in ``correlation_links`` so the console can render
    the supporting evidence on the alert detail view.
 2. Uplifts the alert's severity one rung (medium→high, high→critical),
    recording the original severity in ``security_alerts.severity_uplifted_from``
    and a ``correlation`` block on the alert payload.
-3. Writes a ``correlation.severity_uplift`` evidence event so auditor
-   exports include the aggregation/analysis artefact (NIST CSF DE.AE,
-   RS.AN; ISO 27001 A.5.25, A.8.16; SOC 2 CC7.2/CC7.3).
+3. Writes a compliance evidence event so auditor exports include the
+   aggregation/analysis artefact (NIST CSF DE.AE, RS.AN; ISO 27001
+   A.5.25, A.8.16; SOC 2 CC7.2/CC7.3).
 
-Three correlation types are supported:
+Five correlation types are supported, each with a distinct confidence
+score and evidence structure:
 
-  * ``file_path_match`` — same normalized file path on the same agent
-    within the correlation window (FIM ↔ EDR).
-  * ``sha256_match`` — same SHA-256 hash on the same agent within the
-    correlation window (FIM ↔ EDR, DLP ↔ EDR).
-  * ``process_path_match`` — same process path on the same agent within
-    the correlation window (reserved for future behavioural pairs).
+  * ``sha256_match`` (score 1.0) — identical SHA-256 on the same agent
+    within the window.  Strongest signal: same file content seen by
+    both modules.  Supported pairs: FIM ↔ EDR, DLP ↔ EDR.
+
+  * ``rollback_action`` (score 0.95) — a completed ransomware-rollback
+    action on a file path that was previously observed by FIM or DLP.
+    Links the recovery event to prior witness events for a full
+    detection → uplift → rollback chain.
+
+  * ``process_path_match`` (score 0.9) — the EDR alert's ``process_path``
+    normalises to the same value as a recent FIM ``file_path_norm``.
+    Indicates that the executing binary was itself monitored.
+
+  * ``file_path_match`` (score 0.8) — same normalised file path on the
+    same agent within the window (FIM ↔ EDR).
+
+  * ``endpoint_proximity`` (score 0.4) — a DLP scan on the same endpoint
+    within the correlation window, even without a matching hash.
+    Weaker but meaningful cross-modality signal.
 
 The engine is intentionally deterministic and SQL-only: no background
-job, no broker. All directions are exercised inside the heartbeat or DLP
-event transaction so a single ack settles the correlation and the
+job, no broker.  All directions are exercised inside the heartbeat or
+DLP event transaction so a single ack settles the correlation and the
 compliance trail together.
 """
 
@@ -41,7 +56,7 @@ from uuid import UUID
 
 
 # Default lookback window matches the agent heartbeat cadence (a few
-# minutes) plus operator-visible alert dwell time. Override via env so
+# minutes) plus operator-visible alert dwell time.  Override via env so
 # noisy environments can widen the join without code changes.
 DEFAULT_WINDOW_SECONDS = 600
 
@@ -59,6 +74,27 @@ def _window_seconds() -> int:
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 _SEVERITY_UPLIFT = {"low": "medium", "medium": "high", "high": "critical", "critical": "critical"}
+
+# Confidence scores assigned per correlation type.  Higher = more
+# specific signal.  The console renders these as a badge next to each
+# correlated event so analysts can weight the evidence quickly.
+_TYPE_SCORE: dict[str, float] = {
+    "sha256_match": 1.0,
+    "rollback_action": 0.95,
+    "process_path_match": 0.9,
+    "file_path_match": 0.8,
+    "endpoint_proximity": 0.4,
+}
+
+# Priority used internally when a single event qualifies for multiple
+# types and we must pick the best one to record.
+_TYPE_PRIORITY: dict[str, int] = {
+    "sha256_match": 5,
+    "rollback_action": 4,
+    "process_path_match": 3,
+    "file_path_match": 2,
+    "endpoint_proximity": 1,
+}
 
 
 def _normalize_path(path: str | None) -> str | None:
@@ -188,6 +224,30 @@ def _query_dlp_by_sha256(
     return list(cur.fetchall())
 
 
+def _query_dlp_by_endpoint(
+    cur: Any, *, endpoint_id: str, customer_id: UUID, cutoff: datetime, window_end: datetime, limit: int = 10
+) -> list[dict]:
+    """Query dlp_events by endpoint_id + temporal window (no hash required).
+
+    Used for temporal proximity matching when neither SHA-256 nor a
+    normalized path is available on the DLP side.
+    """
+    cur.execute(
+        """
+        select id, source, action, entity_types, risk_band, sha256_hash, observed_at
+        from dlp_events
+        where customer_id = %s
+          and endpoint_id = %s
+          and observed_at >= %s
+          and observed_at <= %s
+        order by observed_at desc
+        limit %s
+        """,
+        (customer_id, endpoint_id, cutoff, window_end, limit),
+    )
+    return list(cur.fetchall())
+
+
 def _query_security_alerts_by_sha256(
     cur: Any, *, agent_id: str, customer_id: UUID, sha256: str, cutoff: datetime, window_end: datetime, limit: int = 10
 ) -> list[dict]:
@@ -213,11 +273,13 @@ def _query_security_alerts_by_sha256(
 def _build_planned_link(
     row: dict, agent_id: str, correlation_type: str, window: int, kind: str = "fim_event"
 ) -> dict[str, Any]:
+    score = _TYPE_SCORE.get(correlation_type, 1.0)
     if kind == "dlp_event":
         return {
             "related_kind": "dlp_event",
             "related_id": str(row["id"]),
             "correlation_type": correlation_type,
+            "score": score,
             "window_seconds": window,
             "evidence": {
                 "source": row["source"],
@@ -229,22 +291,30 @@ def _build_planned_link(
                 if isinstance(row["observed_at"], datetime)
                 else str(row["observed_at"]),
                 "agent_id": agent_id,
+                "correlation_subtype": correlation_type,
             },
         }
+    # FIM event — label process_path_match distinctly so the console
+    # can show "process binary witnessed by FIM" vs plain file_path.
+    evidence: dict[str, Any] = {
+        "file_path": row["file_path"],
+        "event_type": row["event_type"],
+        "sha256_hash": row["sha256_hash"],
+        "observed_at": row["observed_at"].isoformat()
+        if isinstance(row["observed_at"], datetime)
+        else str(row["observed_at"]),
+        "agent_id": agent_id,
+        "correlation_subtype": correlation_type,
+    }
+    if correlation_type == "process_path_match":
+        evidence["matched_as"] = "process_path"
     return {
         "related_kind": kind,
         "related_id": str(row["id"]),
         "correlation_type": correlation_type,
+        "score": score,
         "window_seconds": window,
-        "evidence": {
-            "file_path": row["file_path"],
-            "event_type": row["event_type"],
-            "sha256_hash": row["sha256_hash"],
-            "observed_at": row["observed_at"].isoformat()
-            if isinstance(row["observed_at"], datetime)
-            else str(row["observed_at"]),
-            "agent_id": agent_id,
-        },
+        "evidence": evidence,
     }
 
 
@@ -259,6 +329,7 @@ def correlate_new_edr_alert(
     payload: dict[str, Any],
     evidence_controls: list[str],
     created_at: datetime,
+    process_path: str | None = None,
 ) -> tuple[str, dict[str, Any], list[str], list[dict[str, Any]]]:
     """Look up recent FIM evidence for the same path/sha256 and uplift the alert.
 
@@ -270,11 +341,21 @@ def correlate_new_edr_alert(
     persist them. The compliance ``correlation.severity_uplift`` event
     is emitted here so the trail is written even if the caller drops
     the alert insert on the floor.
+
+    Two kinds of path matching are supported:
+      * ``file_path`` — matched against ``fim_events.file_path_norm``
+        → ``file_path_match`` links.
+      * ``process_path`` — matched against ``fim_events.file_path_norm``
+        → ``process_path_match`` links.
+    When a row qualifies for multiple types (e.g. same path value appears
+    as both file_path and process_path) the engine picks the strongest:
+    ``sha256_match`` > ``process_path_match`` > ``file_path_match``.
     """
 
     file_path_norm = _normalize_path(file_path)
+    process_path_norm = _normalize_path(process_path)
     sha256 = payload.get("file_sha256") or payload.get("sha256_hash") or None
-    if not file_path_norm and not sha256:
+    if not file_path_norm and not process_path_norm and not sha256:
         return severity, payload, evidence_controls, []
 
     window = _window_seconds()
@@ -282,40 +363,67 @@ def correlate_new_edr_alert(
     window_end = created_at + timedelta(seconds=window)
 
     seen_ids: set[str] = set()
-    planned_links: list[dict[str, Any]] = []
-    deduped_rows: list[dict] = []
+    rows_by_id: dict[str, dict] = {}
+    row_candidates: dict[str, list[str]] = {}
+
+    def _collect(kind: str, rows: list[dict], ctype_hint: str) -> None:
+        for row in rows:
+            rid = str(row["id"])
+            if rid not in seen_ids:
+                seen_ids.add(rid)
+                rows_by_id[rid] = row
+                row_candidates[rid] = [ctype_hint]
+            elif ctype_hint not in row_candidates.get(rid, []):
+                row_candidates[rid].append(ctype_hint)
 
     if file_path_norm:
-        for row in _query_fim_by_path(cur, agent_id=agent_id, customer_id=customer_id, file_path_norm=file_path_norm, cutoff=cutoff, window_end=window_end):
-            if str(row["id"]) not in seen_ids:
-                seen_ids.add(str(row["id"]))
-                deduped_rows.append(row)
+        _collect(
+            "fim",
+            _query_fim_by_path(cur, agent_id=agent_id, customer_id=customer_id, file_path_norm=file_path_norm, cutoff=cutoff, window_end=window_end),
+            "file_path_match",
+        )
+
+    if process_path_norm:
+        _collect(
+            "fim",
+            _query_fim_by_path(cur, agent_id=agent_id, customer_id=customer_id, file_path_norm=process_path_norm, cutoff=cutoff, window_end=window_end),
+            "process_path_match",
+        )
 
     if sha256:
-        for row in _query_fim_by_sha256(cur, agent_id=agent_id, customer_id=customer_id, sha256=sha256, cutoff=cutoff, window_end=window_end):
-            if str(row["id"]) not in seen_ids:
-                seen_ids.add(str(row["id"]))
-                deduped_rows.append(row)
+        _collect(
+            "fim",
+            _query_fim_by_sha256(cur, agent_id=agent_id, customer_id=customer_id, sha256=sha256, cutoff=cutoff, window_end=window_end),
+            "sha256_match",
+        )
+        _collect(
+            "dlp",
+            _query_dlp_by_sha256(cur, agent_id=agent_id, customer_id=customer_id, sha256=sha256, cutoff=cutoff, window_end=window_end),
+            "sha256_match",
+        )
 
-        for row in _query_dlp_by_sha256(cur, agent_id=agent_id, customer_id=customer_id, sha256=sha256, cutoff=cutoff, window_end=window_end):
-            if str(row["id"]) not in seen_ids:
-                seen_ids.add(str(row["id"]))
-                deduped_rows.append(row)
+    # Temporal proximity: DLP scans on the same endpoint within the
+    # correlation window, even without a matching hash.  This creates
+    # weaker but still meaningful cross-modality links between DLP
+    # activity and EDR detections on the same host.
+    _collect(
+        "dlp",
+        _query_dlp_by_endpoint(cur, endpoint_id=agent_id, customer_id=customer_id, cutoff=cutoff, window_end=window_end),
+        "endpoint_proximity",
+    )
 
-    if not deduped_rows:
+    if not rows_by_id:
         return severity, payload, evidence_controls, []
 
-    for row in deduped_rows:
+    planned_links: list[dict[str, Any]] = []
+
+    def _best_type(types: list[str]) -> str:
+        return max(types, key=lambda t: _TYPE_PRIORITY.get(t, 0))
+
+    for rid, row in rows_by_id.items():
+        best = _best_type(row_candidates[rid])
         kind = "dlp_event" if "source" in row and "action" in row else "fim_event"
-        if kind == "fim_event" and file_path_norm and _normalize_path(row["file_path"]) == file_path_norm:
-            ctype = "sha256_match" if sha256 and row["sha256_hash"] == sha256 else "file_path_match"
-        elif sha256 and row["sha256_hash"] == sha256:
-            ctype = "sha256_match"
-        elif kind == "fim_event":
-            ctype = "file_path_match"
-        else:
-            continue
-        planned_links.append(_build_planned_link(row, agent_id, ctype, window, kind=kind))
+        planned_links.append(_build_planned_link(row, agent_id, best, window, kind=kind))
 
     uplifted = _SEVERITY_UPLIFT.get(severity, severity)
     payload = dict(payload)
@@ -376,6 +484,7 @@ def record_planned_links(
                 related_kind=link["related_kind"],
                 related_id=link["related_id"],
                 correlation_type=link["correlation_type"],
+                score=link.get("score", _TYPE_SCORE.get(link["correlation_type"], 1.0)),
                 window_seconds=link["window_seconds"],
                 evidence=link["evidence"],
                 created_at=created_at,
@@ -426,15 +535,24 @@ def correlate_new_fim_event(
     recorded: list[dict[str, Any]] = []
     for row in candidates:
         payload = dict(row["payload"] or {})
-        alert_path = payload.get("file_path") or payload.get("process_path")
+        alert_file_path = payload.get("file_path")
+        alert_process_path = payload.get("process_path")
         alert_sha = payload.get("file_sha256") or payload.get("sha256_hash")
 
-        matches_path = _normalize_path(alert_path) == file_path_norm if file_path_norm else False
+        matches_file_path = bool(file_path_norm and _normalize_path(alert_file_path) == file_path_norm)
+        matches_process_path = bool(file_path_norm and alert_process_path and _normalize_path(alert_process_path) == file_path_norm)
         matches_sha = bool(sha256_hash and alert_sha and sha256_hash == alert_sha)
-        if not matches_path and not matches_sha:
+        if not matches_file_path and not matches_process_path and not matches_sha:
             continue
 
-        ctype = "sha256_match" if matches_sha and not matches_path else "file_path_match"
+        if matches_sha:
+            ctype = "sha256_match"
+        elif matches_process_path:
+            ctype = "process_path_match"
+        elif matches_file_path:
+            ctype = "file_path_match"
+        else:
+            continue
 
         link = _record_link(
             cur,
@@ -443,12 +561,15 @@ def correlate_new_fim_event(
             related_kind="fim_event",
             related_id=str(fim_event_id),
             correlation_type=ctype,
+            score=_TYPE_SCORE.get(ctype, 1.0),
             window_seconds=window,
             evidence={
                 "file_path": file_path,
                 "sha256_hash": sha256_hash,
                 "observed_at": observed_at.isoformat(),
                 "agent_id": agent_id,
+                "correlation_subtype": ctype,
+                **({"matched_as": "process_path"} if ctype == "process_path_match" else {}),
             },
             created_at=observed_at,
         )
@@ -563,11 +684,13 @@ def correlate_new_dlp_event(
             related_kind="dlp_event",
             related_id=str(dlp_event_id),
             correlation_type="sha256_match",
+            score=_TYPE_SCORE["sha256_match"],
             window_seconds=window,
             evidence={
                 "sha256_hash": sha256_hash,
                 "observed_at": observed_at.isoformat(),
                 "agent_id": agent_id,
+                "correlation_subtype": "sha256_match",
             },
             created_at=observed_at,
         )
@@ -720,6 +843,7 @@ def _record_link(
     related_kind: str,
     related_id: str,
     correlation_type: str,
+    score: float = 1.0,
     window_seconds: int,
     evidence: dict[str, Any],
     created_at: datetime,
@@ -739,7 +863,7 @@ def _record_link(
             related_kind,
             related_id,
             correlation_type,
-            1.0,
+            score,
             window_seconds,
             json.dumps(evidence),
             created_at,
@@ -750,6 +874,7 @@ def _record_link(
         "related_kind": related_kind,
         "related_id": related_id,
         "correlation_type": correlation_type,
+        "score": score,
         "evidence": evidence,
     }
 
@@ -760,6 +885,296 @@ def _correlation_controls() -> list[str]:
     from app.services.compliance import controls_for_event
 
     return controls_for_event("correlation.severity_uplift")
+
+
+def _rollback_controls() -> list[str]:
+    """Controls evidenced by a rollback-correlated recovery event.
+
+    Distinct from the generic uplift controls: rollback correlation
+    provides recovery/continuity evidence (A.8.8 — Technical
+    Vulnerability Management, RS.RC — Recovery).
+    """
+    from app.services.compliance import controls_for_event
+
+    return controls_for_event("correlation.rollback_recovery")
+
+
+def correlate_new_rollback_event(
+    cur: Any,
+    *,
+    rollback_alert_id: uuid.UUID,
+    customer_id: UUID,
+    agent_id: str,
+    file_paths: list[str],
+    created_at: datetime,
+    original_alert_id: uuid.UUID | None = None,
+) -> list[dict[str, Any]]:
+    """Link a completed rollback alert to prior FIM/DLP evidence on the same paths.
+
+    Called when the heartbeat processor records a ``response_action`` EDR
+    event with ``action == 'rollback'`` (or ``rollback_restore``).
+
+    Creates ``correlation_links`` rows with ``correlation_type =
+    'rollback_action'`` and emits a ``correlation.rollback_recovery``
+    compliance event so auditor exports include the full recovery chain:
+    detection → severity-uplift → rollback → correlated witness events.
+
+    Severity uplift (new in cycle 2026-05-28)
+    -----------------------------------------
+    When ``original_alert_id`` is provided (the pre-existing behavior/
+    malware alert whose ``matched_indicator`` the agent echoed back in
+    the rollback event), the engine uplifts that alert one severity rung
+    as confirmation evidence: a ransomware rollback being triggered is a
+    strong signal that the original detection was a true positive.  The
+    uplift is guarded — already-uplifted alerts are not double-uplifted —
+    and always emits a ``correlation.severity_uplift`` compliance event.
+    An additional ``correlation_links`` edge is created FROM the original
+    alert TO the rollback response alert using ``related_kind='rollback_action'``
+    so the full detection→rollback chain is visible from either alert.
+
+    Returns the list of recorded link records (FIM + DLP witness links).
+    """
+
+    if not file_paths:
+        return []
+
+    window = _window_seconds()
+    cutoff_lo = created_at - timedelta(seconds=window)
+    cutoff_hi = created_at + timedelta(seconds=window)
+
+    recorded: list[dict[str, Any]] = []
+
+    for raw_path in file_paths:
+        path_norm = _normalize_path(raw_path)
+        if not path_norm:
+            continue
+
+        # Find recent FIM events on this path
+        cur.execute(
+            """
+            select id, event_type, file_path, sha256_hash, observed_at
+            from fim_events
+            where agent_id = %s
+              and customer_id = %s
+              and file_path_norm = %s
+              and observed_at >= %s
+              and observed_at <= %s
+            order by observed_at desc
+            limit 10
+            """,
+            (agent_id, customer_id, path_norm, cutoff_lo, cutoff_hi),
+        )
+        for row in cur.fetchall():
+            link = _record_link(
+                cur,
+                customer_id=customer_id,
+                security_alert_id=rollback_alert_id,
+                related_kind="fim_event",
+                related_id=str(row["id"]),
+                correlation_type="rollback_action",
+                score=_TYPE_SCORE["rollback_action"],
+                window_seconds=window,
+                evidence={
+                    "file_path": row["file_path"],
+                    "event_type": row["event_type"],
+                    "sha256_hash": row["sha256_hash"],
+                    "observed_at": row["observed_at"].isoformat()
+                    if isinstance(row["observed_at"], datetime)
+                    else str(row["observed_at"]),
+                    "agent_id": agent_id,
+                    "correlation_subtype": "rollback_action",
+                    "rollback_path": raw_path,
+                },
+                created_at=created_at,
+            )
+            recorded.append(link)
+
+        # Find recent DLP events on this endpoint within the window
+        cur.execute(
+            """
+            select id, source, action, entity_types, risk_band, sha256_hash, observed_at
+            from dlp_events
+            where customer_id = %s
+              and endpoint_id = %s
+              and observed_at >= %s
+              and observed_at <= %s
+            order by observed_at desc
+            limit 10
+            """,
+            (customer_id, agent_id, cutoff_lo, cutoff_hi),
+        )
+        for row in cur.fetchall():
+            link = _record_link(
+                cur,
+                customer_id=customer_id,
+                security_alert_id=rollback_alert_id,
+                related_kind="dlp_event",
+                related_id=str(row["id"]),
+                correlation_type="rollback_action",
+                score=_TYPE_SCORE["rollback_action"],
+                window_seconds=window,
+                evidence={
+                    "source": row["source"],
+                    "action": row["action"],
+                    "entity_types": row["entity_types"],
+                    "risk_band": row["risk_band"],
+                    "sha256_hash": row["sha256_hash"],
+                    "observed_at": row["observed_at"].isoformat()
+                    if isinstance(row["observed_at"], datetime)
+                    else str(row["observed_at"]),
+                    "agent_id": agent_id,
+                    "correlation_subtype": "rollback_action",
+                    "rollback_path": raw_path,
+                },
+                created_at=created_at,
+            )
+            recorded.append(link)
+
+    # ---------------------------------------------------------------------------
+    # Severity uplift on the original behavior alert
+    # ---------------------------------------------------------------------------
+    # A completed rollback is strong confirmation that the originating
+    # detection was a true positive. Uplift the behavior alert one rung
+    # (e.g. medium → high) so analysts see the confirmed-threat severity,
+    # but only if the alert hasn't already been uplifted by a prior correlation.
+    #
+    # We also record a rollback_action edge FROM the original alert TO the
+    # rollback response alert so the full detection→rollback chain is
+    # traversable from either alert's correlations endpoint.
+    if original_alert_id is not None:
+        cur.execute(
+            """
+            select id, severity, payload, evidence_controls, severity_uplifted_from
+            from security_alerts
+            where id = %s
+              and customer_id = %s
+            """,
+            (original_alert_id, customer_id),
+        )
+        orig_row = cur.fetchone()
+        if orig_row is not None:
+            # Record the detection→rollback edge on the original alert regardless
+            # of whether uplift applies (already-uplifted alert still gets the link).
+            _record_link(
+                cur,
+                customer_id=customer_id,
+                security_alert_id=original_alert_id,
+                related_kind="rollback_action",
+                related_id=str(rollback_alert_id),
+                correlation_type="rollback_action",
+                score=_TYPE_SCORE["rollback_action"],
+                window_seconds=window,
+                evidence={
+                    "rollback_alert_id": str(rollback_alert_id),
+                    "agent_id": agent_id,
+                    "rollback_paths": file_paths,
+                    "correlation_subtype": "rollback_action",
+                    "occurred_at": created_at.isoformat(),
+                },
+                created_at=created_at,
+            )
+
+            # Uplift only if not already uplifted.
+            current_severity = orig_row["severity"]
+            already_uplifted = orig_row["severity_uplifted_from"] is not None
+            uplifted = _SEVERITY_UPLIFT.get(current_severity, current_severity)
+
+            if uplifted != current_severity and not already_uplifted:
+                orig_payload = dict(orig_row["payload"] or {})
+                correlation_block = dict(orig_payload.get("correlation") or {})
+                correlation_block["uplifted_from"] = current_severity
+                correlation_block["window_seconds"] = window
+                related_in_block = list(correlation_block.get("related") or [])
+                related_in_block.append({
+                    "related_kind": "rollback_action",
+                    "related_id": str(rollback_alert_id),
+                    "correlation_type": "rollback_action",
+                })
+                correlation_block["related"] = related_in_block
+                orig_payload["correlation"] = correlation_block
+
+                new_controls = list(dict.fromkeys(
+                    list(orig_row["evidence_controls"] or []) + _rollback_controls()
+                ))
+                cur.execute(
+                    """
+                    update security_alerts
+                       set severity = %s,
+                           severity_uplifted_from = %s,
+                           payload = %s::jsonb,
+                           evidence_controls = %s::jsonb
+                     where id = %s
+                    """,
+                    (
+                        uplifted,
+                        current_severity,
+                        json.dumps(orig_payload),
+                        json.dumps(new_controls),
+                        original_alert_id,
+                    ),
+                )
+                _emit_uplift_event(
+                    customer_id=customer_id,
+                    alert_id=original_alert_id,
+                    agent_id=agent_id,
+                    file_path=file_paths[0] if file_paths else "",
+                    before=current_severity,
+                    after=uplifted,
+                    direction="rollback_to_edr",
+                    related=recorded,
+                    created_at=created_at,
+                )
+
+    if recorded:
+        _emit_rollback_recovery_event(
+            customer_id=customer_id,
+            alert_id=rollback_alert_id,
+            agent_id=agent_id,
+            file_paths=file_paths,
+            related=recorded,
+            created_at=created_at,
+        )
+
+    return recorded
+
+
+def _emit_rollback_recovery_event(
+    *,
+    customer_id: UUID,
+    alert_id: uuid.UUID,
+    agent_id: str,
+    file_paths: list[str],
+    related: Iterable[dict[str, Any]],
+    created_at: datetime,
+) -> None:
+    """Write a ``correlation.rollback_recovery`` compliance evidence event."""
+    from app.services.compliance import _emit_compliance_event
+
+    try:
+        _emit_compliance_event(
+            customer_id=customer_id,
+            action="correlation.rollback_recovery",
+            resource=f"security_alert:{alert_id}",
+            actor=f"correlation-engine:{agent_id}",
+            payload={
+                "alert_id": str(alert_id),
+                "agent_id": agent_id,
+                "rollback_paths": file_paths,
+                "related": [
+                    {
+                        "kind": link.get("related_kind"),
+                        "id": link.get("related_id"),
+                        "type": link.get("correlation_type"),
+                        "score": link.get("score"),
+                    }
+                    for link in related
+                ],
+                "occurred_at": created_at.isoformat(),
+            },
+            evidence_controls=_rollback_controls(),
+        )
+    except Exception:
+        pass
 
 
 def _emit_uplift_event(

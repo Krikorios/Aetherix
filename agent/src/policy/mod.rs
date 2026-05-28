@@ -282,6 +282,17 @@ impl RuntimePolicy {
                         .as_deref(),
                 )
             }
+            crate::edr::EdrDetectionKind::RansomwareRollback => {
+                if !self.resolved.ransomware_mitigation.enabled {
+                    return EdrAction::Monitor;
+                }
+                parse_edr_action(
+                    self.resolved
+                        .ransomware_mitigation
+                        .response_action
+                        .as_deref(),
+                )
+            }
             crate::edr::EdrDetectionKind::ResponseAction => EdrAction::Monitor,
         }
     }

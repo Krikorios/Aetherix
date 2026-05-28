@@ -71,6 +71,17 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
     tenant = agent_tenant_context(heartbeat.agent_id)
 
     with connection() as conn, conn.cursor() as cur:
+        # Keep the most recent readiness probe snapshot when an incremental
+        # heartbeat omits rollback_readiness.
+        if payload.get("rollback_readiness") is None:
+            cur.execute(
+                "select payload->'rollback_readiness' as rollback_readiness from heartbeats where agent_id = %s",
+                (heartbeat.agent_id,),
+            )
+            previous = cur.fetchone()
+            if previous and previous.get("rollback_readiness") is not None:
+                payload["rollback_readiness"] = previous["rollback_readiness"]
+
         cur.execute(
             """
             insert into heartbeats(agent_id, payload, updated_at, partner_id, customer_id, group_id)
@@ -264,13 +275,14 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                 # its uplifted severity in a single round-trip.
                 from app.services import correlation as correlation_service
 
-                file_path_for_corr = event.file_path or event.process_path
+                file_path_for_corr = event.file_path
+                process_path_for_corr = event.process_path
                 severity_for_insert = severity
                 evidence_for_insert = event_controls
                 payload_for_insert = payload_dict
                 severity_uplifted_from: str | None = None
                 planned_links: list = []
-                if file_path_for_corr and not is_response_action:
+                if (file_path_for_corr or process_path_for_corr) and not is_response_action:
                     (
                         severity_for_insert,
                         payload_for_insert,
@@ -282,6 +294,7 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                         customer_id=tenant["customer_id"],
                         agent_id=heartbeat.agent_id,
                         file_path=file_path_for_corr,
+                        process_path=process_path_for_corr,
                         severity=severity,
                         payload=payload_dict,
                         evidence_controls=list(event_controls),
@@ -390,6 +403,118 @@ def upsert_heartbeat(heartbeat: AgentHeartbeat) -> Endpoint:
                                             created_at,
                                         ),
                                     )
+
+                    # Rollback correlation: when the agent reports a completed
+                    # rollback action (action == "rollback" or "rollback_restore"),
+                    # link the rollback alert back to prior FIM/DLP witness events
+                    # on the same paths for a full detection → recovery chain.
+                    is_rollback = event.action in {"rollback", "rollback_restore"}
+                    rollback_paths: list[str] = []
+                    if is_rollback:
+                        # Prefer explicit rollback_file_paths list from the agent;
+                        # fall back to file_path on the event itself.
+                        if event.rollback_file_paths:
+                            rollback_paths = [p for p in event.rollback_file_paths if p]
+                        elif event.file_path:
+                            rollback_paths = [event.file_path]
+                        # Also check response payload for a 'paths' key
+                        if not rollback_paths and isinstance(response_payload, dict):
+                            paths_from_resp = response_payload.get("paths") or []
+                            if isinstance(paths_from_resp, list):
+                                rollback_paths = [p for p in paths_from_resp if p]
+
+                    if is_rollback and rollback_paths:
+                        try:
+                            original_alert_id = None
+                            if event.matched_indicator:
+                                try:
+                                    original_alert_id = uuid.UUID(event.matched_indicator)
+                                except (TypeError, ValueError):
+                                    original_alert_id = None
+                            correlation_service.correlate_new_rollback_event(
+                                cur,
+                                rollback_alert_id=alert_id,
+                                customer_id=tenant["customer_id"],
+                                agent_id=heartbeat.agent_id,
+                                file_paths=rollback_paths,
+                                created_at=created_at,
+                                original_alert_id=original_alert_id,
+                            )
+                        except Exception:
+                            pass
+
+                    # Emit endpoint.rollback.executed compliance evidence whenever the
+                    # agent reports a completed (not failed) rollback so auditor exports
+                    # include the per-path recovery artefact.  Emitted even if no
+                    # correlation witnesses were found so the evidence chain is complete.
+                    if is_rollback and tenant["customer_id"]:
+                        rb_resp_status = (
+                            response_payload.get("status", "")
+                            if isinstance(response_payload, dict)
+                            else ""
+                        )
+                        if rb_resp_status != "failed":
+                            from app.services.compliance import (
+                                _emit_compliance_event,
+                                controls_for_event,
+                            )
+                            rb_evidence_payload: dict = {
+                                "agent_id": heartbeat.agent_id,
+                                "rollback_paths": rollback_paths,
+                            }
+                            if isinstance(response_payload, dict):
+                                for _k in (
+                                    "simulation_id",
+                                    "provider",
+                                    "candidate_set_hash",
+                                    "recovery_point_id",
+                                    "status",
+                                    "paths",
+                                ):
+                                    if response_payload.get(_k) is not None:
+                                        rb_evidence_payload[_k] = response_payload[_k]
+                            _emit_compliance_event(
+                                customer_id=tenant["customer_id"],
+                                action="endpoint.rollback.executed",
+                                resource=f"endpoint:{heartbeat.agent_id}",
+                                actor=f"agent:{heartbeat.agent_id}",
+                                payload=rb_evidence_payload,
+                                evidence_controls=controls_for_event(
+                                    "endpoint.rollback.executed"
+                                ),
+                            )
+                        else:
+                            from app.services.compliance import (
+                                _emit_compliance_event,
+                                controls_for_event,
+                            )
+                            rb_evidence_payload = {
+                                "agent_id": heartbeat.agent_id,
+                                "rollback_paths": rollback_paths,
+                            }
+                            if isinstance(response_payload, dict):
+                                for _k in (
+                                    "simulation_id",
+                                    "provider",
+                                    "candidate_set_hash",
+                                    "recovery_point_id",
+                                    "status",
+                                    "paths",
+                                    "error_message",
+                                    "error",
+                                ):
+                                    if response_payload.get(_k) is not None:
+                                        rb_evidence_payload[_k] = response_payload[_k]
+                            _emit_compliance_event(
+                                customer_id=tenant["customer_id"],
+                                action="endpoint.rollback.failed",
+                                resource=f"endpoint:{heartbeat.agent_id}",
+                                actor=f"agent:{heartbeat.agent_id}",
+                                payload=rb_evidence_payload,
+                                evidence_controls=controls_for_event(
+                                    "endpoint.rollback.failed"
+                                ),
+                            )
 
     # Compliance Evidence mapping for CIS Benchmarking
     if heartbeat.cis_results and tenant["customer_id"]:
@@ -585,6 +710,7 @@ def _endpoint_from_heartbeat(heartbeat: AgentHeartbeat, open_alert_count: int) -
         last_seen=last_seen,
         policy_version=heartbeat.policy_version,
         agent_version=heartbeat.agent_version,
+        rollback_readiness=heartbeat.rollback_readiness,
     )
 
 

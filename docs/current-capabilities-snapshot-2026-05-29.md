@@ -25,12 +25,13 @@ This reflects the state after the major May 2026 multi-agent development cycles 
   - List (`quarantine_list`): Returns `QuarantineListItem[]` with `can_restore`, `severity_hint`, `approval_hint`, `restore_requires_approval`, hashes, etc.
   - Restore (`quarantine_restore`): Full lifecycle with evidence.
   - Isolate: Auditable intent + evidence (firewall enforcement still planned).
+  - Rollback (`rollback` / `rollback_restore` / `rollback_simulate`): Full remote action dispatch with `RollbackProvider` trait, `NoopRollbackProvider`/`SimulationRollbackProvider`, intent verification (endpoint/tenant binding, expiry, field validation), idempotency guard with cached-evidence re-report, and `RollbackEvidence` return with per-path outcomes, provider details, and correlation links.
 - **Policy Gating**: `RuntimePolicy` (hot-reloadable) maps detectors to actions (Monitor/Review default; enforcement only on promotion). Remote actions respect the same gates.
 - **Other**: Real browser bridge (HTTP + native messaging), DLP enforcement (clipboard overwrite, file save blocking), inventory, basic CIS checks.
 
 **Current marketing posture**: "Behavior & Anti-Ransomware" + strong remote containment (accurate). Not claiming full kernel AV or broad signature coverage yet.
 
-**Gaps (explicitly still planned)**: Richer signatures/reputation, ML scoring (server-side), full ransomware rollback (VSS/APFS snapshots), kernel-level telemetry, network isolation enforcement.
+**Gaps (explicitly still planned)**: Richer signatures/reputation, ML scoring (server-side), VSS rollback simulate/restore implementation, APFS/Btrfs providers (future), kernel-level telemetry, network isolation enforcement. (Note: Windows VSS provider probe/readiness and recovery-point listing paths are implemented.)
 
 ---
 
@@ -106,7 +107,7 @@ This is **production-intent** operator-controlled remote response (not just agen
 ## 7. What We Still Do Not Claim (Accurate as of May 29, 2026)
 
 - Kernel-mode AV / minifilter / ETW depth
-- Full automated ransomware rollback (VSS/APFS snapshot integration)
+- Full automated ransomware rollback (Windows VSS provider probe/readiness and recovery-point listing paths implemented; VSS simulate/restore and APFS snapshot integration are planned)
 - Production signed release pipeline (in active development)
 - Complete DRP/EASM collectors (control plane surface exists; collectors scoped for next priority)
 - Full DLP↔EDR correlation engine (FIM+EDR sha256 joins delivered; DLP events table created; DLP↔EDR wiring next)

@@ -228,8 +228,9 @@ def test_edr_then_dlp_same_sha256_uplifts_existing_alert(tenant_hierarchy_factor
     assert len(uplift_events) == 1
 
 
-def test_different_sha256_does_not_correlate(tenant_hierarchy_factory) -> None:
-    """Negative: different SHA-256 on DLP vs EDR should NOT produce a link."""
+def test_different_sha256_does_not_sha256_correlate(tenant_hierarchy_factory) -> None:
+    """Negative: different SHA-256 on DLP vs EDR should NOT produce a sha256_match link,
+    though endpoint_proximity may still apply."""
     agent_id = "agent-corr-dlp-neg-001"
     tenant = tenant_hierarchy_factory(endpoint_id=agent_id)
 
@@ -254,10 +255,11 @@ def test_different_sha256_does_not_correlate(tenant_hierarchy_factory) -> None:
     _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=edr_time, edr_events=[edr_event])
 
     alert = _fetch_alert(agent_id)
-    assert alert["severity"] == "high"
-    assert alert["severity_uplifted_from"] is None
-    assert _fetch_links(alert["id"]) == []
-    assert _fetch_uplift_events() == []
+    links = _fetch_links(alert["id"])
+    sha256_links = [l for l in links if l["correlation_type"] == "sha256_match"]
+    prox_links = [l for l in links if l["correlation_type"] == "endpoint_proximity"]
+    assert sha256_links == [], "different sha256 should NOT produce sha256_match links"
+    assert len(prox_links) >= 1, "same endpoint should still have endpoint_proximity link"
 
 
 def test_different_endpoint_does_not_correlate(tenant_hierarchy_factory) -> None:
@@ -332,8 +334,8 @@ def test_outside_window_does_not_uplift(tenant_hierarchy_factory, monkeypatch) -
     assert _fetch_uplift_events() == []
 
 
-def test_dlp_no_sha256_does_not_correlate(tenant_hierarchy_factory) -> None:
-    """Negative: DLP event without sha256_hash should not trigger correlation."""
+def test_dlp_no_sha256_still_proximity_correlates(tenant_hierarchy_factory) -> None:
+    """DLP event without sha256_hash should still create endpoint_proximity link."""
     agent_id = "agent-corr-dlp-nohash-001"
     tenant = tenant_hierarchy_factory(endpoint_id=agent_id)
 
@@ -358,9 +360,11 @@ def test_dlp_no_sha256_does_not_correlate(tenant_hierarchy_factory) -> None:
     _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=edr_time, edr_events=[edr_event])
 
     alert = _fetch_alert(agent_id)
-    assert alert["severity"] == "high"
-    assert alert["severity_uplifted_from"] is None
-    assert _fetch_links(alert["id"]) == []
+    links = _fetch_links(alert["id"])
+    sha256_links = [l for l in links if l["correlation_type"] == "sha256_match"]
+    prox_links = [l for l in links if l["correlation_type"] == "endpoint_proximity"]
+    assert sha256_links == [], "DLP without sha256 should NOT produce sha256_match"
+    assert len(prox_links) >= 1, "same endpoint should still have endpoint_proximity link"
 
 
 def test_dlp_correlations_endpoint_returns_links(tenant_hierarchy_factory, auth_headers) -> None:
@@ -408,3 +412,134 @@ def test_dlp_correlations_endpoint_returns_links(tenant_hierarchy_factory, auth_
     assert link["security_alert_id"] == str(alert["id"])
     assert link["correlation_type"] == "sha256_match"
     assert link["alert_severity"] == "critical"
+
+
+def test_dlp_endpoint_proximity_without_sha256_match(tenant_hierarchy_factory) -> None:
+    """Temporal proximity: DLP on same endpoint creates endpoint_proximity link even when sha256 differs."""
+    agent_id = "agent-corr-dlp-prox-001"
+    tenant = tenant_hierarchy_factory(endpoint_id=agent_id)
+    customer_id = tenant["customer_id"]
+
+    _persist_dlp_event(
+        customer_id=customer_id,
+        endpoint_id=agent_id,
+        sha256_hash="a" * 64,  # Different from EDR
+    )
+
+    edr_time = datetime.now(UTC).replace(microsecond=0)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="ProxMatch",
+        action="monitor",
+        file_path="/tmp/prox-test.exe",
+        file_sha256="b" * 64,  # Different from DLP
+        matched_indicator="PROX_TEST",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=edr_time, edr_events=[edr_event])
+
+    alert = _fetch_alert(agent_id)
+    links = _fetch_links(alert["id"])
+    prox_links = [l for l in links if l["correlation_type"] == "endpoint_proximity"]
+    assert len(prox_links) >= 1, "expected at least one endpoint_proximity link"
+    assert prox_links[0]["related_kind"] == "dlp_event"
+
+    uplift_events = _fetch_uplift_events()
+    assert len(uplift_events) == 1
+
+
+def test_dlp_endpoint_proximity_not_cross_endpoint(tenant_hierarchy_factory) -> None:
+    """Negative: DLP on one endpoint should NOT create endpoint_proximity link for EDR on another."""
+    agent_id_edr = "agent-corr-dlp-prox-x-edr"
+    agent_id_dlp = "agent-corr-dlp-prox-x-dlp"
+
+    tenant_edr = tenant_hierarchy_factory(endpoint_id=agent_id_edr)
+    tenant_hierarchy_factory(endpoint_id=agent_id_dlp)
+
+    _persist_dlp_event(
+        customer_id=tenant_edr["customer_id"],
+        endpoint_id=agent_id_dlp,
+        sha256_hash="c" * 64,
+    )
+
+    edr_time = datetime.now(UTC).replace(microsecond=0)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="CrossEndpointProx",
+        action="monitor",
+        file_path="/tmp/prox-cross.exe",
+        file_sha256="d" * 64,
+        matched_indicator="PROX_CROSS",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id_edr, nonce=1, collected_at=edr_time, edr_events=[edr_event])
+
+    alert = _fetch_alert(agent_id_edr)
+    prox_links = [l for l in _fetch_links(alert["id"]) if l["correlation_type"] == "endpoint_proximity"]
+    assert prox_links == [], "cross-endpoint DLP should NOT produce endpoint_proximity link"
+    assert _fetch_uplift_events() == []
+
+
+def test_dlp_edr_full_multimodal_pipeline(tenant_hierarchy_factory) -> None:
+    """Comprehensive: DLP + FIM + EDR with sha256, file_path, and process_path all linking together."""
+    agent_id = "agent-corr-full-001"
+    tenant = tenant_hierarchy_factory(endpoint_id=agent_id)
+    customer_id = tenant["customer_id"]
+    shared_hash = "full-pipeline-hash-" + "0" * 46
+    file_path = "/tmp/multimodal.exe"
+    proc_path = "/usr/bin/loader"
+
+    # 1. DLP event captures a sha256
+    _persist_dlp_event(
+        customer_id=customer_id,
+        endpoint_id=agent_id,
+        sha256_hash=shared_hash,
+    )
+
+    # 2. FIM event on the process_path
+    fim_time = datetime.now(UTC).replace(microsecond=0)
+    fim_event = FimEvent(
+        event_type="modified",
+        file_path=proc_path,
+        sha256_hash="proc-" + shared_hash[4:],
+        timestamp=fim_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=fim_time, fim_events=[fim_event])
+
+    # 3. EDR detection on the file_path with the shared sha256 + separate process_path
+    edr_time = fim_time + timedelta(seconds=30)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="FullPipeline",
+        action="monitor",
+        file_path=file_path,
+        file_sha256=shared_hash,
+        process_path=proc_path,
+        matched_indicator="FULL_PIPELINE",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=2, collected_at=edr_time, edr_events=[edr_event])
+
+    alert = _fetch_alert(agent_id)
+    assert alert["severity"] == "critical"
+    assert alert["severity_uplifted_from"] == "high"
+
+    links = _fetch_links(alert["id"])
+    # We should have: sha256_match (DLP), process_path_match (FIM), and maybe endpoint_proximity (DLP) or file_path_match
+    ctypes = {l["correlation_type"] for l in links}
+    assert "sha256_match" in ctypes, "sha256_match needed from DLP sha256 join"
+    assert "process_path_match" in ctypes, "process_path_match needed from FIM process-path join"
+
+    # The DLP link should be sha256_match (not endpoint_proximity) since the hash matched
+    dlp_links = [l for l in links if l["related_kind"] == "dlp_event"]
+    assert all(l["correlation_type"] == "sha256_match" for l in dlp_links), \
+        "dlp_event links should be sha256_match when hash matches"
+
+    uplift_events = _fetch_uplift_events()
+    assert len(uplift_events) == 1
+    direction = uplift_events[0]["payload"]["direction"]
+    assert "edr" in direction
+    assert "dlp" in direction

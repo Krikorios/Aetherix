@@ -348,8 +348,198 @@ def test_correlations_endpoint_returns_links(tenant_hierarchy_factory, auth_head
     assert body["alert_id"] == str(alert["id"])
     assert body["severity"] == "critical"
     assert body["severity_uplifted_from"] == "high"
+    assert body["total_correlations"] == 1
     assert len(body["correlations"]) == 1
     link = body["correlations"][0]
     assert link["related_kind"] == "fim_event"
     assert link["correlation_type"] == "file_path_match"
     assert link["evidence"]["file_path"] == file_path
+
+
+def test_process_path_match_forward_via_fim(tenant_hierarchy_factory) -> None:
+    """Forward path: yara_match with process_path (no file_path) matches a FIM event."""
+    agent_id = "agent-corr-proc-fwd-001"
+    tenant_hierarchy_factory(endpoint_id=agent_id)
+    proc_path = "/usr/bin/suspicious-process"
+
+    fim_time = datetime.now(UTC).replace(microsecond=0)
+    fim_event = FimEvent(
+        event_type="modified",
+        file_path=proc_path,
+        sha256_hash="proc-hash-001",
+        timestamp=fim_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=fim_time, fim_events=[fim_event])
+
+    edr_time = fim_time + timedelta(seconds=30)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="ProcMatchRule",
+        action="monitor",
+        process_path=proc_path,
+        matched_indicator="PROC_MATCH",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=2, collected_at=edr_time, edr_events=[edr_event])
+
+    alert = _fetch_alert(agent_id)
+    assert alert["severity"] == "critical"
+    assert alert["severity_uplifted_from"] == "high"
+
+    links = _fetch_links(alert["id"])
+    proc_links = [l for l in links if l["correlation_type"] == "process_path_match"]
+    assert len(proc_links) == 1, "expected exactly one process_path_match link"
+    assert proc_links[0]["related_kind"] == "fim_event"
+    assert proc_links[0]["evidence"]["file_path"] == proc_path
+    assert proc_links[0]["score"] == 0.9, "process_path_match score should be 0.9"
+    assert proc_links[0]["evidence"].get("correlation_subtype") == "process_path_match"
+    assert proc_links[0]["evidence"].get("matched_as") == "process_path"
+
+    uplift_events = _fetch_uplift_events()
+    assert len(uplift_events) == 1
+
+
+def test_process_path_match_reverse(tenant_hierarchy_factory) -> None:
+    """Reverse path: FIM event matches existing yara_match alert's process_path."""
+    agent_id = "agent-corr-proc-rev-001"
+    tenant_hierarchy_factory(endpoint_id=agent_id)
+    proc_path = "/usr/bin/rev-suspicious"
+
+    edr_time = datetime.now(UTC).replace(microsecond=0)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="RevProcRule",
+        action="monitor",
+        process_path=proc_path,
+        matched_indicator="REV_PROC",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=edr_time, edr_events=[edr_event])
+
+    alert_before = _fetch_alert(agent_id)
+    assert alert_before["severity"] == "high"
+    assert alert_before["severity_uplifted_from"] is None
+
+    fim_time = edr_time + timedelta(seconds=45)
+    fim_event = FimEvent(
+        event_type="modified",
+        file_path=proc_path,
+        sha256_hash="rev-proc-hash",
+        timestamp=fim_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=2, collected_at=fim_time, fim_events=[fim_event])
+
+    alert_after = _fetch_alert(agent_id)
+    assert alert_after["severity"] == "critical"
+    assert alert_after["severity_uplifted_from"] == "high"
+
+    links = _fetch_links(alert_after["id"])
+    proc_links = [l for l in links if l["correlation_type"] == "process_path_match"]
+    assert len(proc_links) >= 1, "expected at least one process_path_match link in reverse"
+    assert proc_links[0]["related_kind"] == "fim_event"
+    assert proc_links[0]["evidence"]["file_path"] == proc_path
+    assert proc_links[0]["score"] == 0.9, "process_path_match reverse score should be 0.9"
+    assert proc_links[0]["evidence"].get("correlation_subtype") == "process_path_match"
+    assert proc_links[0]["evidence"].get("matched_as") == "process_path"
+
+    uplift_events = _fetch_uplift_events()
+    assert len(uplift_events) == 1
+
+
+def test_file_path_and_process_path_separate_links(tenant_hierarchy_factory) -> None:
+    """EDR with distinct file_path and process_path → both produce correlation links."""
+    agent_id = "agent-corr-dual-path-001"
+    tenant_hierarchy_factory(endpoint_id=agent_id)
+    file_path = "/tmp/evil-script.sh"
+    proc_path = "/usr/bin/bash"
+
+    fim_time = datetime.now(UTC).replace(microsecond=0)
+    f1 = FimEvent(
+        event_type="added",
+        file_path=file_path,
+        sha256_hash="file-hash-001",
+        timestamp=fim_time.isoformat(),
+    )
+    f2 = FimEvent(
+        event_type="modified",
+        file_path=proc_path,
+        sha256_hash="proc-hash-001",
+        timestamp=(fim_time + timedelta(seconds=5)).isoformat(),
+    )
+    _post_heartbeat(
+        agent_id=agent_id, nonce=1, collected_at=fim_time, fim_events=[f1, f2],
+    )
+
+    edr_time = fim_time + timedelta(seconds=30)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="DualPathRule",
+        action="monitor",
+        file_path=file_path,
+        file_sha256="file-hash-002",
+        process_path=proc_path,
+        matched_indicator="DUAL_PATH",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=2, collected_at=edr_time, edr_events=[edr_event])
+
+    alert = _fetch_alert(agent_id)
+    assert alert["severity"] == "critical"
+
+    links = _fetch_links(alert["id"])
+    file_links = [l for l in links if l["correlation_type"] == "file_path_match"]
+    proc_links = [l for l in links if l["correlation_type"] == "process_path_match"]
+    assert len(file_links) >= 1, "expected at least one file_path_match link"
+    assert len(proc_links) >= 1, "expected at least one process_path_match link"
+
+    uplift_events = _fetch_uplift_events()
+    assert len(uplift_events) == 1
+
+
+def test_sha256_takes_priority_over_process_path(tenant_hierarchy_factory) -> None:
+    """When sha256 and process_path both match the same FIM event, sha256_match wins."""
+    agent_id = "agent-corr-priority-001"
+    tenant_hierarchy_factory(endpoint_id=agent_id)
+    shared_hash = "shared-hash-" + "a" * 51
+    proc_path = "/usr/bin/shared-binary"
+
+    fim_time = datetime.now(UTC).replace(microsecond=0)
+    fim_event = FimEvent(
+        event_type="modified",
+        file_path=proc_path,
+        sha256_hash=shared_hash,
+        timestamp=fim_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=1, collected_at=fim_time, fim_events=[fim_event])
+
+    edr_time = fim_time + timedelta(seconds=30)
+    edr_event = EdrEvent(
+        kind="yara_match",
+        rule_id="PriorityTest",
+        action="monitor",
+        # file_path matches the FIM's file_path
+        file_path=proc_path,
+        file_sha256=shared_hash,
+        # process_path is also the same path
+        process_path=proc_path,
+        matched_indicator="PRIORITY",
+        policy_version="policy-v1",
+        collected_at=edr_time.isoformat(),
+    )
+    _post_heartbeat(agent_id=agent_id, nonce=2, collected_at=edr_time, edr_events=[edr_event])
+
+    alert = _fetch_alert(agent_id)
+    assert alert["severity"] == "critical"
+
+    links = _fetch_links(alert["id"])
+    # The single FIM event should be classified as sha256_match (highest priority)
+    for link in links:
+        assert link["correlation_type"] == "sha256_match", (
+            f"expected sha256_match for the deduplicated row, got {link['correlation_type']}"
+        )
+
+    uplift_events = _fetch_uplift_events()
+    assert len(uplift_events) == 1

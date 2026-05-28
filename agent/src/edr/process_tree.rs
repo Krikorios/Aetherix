@@ -239,6 +239,8 @@ fn evaluate_exec(exec: &ProcessExec, current_pids: &HashMap<u32, ProcessExec>) -
                 matched_rules: Vec::new(),
                 evidence_controls: Vec::new(),
                 response: None,
+                recovery_hints: None,
+                rollback_evidence: None,
             });
         }
 
@@ -266,6 +268,8 @@ fn evaluate_exec(exec: &ProcessExec, current_pids: &HashMap<u32, ProcessExec>) -
                 matched_rules: Vec::new(),
                 evidence_controls: Vec::new(),
                 response: None,
+                recovery_hints: None,
+                rollback_evidence: None,
             });
         }
     }

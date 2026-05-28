@@ -40,6 +40,8 @@ export interface StagedAction {
   requested_by: string;
   created_at: string;
   note?: string | null;
+  payload?: any;
+  result?: any;
 }
 
 export interface SimulationPreview {

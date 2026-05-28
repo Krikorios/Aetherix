@@ -4,6 +4,7 @@ import {
   Archive,
   Ban,
   BarChart,
+  ClipboardList,
   BarChart3,
   Bell,
   Brain,
@@ -76,6 +77,7 @@ import { SandboxPage } from "./pages/SandboxPage";
 import { EmailSecurityPage } from "./pages/EmailSecurityPage";
 import { MobileSecurityPage } from "./pages/MobileSecurityPage";
 import { NetworkPage } from "./pages/NetworkPage";
+import { ActionQueuePage } from "./pages/ActionQueuePage";
 
 const DEFAULT_BRANDING: Branding = {
   product_name: "Aetherix",
@@ -120,7 +122,8 @@ type Page =
   | "dataInsights"
   | "integrations"
   | "configuration"
-  | "policyEditor";
+  | "policyEditor"
+  | "actionQueue";
 
 type NavItem = {
   id: Page;
@@ -179,6 +182,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "companies", label: "Companies", icon: <Building2 size={18} />, requires: { resource: "companies", level: "view" } },
       { id: "accounts", label: "Accounts", icon: <Users size={18} />, requires: { resource: "accounts", level: "view" } },
       { id: "installers", label: "Installers", icon: <Package size={18} />, requires: { resource: "companies", level: "edit" } },
+      { id: "actionQueue", label: "Queue", icon: <ClipboardList size={18} />, requires: { resource: "incidents", level: "view" } },
     ],
   },
   {
@@ -229,11 +233,78 @@ function parseInviteToken(hash: string): string | null {
 const INITIAL_INVITE_TOKEN =
   typeof window !== "undefined" ? parseInviteToken(window.location.hash) : null;
 
+const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+const isHarness = params?.get("harness") === "true";
+const harnessRole = params?.get("role") || "msp_partner";
+const harnessPage = (params?.get("page") || "policies") as Page;
+
+function mockedMe(role: string): MeResponse {
+  const isAdmin = role === "company_admin";
+  return {
+    account: {
+      id: "account-1",
+      email: isAdmin ? "admin@acme.test" : "msp@partner.test",
+      full_name: isAdmin ? "Company Admin" : "MSP Partner",
+      status: "active",
+      two_factor: "enabled",
+      password_expires_at: null,
+      locked_until: null,
+      last_login_at: null,
+      created_at: "2026-05-23T00:00:00Z",
+      roles: [{ id: "role-1", role_code: role as any, partner_id: null, customer_id: null, granted_by: "system", granted_at: "2026-05-23T00:00:00Z" }],
+    },
+    permissions: {
+      policies: "manage",
+      companies: isAdmin ? "view" : "manage",
+      incidents: "view",
+      accounts: isAdmin ? "none" : "manage",
+      licensing: "view",
+    },
+    scope: {
+      is_platform: false,
+      partner_ids: ["partner-1"],
+      customer_ids: ["customer-1"],
+    },
+    branding: {
+      product_name: "Aetherix",
+      tagline: "MSP Console",
+      primary_color: "#0b6b57",
+      accent_color: "#0b6b57",
+      logo_url: null,
+      support_email: null,
+      support_url: null,
+      footer_note: null,
+      source: "platform",
+    },
+  };
+}
+
 export function App() {
-  const [me, setMe] = useState<MeResponse | null>(null);
-  const [page, setPage] = useState<Page>("dashboard");
-  const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
-  const [authStatus, setAuthStatus] = useState<"loading" | "signedIn" | "signedOut">("loading");
+  const [me, setMe] = useState<MeResponse | null>(() => {
+    if (isHarness) {
+      return mockedMe(harnessRole);
+    }
+    return null;
+  });
+  const [page, setPage] = useState<Page>(() => {
+    if (isHarness) {
+      return harnessPage;
+    }
+    return "dashboard";
+  });
+  const [editorPolicyId, setEditorPolicyId] = useState<string | null>(null);
+  const [branding, setBranding] = useState<Branding>(() => {
+    if (isHarness) {
+      return mockedMe(harnessRole).branding;
+    }
+    return DEFAULT_BRANDING;
+  });
+  const [authStatus, setAuthStatus] = useState<"loading" | "signedIn" | "signedOut">(() => {
+    if (isHarness) {
+      return "signedIn";
+    }
+    return "loading";
+  });
   const [inviteToken, setInviteToken] = useState<string | null>(INITIAL_INVITE_TOKEN);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const [expandedNavGroups, setExpandedNavGroups] = useState<Record<string, boolean>>(() =>
@@ -248,17 +319,26 @@ export function App() {
 
   useEffect(() => {
     function onNavigate(event: Event) {
-      const custom = event as CustomEvent<{ page?: Page }>;
-      const target = custom.detail?.page;
-      if (!target) return;
-      if (!navItemFor(target)) return;
-      setPage(target);
+      const custom = event as CustomEvent<{ page?: Page; policyId?: string | null }>;
+      const detail = custom.detail;
+      if (!detail?.page) return;
+      if (detail.page !== "policyEditor" && !navItemFor(detail.page)) return;
+
+      setPage(detail.page);
+      if (detail.page === "policyEditor") {
+        setEditorPolicyId(detail.policyId ?? null);
+      } else {
+        setEditorPolicyId(null);
+      }
     }
     window.addEventListener("aetherix:navigate", onNavigate as EventListener);
     return () => window.removeEventListener("aetherix:navigate", onNavigate as EventListener);
   }, []);
 
   const loadMe = useCallback(async () => {
+    if (isHarness) {
+      return;
+    }
     if (!getAccessToken()) {
       setMe(null);
       setBranding(DEFAULT_BRANDING);
@@ -441,8 +521,16 @@ export function App() {
          {page === "deviceControl" && <DeviceControlPage me={me} />}
          {page === "reports" && <ReportsPage me={me} />}
          {page === "policyAssignments" && <PolicyAssignmentsPage me={me} />}
-         {page === "policyEditor" && <PolicyEditorPage me={me} onBack={() => setPage("policies")} />}
+         {page === "policyEditor" && (
+           <PolicyEditorPage 
+             me={me} 
+             mode={editorPolicyId ? "edit" : "new"}
+             policyId={editorPolicyId} 
+             onBack={() => setPage("policies")} 
+           />
+         )}
          {page === "network" && <NetworkPage me={me} />}
+         {page === "actionQueue" && <ActionQueuePage me={me} />}
          {page === "configuration" && <ConfigurationPage me={me} />}
          {page === "agenticAi" && <AgenticAiPage me={me} />}
          {page === "dataInsights" && <DataInsightsPage me={me} />}
@@ -504,7 +592,7 @@ type PlaceholderMeta = {
   depends: string[];
 };
 
-const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm" | "network" | "antimalware" | "quarantine">, PlaceholderMeta> = {
+const PLACEHOLDERS: Record<Exclude<Page, "dashboard" | "alerts" | "search" | "threatsXplorer" | "policies" | "installers" | "companies" | "accounts" | "compliance" | "digitalRisk" | "easm" | "network" | "antimalware" | "quarantine" | "policyEditor" | "actionQueue">, PlaceholderMeta> = {
   executiveSummary: {
     title: "Executive Summary",
     eyebrow: "Partner reporting",

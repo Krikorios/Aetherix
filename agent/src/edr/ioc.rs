@@ -83,6 +83,8 @@ pub fn match_indicator(indicator: &Indicator, policy_version: &str) -> Option<Ed
             matched_rules: Vec::new(),
             evidence_controls: Vec::new(),
             response: None,
+            recovery_hints: None,
+            rollback_evidence: None,
         })
     } else {
         None

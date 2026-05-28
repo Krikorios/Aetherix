@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Shield,
   AlertTriangle,
@@ -7,7 +7,12 @@ import {
   Cpu,
   WifiOff,
   GitBranch,
-  } from "lucide-react";
+  Activity,
+  RefreshCw,
+  Play,
+  Scan,
+  List,
+} from "lucide-react";
 import { ModuleHeader } from "../components/protection/ModuleHeader";
 import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
@@ -21,6 +26,37 @@ import {
 } from "../components/protection/types";
 import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner } from "../components";
 import { apiGet, apiPost, type MeResponse } from "../api";
+
+export interface RecoveryPointSummary {
+  id: string;
+  provider: string;
+  created_at: string;
+  expires_at?: string | null;
+  protected_root?: string;
+  verified?: boolean;
+}
+
+export interface RollbackReadiness {
+  capability_supported?: boolean;
+  provider_available?: boolean;
+  provider_name?: string;
+  provider_version?: string;
+  provider_metadata?: Record<string, unknown> | null;
+  os_platform?: string;
+  functional?: boolean;
+  diagnosis?: string;
+  recovery_point_count?: number;
+  recovery_points_count?: number;
+  recovery_points?: RecoveryPointSummary[];
+  available_filesystems?: string[];
+  service_available?: boolean;
+  sufficient_privilege?: boolean;
+  volume_capabilities?: string[];
+  snapshot_service_info?: string | null;
+  privilege_boundary?: string | null;
+  recent_fim_paths?: string[];
+  last_checked_at?: string;
+}
 
 export interface EndpointHealthRecord {
   id: string;
@@ -38,6 +74,194 @@ export interface EndpointHealthRecord {
   open_alerts: number;
   pending_actions: number;
   tags: string[];
+  cpu_percent?: number | null;
+  memory_percent?: number | null;
+  dlp_events?: number;
+  blocked_events?: number;
+  rollback_readiness?: RollbackReadiness | null;
+}
+
+export interface ResponseAction {
+  id: string;
+  target_id: string;
+  action: string;
+  status: "queued" | "awaiting_approval" | "completed" | "failed" | "denied";
+  approval_required: boolean;
+  payload: Record<string, unknown> | null;
+  evidence_controls: string[];
+  created_at: string;
+  result: Record<string, unknown> | null;
+  processed_at: string | null;
+  requested_by: string | null;
+}
+
+function TelemetryBar({ label, value, color, icon }: { label: string; value: number; color: string; icon?: React.ReactNode }) {
+  const pct = Math.min(100, Math.max(0, value));
+  const barColor = pct > 85 ? "var(--danger)" : pct > 65 ? "var(--warning)" : color;
+  return (
+    <div style={{ marginBottom: "10px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "var(--muted)" }}>
+          {icon}
+          {label}
+        </span>
+        <strong style={{ fontSize: "12px", color: pct > 85 ? "var(--danger)" : pct > 65 ? "var(--warning)" : undefined }}>{pct.toFixed(1)}%</strong>
+      </div>
+      <div style={{ height: "6px", background: "rgba(255,255,255,0.07)", borderRadius: "3px", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: barColor, borderRadius: "3px", transition: "width 0.4s ease" }} />
+      </div>
+    </div>
+  );
+}
+
+const ACTION_STATUS_COLORS: Record<string, string> = {
+  queued: "var(--accent)",
+  awaiting_approval: "#e07a00",
+  completed: "var(--success)",
+  failed: "var(--danger)",
+  denied: "var(--muted)",
+};
+
+function ResponseActionsPanel({ endpointId, onRefresh }: { endpointId: string; onRefresh?: () => void }) {
+  const [actions, setActions] = useState<ResponseAction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sendingAction, setSendingAction] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiGet<ResponseAction[]>(`/endpoints/${endpointId}/response-actions?limit=20`);
+      setActions(data);
+    } catch {
+      // silently ignore - panel is non-critical
+    } finally {
+      setLoading(false);
+    }
+  }, [endpointId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function sendAction(action: string, payload?: Record<string, unknown>) {
+    setSendingAction(action);
+    try {
+      await apiPost(`/endpoints/${endpointId}/remediate`, { action, payload: payload ?? null });
+      onRefresh?.();
+      await load();
+    } finally {
+      setSendingAction(null);
+    }
+  }
+
+  async function requestQuarantineList() {
+    setSendingAction("quarantine_list");
+    try {
+      await apiPost(`/endpoints/${endpointId}/quarantine-list`, {});
+      await load();
+    } finally {
+      setSendingAction(null);
+    }
+  }
+
+  const timeAgo = (iso: string) => {
+    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return `${s}s ago`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return new Date(iso).toLocaleDateString();
+  };
+
+  const actionLabel = (a: string) =>
+    a.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+        <h4 className="sectionKicker" style={{ margin: 0 }}>Response Actions</h4>
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => void load()}
+          disabled={loading}
+          style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}
+        >
+          <RefreshCw size={12} className={loading ? "spin" : ""} />
+          Refresh
+        </button>
+      </div>
+
+      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "12px" }}>
+        <button
+          className="btn btn--primary btn--sm"
+          onClick={() => void sendAction("malware_scan")}
+          disabled={sendingAction !== null}
+          style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}
+        >
+          <Scan size={12} />
+          {sendingAction === "malware_scan" ? "Queuing…" : "Malware Scan"}
+        </button>
+        <button
+          className="btn btn--secondary btn--sm"
+          onClick={() => void requestQuarantineList()}
+          disabled={sendingAction !== null}
+          style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}
+        >
+          <List size={12} />
+          {sendingAction === "quarantine_list" ? "Queuing…" : "Refresh Quarantine"}
+        </button>
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => void sendAction("push_policy_update")}
+          disabled={sendingAction !== null}
+          style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}
+        >
+          <Play size={12} />
+          {sendingAction === "push_policy_update" ? "Queuing…" : "Push Policy"}
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: "12px", color: "var(--muted)", padding: "8px 0" }}>Loading actions…</div>
+      ) : actions.length === 0 ? (
+        <div style={{ fontSize: "12px", color: "var(--muted)", padding: "8px 0" }}>No actions recorded yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "220px", overflowY: "auto" }}>
+          {actions.map((a) => (
+            <div
+              key={a.id}
+              style={{
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: "6px",
+                padding: "8px 10px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "8px",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "12px", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {actionLabel(a.action)}
+                </div>
+                <div style={{ fontSize: "11px", color: "var(--muted)", marginTop: "2px" }}>{timeAgo(a.created_at)}</div>
+              </div>
+              <span
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  color: ACTION_STATUS_COLORS[a.status] ?? "var(--muted)",
+                  textTransform: "uppercase",
+                  flexShrink: 0,
+                }}
+              >
+                {a.status.replace(/_/g, " ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function EndpointHealthPage({ me }: { me: MeResponse }) {
@@ -262,6 +486,7 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
           customContextRenderer={(d) => {
             const ep = endpoints.find((e) => e.id === d.id);
             if (!ep) return null;
+            const hasTelemetry = ep.cpu_percent != null || ep.memory_percent != null;
             return (
               <div className="detailStack">
                 <div>
@@ -284,6 +509,128 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
                     ))}
                   </div>
                 </div>
+
+                {hasTelemetry && (
+                  <div>
+                    <h4 className="sectionKicker" style={{ margin: "0 0 10px 0" }}>
+                      Live Telemetry
+                    </h4>
+                    {ep.cpu_percent != null && (
+                      <TelemetryBar
+                        label="CPU"
+                        value={ep.cpu_percent}
+                        color="var(--accent)"
+                        icon={<Cpu size={11} />}
+                      />
+                    )}
+                    {ep.memory_percent != null && (
+                      <TelemetryBar
+                        label="Memory"
+                        value={ep.memory_percent}
+                        color="#6e8efb"
+                        icon={<Activity size={11} />}
+                      />
+                    )}
+                    <div style={{ display: "flex", gap: "12px", marginTop: "10px" }}>
+                      <div style={{ fontSize: "11px", color: "var(--muted)" }}>
+                        DLP Events: <strong style={{ color: (ep.dlp_events ?? 0) > 0 ? "var(--warning)" : undefined }}>{ep.dlp_events ?? 0}</strong>
+                      </div>
+                      <div style={{ fontSize: "11px", color: "var(--muted)" }}>
+                        Blocked: <strong style={{ color: (ep.blocked_events ?? 0) > 0 ? "var(--danger)" : undefined }}>{ep.blocked_events ?? 0}</strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h4 className="sectionKicker" style={{ margin: "0 0 8px 0" }}>
+                    Ransomware Rollback Readiness
+                  </h4>
+                  {ep.rollback_readiness ? (
+                    <div className="kvStack" style={{ background: "rgba(255,255,255,0.02)", padding: "10px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.05)", fontSize: "11.5px" }}>
+                      <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                        <span>Rollback Status</span>
+                        <strong style={{ color: (ep.rollback_readiness.functional !== false && ep.rollback_readiness.capability_supported !== false) ? "var(--healthy)" : "var(--danger)", display: "flex", alignItems: "center", gap: "4px" }}>
+                          {(ep.rollback_readiness.functional !== false && ep.rollback_readiness.capability_supported !== false) ? "● Functional (Verified)" : "● Warning / Limited"}
+                        </strong>
+                      </div>
+                      <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                        <span>Restoration OS Provider</span>
+                        <strong style={{ color: "var(--light)" }}>
+                          {ep.rollback_readiness.provider_name || "Unknown Provider"} {ep.rollback_readiness.provider_version && `v${ep.rollback_readiness.provider_version}`}
+                        </strong>
+                      </div>
+                      <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                        <span>Snapshot Service Available</span>
+                        <strong style={{ color: ep.rollback_readiness.service_available !== false ? "var(--healthy)" : "var(--danger)" }}>
+                          {ep.rollback_readiness.service_available !== false ? "Yes" : "No"}
+                        </strong>
+                      </div>
+                      <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                        <span>Sufficient Elevation/Privilege</span>
+                        <strong style={{ color: ep.rollback_readiness.sufficient_privilege !== false ? "var(--healthy)" : "var(--danger)" }}>
+                          {ep.rollback_readiness.sufficient_privilege !== false ? "Yes" : "No"}
+                          {ep.rollback_readiness.privilege_boundary && ` (${ep.rollback_readiness.privilege_boundary})`}
+                        </strong>
+                      </div>
+                      {ep.rollback_readiness.volume_capabilities && ep.rollback_readiness.volume_capabilities.length > 0 && (
+                        <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                          <span>Volume Capabilities</span>
+                          <strong style={{ color: "var(--light)", fontSize: "10.5px" }}>
+                            {ep.rollback_readiness.volume_capabilities.join(", ")}
+                          </strong>
+                        </div>
+                      )}
+                      {ep.rollback_readiness.available_filesystems && ep.rollback_readiness.available_filesystems.length > 0 && (
+                        <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                          <span>Filesystems detected</span>
+                          <strong style={{ color: "var(--light)", fontSize: "10.5px" }}>
+                            {ep.rollback_readiness.available_filesystems.join(", ")}
+                          </strong>
+                        </div>
+                      )}
+                      {ep.rollback_readiness.snapshot_service_info && (
+                        <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                          <span>Snapshot Daemon</span>
+                          <strong style={{ color: "var(--light)" }}>{ep.rollback_readiness.snapshot_service_info}</strong>
+                        </div>
+                      )}
+                      {ep.rollback_readiness.diagnosis && (
+                        <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px", color: "var(--danger)" }}>
+                          <span>Diagnostic Log</span>
+                          <strong style={{ wordBreak: "break-all", fontStyle: "italic" }}>{ep.rollback_readiness.diagnosis}</strong>
+                        </div>
+                      )}
+                      <div className="kvRow" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)", paddingBottom: "6px", marginBottom: "6px" }}>
+                        <span>Verified Restore Snapshots</span>
+                        <strong style={{ color: "var(--light)" }}>
+                          {ep.rollback_readiness.recovery_points?.length ?? ep.rollback_readiness.recovery_point_count ?? ep.rollback_readiness.recovery_points_count ?? 0} available
+                        </strong>
+                      </div>
+                      {ep.rollback_readiness.recent_fim_paths && ep.rollback_readiness.recent_fim_paths.length > 0 && (
+                        <div style={{ marginTop: "8px", borderTop: "1px dashed rgba(255,255,255,0.05)", paddingTop: "4px" }}>
+                          <span style={{ display: "block", fontSize: "10.5px", color: "var(--muted)", marginBottom: "4px" }}>Monitored FIM Target Paths:</span>
+                          <div style={{ maxHeight: "60px", overflowY: "auto", background: "rgba(0,0,0,0.1)", padding: "4px", borderRadius: "4px", fontSize: "10px", fontFamily: "monospace", color: "var(--muted)" }}>
+                            {ep.rollback_readiness.recent_fim_paths.map((p, idx) => (
+                              <div key={idx} style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>• {p}</div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="kvRow" style={{ marginTop: "4px" }}>
+                        <span>Last Integrity Verification</span>
+                        <strong style={{ color: "var(--light)" }}>
+                          {ep.rollback_readiness.last_checked_at ? new Date(ep.rollback_readiness.last_checked_at).toLocaleDateString() : "Never"}
+                        </strong>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: "12px", color: "var(--muted)", padding: "12px", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.05)" }}>
+                      No rollback capability status reported. Enrolled endpoint has not yet sent ransomware rollback eligibility telemetry.
+                    </div>
+                  )}
+                </div>
+
                 {ep.tags.length > 0 && (
                   <div>
                     <h4 className="sectionKicker" style={{ margin: "0 0 8px 0" }}>
@@ -308,6 +655,17 @@ export function EndpointHealthPage({ me }: { me: MeResponse }) {
                     </div>
                   </div>
                 )}
+
+                <div>
+                  <ResponseActionsPanel
+                    endpointId={ep.id}
+                    onRefresh={() => {
+                      void apiGet<EndpointHealthRecord[]>("/endpoints/health").then((data) => {
+                        setEndpoints(data);
+                      });
+                    }}
+                  />
+                </div>
               </div>
             );
           }}

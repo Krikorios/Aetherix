@@ -69,6 +69,8 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
             matched_rules: Vec::new(),
             evidence_controls: Vec::new(),
             response: None,
+            recovery_hints: None,
+            rollback_evidence: None,
         });
     }
 
@@ -96,6 +98,8 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
                     matched_rules: Vec::new(),
                     evidence_controls: Vec::new(),
                     response: None,
+                    recovery_hints: None,
+                    rollback_evidence: None,
                 });
             }
         }
@@ -129,6 +133,8 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
                 matched_rules: Vec::new(),
                 evidence_controls: Vec::new(),
                 response: None,
+                recovery_hints: None,
+                rollback_evidence: None,
             });
         }
     }

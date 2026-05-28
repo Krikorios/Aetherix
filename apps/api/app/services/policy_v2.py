@@ -925,6 +925,20 @@ def simulate_policy(policy_id: UUID, actor: Account) -> PolicySimulationRecord:
         },
         evidence_controls=controls,
     )
+    if "ransomware_mitigation" in payload.modules:
+        rb_controls = controls_for_event("endpoint.rollback.simulated")
+        EvidenceEmitter.emit(
+            action="endpoint.rollback.simulated",
+            resource=f"policy:{policy_id}",
+            actor=str(actor.id),
+            scope=_scope_dict(scope),
+            payload={
+                "policy_id": str(policy_id),
+                "policy_version_id": str(latest.id),
+                "simulation_id": str(simulation_id),
+            },
+            evidence_controls=rb_controls,
+        )
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
             """

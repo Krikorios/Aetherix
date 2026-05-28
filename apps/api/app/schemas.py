@@ -228,7 +228,7 @@ class YaraStringMatch(BaseModel):
 class EdrEvent(BaseModel):
     kind: Literal["yara_match", "ioc_match", "ransomware_canary", "suspicious_process_chain", "response_action"]
     rule_id: str
-    action: Literal["monitor", "review", "quarantine", "quarantine_list", "quarantine_restore", "kill", "isolate"]
+    action: Literal["monitor", "review", "quarantine", "quarantine_list", "quarantine_restore", "kill", "isolate", "rollback", "rollback_restore"]
     process_path: str | None = None
     process_pid: int | None = None
     parent_pid: int | None = None
@@ -244,6 +244,11 @@ class EdrEvent(BaseModel):
     matched_rules: list[str] = []
     evidence_controls: list[str] = []
     response: dict[str, Any] | None = None
+    # Populated by the agent when a rollback completes: the file paths
+    # that were successfully restored from a recovery point.  The
+    # correlation engine uses this list to link the rollback alert back
+    # to prior FIM/DLP events on the same paths.
+    rollback_file_paths: list[str] = []
 
 
 class CisCheckResult(BaseModel):
@@ -251,6 +256,94 @@ class CisCheckResult(BaseModel):
     title: str
     status: Literal["pass", "fail", "error"]
     actual_value: str
+
+
+class RecoveryPointSummary(BaseModel):
+    id: str
+    provider: str
+    created_at: str
+    expires_at: str | None = None
+    protected_root: str
+    verified: bool
+
+
+class RollbackReadiness(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    provider_available: bool = True
+    provider_name: str = ""
+    provider_version: str = ""
+    recovery_points: list[RecoveryPointSummary] = Field(default_factory=list)
+    os_platform: str = ""
+
+    # Probe-derived fields
+    functional: bool = True
+    diagnosis: str = ""
+    recovery_point_count: int = 0
+    available_filesystems: list[str] = Field(default_factory=list)
+    service_available: bool = True
+    sufficient_privilege: bool = True
+
+    # Provider-hardening fields
+    volume_capabilities: list[str] = Field(default_factory=list)
+    snapshot_service_info: str | None = None
+    privilege_boundary: str | None = None
+
+    # Correlation-friendly data
+    provider_metadata: dict[str, Any] | None = None
+    recent_fim_paths: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        data = dict(value)
+        provider_name = str(data.get("provider_name") or "")
+        raw_points = data.get("recovery_points")
+
+        normalized_points: list[dict[str, Any]] = []
+        if isinstance(raw_points, list):
+            for point in raw_points:
+                if not isinstance(point, dict):
+                    continue
+
+                point_id = point.get("id") or point.get("recovery_point_id") or point.get("snapshot_id")
+                if not point_id:
+                    continue
+
+                created_at = point.get("created_at") or point.get("created") or point.get("timestamp") or ""
+                protected_root = point.get("protected_root") or point.get("path") or point.get("mount_point") or ""
+                verified_value = point.get("verified")
+                if verified_value is None:
+                    verified_value = point.get("is_verified")
+
+                normalized: dict[str, Any] = {
+                    "id": str(point_id),
+                    "provider": str(point.get("provider") or provider_name),
+                    "created_at": str(created_at),
+                    "protected_root": str(protected_root),
+                    "verified": bool(verified_value) if verified_value is not None else False,
+                }
+                expires_at = point.get("expires_at") or point.get("expires")
+                if expires_at is not None:
+                    normalized["expires_at"] = str(expires_at)
+                normalized_points.append(normalized)
+
+        data["recovery_points"] = normalized_points
+
+        try:
+            count = int(data.get("recovery_point_count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        data["recovery_point_count"] = max(count, len(normalized_points))
+
+        raw_paths = data.get("recent_fim_paths")
+        if isinstance(raw_paths, list):
+            data["recent_fim_paths"] = [str(path) for path in raw_paths if path is not None]
+
+        return data
 
 
 class AgentHeartbeat(BaseModel):
@@ -267,6 +360,8 @@ class AgentHeartbeat(BaseModel):
     fim_events: list[FimEvent] = Field(default_factory=list)
     edr_events: list[EdrEvent] = Field(default_factory=list)
     cis_results: list[CisCheckResult] = Field(default_factory=list)
+    rollback_readiness: dict[str, Any] | None = None
+    rollback_readiness: RollbackReadiness | None = None
 
 
 
@@ -279,6 +374,7 @@ class Endpoint(BaseModel):
     last_seen: datetime
     policy_version: str
     agent_version: str
+    rollback_readiness: RollbackReadiness | None = None
 
 
 class EndpointHealthRecord(BaseModel):
@@ -297,6 +393,11 @@ class EndpointHealthRecord(BaseModel):
     open_alerts: int = Field(default=0, ge=0)
     pending_actions: int = Field(default=0, ge=0)
     tags: list[str] = Field(default_factory=list)
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
+    dlp_events: int = Field(default=0, ge=0)
+    blocked_events: int = Field(default=0, ge=0)
+    rollback_readiness: RollbackReadiness | None = None
 
 
 class ModuleActionRequest(BaseModel):
@@ -320,7 +421,7 @@ class ModuleActionResult(BaseModel):
     id: str
     target_id: str
     action: str
-    status: Literal["queued", "awaiting_approval", "completed", "failed", "denied"] = "queued"
+    status: Literal["queued", "awaiting_approval", "completed", "failed", "denied", "cancelled"] = "queued"
     approval_required: bool = False
     payload: dict[str, Any] | None = None
     evidence_controls: list[str] = Field(default_factory=list)
@@ -354,6 +455,19 @@ class QuarantineRestoreRequest(BaseModel):
 
     quarantine_id: str = Field(min_length=1, max_length=256)
     target_path: str | None = Field(default=None, max_length=4096)
+    severity_hint: RiskBand = "medium"
+    reason: str = Field(default="", max_length=1000)
+
+
+class RollbackRestoreRequest(BaseModel):
+    """Operator request to execute a previously authorized ransomware rollback or direct rollback on an endpoint."""
+
+    simulation_id: str | None = Field(default=None, max_length=256)
+    candidate_set_hash: str | None = Field(default=None, max_length=256)
+    affected_paths: list[str] = Field(default_factory=list)
+    recovery_point_id: str | None = Field(default=None, max_length=256)
+    provider: str | None = Field(default=None, max_length=256)
+    provider_metadata: dict[str, Any] | None = None
     severity_hint: RiskBand = "medium"
     reason: str = Field(default="", max_length=1000)
 
@@ -433,6 +547,44 @@ class PendingQuarantineRestore(BaseModel):
     endpoint_id: str
     hostname: str | None = None
     customer_id: UUID | None = None
+
+
+class PendingRollbackIntent(BaseModel):
+    """Approval-inbox entry: a single awaiting-approval rollback intent plus the
+    endpoint context needed to render the row."""
+
+    action: ModuleActionResult
+    endpoint_id: str
+    hostname: str | None = None
+    customer_id: UUID | None = None
+    rollback_readiness: RollbackReadiness | None = None
+
+
+class RollbackIntentRequest(BaseModel):
+    """Operator request to queue a ransomware rollback on an endpoint.
+
+    The ``simulation_id`` and ``candidate_set_hash`` tie this request to a
+    specific simulation the agent already ran, ensuring the control plane only
+    authorises intents whose outcome is known and bounded.  ``valid_until``
+    mirrors the field the agent populates in ``RollbackSimulation`` — the
+    request is rejected at queue time if the simulation has already expired.
+    """
+
+    simulation_id: str = Field(min_length=1, max_length=256)
+    candidate_set_hash: str = Field(min_length=1, max_length=256)
+    affected_paths: list[str] = Field(min_length=1)
+    recovery_point_id: str = Field(min_length=1, max_length=256)
+    provider: str = Field(min_length=1, max_length=64)
+    provider_metadata: dict[str, Any] | None = None
+    valid_until: datetime
+    severity_hint: RiskBand = "medium"
+    reason: str = Field(default="", max_length=1000)
+
+
+class RollbackIntentDecision(BaseModel):
+    """Optional body for approve / deny on an awaiting-approval rollback intent."""
+
+    reason: str = Field(default="", max_length=1000)
 
 
 DeviceType = Literal["usb_storage", "usb_other", "printer", "bluetooth", "optical", "thunderbolt", "clipboard"]
@@ -2056,3 +2208,11 @@ class ComplianceVaultReference(BaseModel):
     bundle_hash: str
     status: str
     exported_at: datetime
+
+
+class QueuedActionItem(ModuleActionResult):
+    """ModuleActionResult enriched with endpoint hostname and company name
+    for the cross-tenant MSP queue view."""
+
+    hostname: str
+    customer_name: str | None = None

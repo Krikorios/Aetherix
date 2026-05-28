@@ -677,7 +677,7 @@ _SCHEMA_STATEMENTS = (
         constraint ck_correlation_related_kind
             check (related_kind in ('fim_event', 'edr_event', 'security_alert', 'dlp_event')),
         constraint ck_correlation_type
-            check (correlation_type in ('file_path_match', 'process_path_match', 'sha256_match'))
+            check (correlation_type in ('file_path_match', 'process_path_match', 'sha256_match', 'endpoint_proximity', 'rollback_action'))
     )
     """,
     """
@@ -690,6 +690,8 @@ _SCHEMA_STATEMENTS = (
     """,
     # Migration: add dlp_event to related_kind check constraint. The original
     # constraint was created inline, so we drop-and-recreate for upgrades.
+    # Updated (cycle 2026-05-28): also includes rollback_action so this migration
+    # is safe to re-run on databases that already have rollback_action rows.
     """
     do $$
     begin
@@ -703,7 +705,87 @@ _SCHEMA_STATEMENTS = (
         end if;
         alter table correlation_links
             add constraint ck_correlation_related_kind
-            check (related_kind in ('fim_event', 'edr_event', 'security_alert', 'dlp_event'));
+            check (related_kind in (
+                'fim_event', 'edr_event', 'security_alert',
+                'dlp_event', 'rollback_action'
+            ));
+    exception
+        when duplicate_object then null;
+    end $$;
+    """,
+    # Migration: add endpoint_proximity to ck_correlation_type constraint.
+    # NOTE: also includes rollback_action so this step is forward-compatible
+    # with the later rollback_action migration; both steps converge to the
+    # same final constraint set and are therefore idempotent together.
+    """
+    do $$
+    begin
+        if exists (
+            select 1 from pg_constraint
+            where conname = 'ck_correlation_type'
+              and conrelid = 'correlation_links'::regclass
+        ) then
+            alter table correlation_links
+                drop constraint ck_correlation_type;
+        end if;
+        alter table correlation_links
+            add constraint ck_correlation_type
+            check (correlation_type in (
+                'file_path_match', 'process_path_match',
+                'sha256_match', 'endpoint_proximity', 'rollback_action'
+            ));
+    exception
+        when duplicate_object then null;
+    end $$;
+    """,
+    # Migration: add rollback_action to ck_correlation_type constraint.
+    # rollback_action links a completed rollback recovery event to the
+    # FIM/DLP signals that witnessed the affected paths, providing a
+    # full evidence chain: detection → uplift → rollback → correlated recovery.
+    """
+    do $$
+    begin
+        if exists (
+            select 1 from pg_constraint
+            where conname = 'ck_correlation_type'
+              and conrelid = 'correlation_links'::regclass
+        ) then
+            alter table correlation_links
+                drop constraint ck_correlation_type;
+        end if;
+        alter table correlation_links
+            add constraint ck_correlation_type
+            check (correlation_type in (
+                'file_path_match', 'process_path_match',
+                'sha256_match', 'endpoint_proximity', 'rollback_action'
+            ));
+    exception
+        when duplicate_object then null;
+    end $$;
+    """,
+    # Migration: add rollback_action to ck_correlation_related_kind constraint.
+    # When the rollback correlation engine uplifts the original behavior alert
+    # it records a link FROM that alert TO the rollback response alert using
+    # related_kind='rollback_action', making the detection→rollback edge
+    # queryable and auditor-visible. Applied with the same drop-and-recreate
+    # pattern so fresh and upgraded databases converge to the same constraint.
+    """
+    do $$
+    begin
+        if exists (
+            select 1 from pg_constraint
+            where conname = 'ck_correlation_related_kind'
+              and conrelid = 'correlation_links'::regclass
+        ) then
+            alter table correlation_links
+                drop constraint ck_correlation_related_kind;
+        end if;
+        alter table correlation_links
+            add constraint ck_correlation_related_kind
+            check (related_kind in (
+                'fim_event', 'edr_event', 'security_alert',
+                'dlp_event', 'rollback_action'
+            ));
     exception
         when duplicate_object then null;
     end $$;

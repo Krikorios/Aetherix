@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_schema
 from app import db
-from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, AgentActionAck, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, QuarantineInventoryResponse, QuarantineListRequest, QuarantineRestoreDecision, QuarantineRestoreRequest, PendingQuarantineRestore, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
+from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, AgentActionAck, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, QuarantineInventoryResponse, QuarantineListRequest, QuarantineRestoreDecision, QuarantineRestoreRequest, RollbackRestoreRequest, PendingQuarantineRestore, PendingRollbackIntent, RollbackIntentRequest, RollbackIntentDecision, QueuedActionItem, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
 from app.services import audit
 from app.services import compliance
 from app.schemas import ComplianceAttestationCreate, ComplianceAttestation, ComplianceReviewCreate, ComplianceReview, ComplianceReviewQueueItem, ComplianceSourceTable
@@ -904,11 +904,13 @@ def get_security_alert_correlations(
     if row is None:
         raise HTTPException(status_code=404, detail="security alert not found")
     _require_customer_access(row["customer_id"], account, "incidents", "view")
+    correlations = correlation_service.list_correlations_for_alert(alert_id)
     return {
         "alert_id": str(alert_id),
         "severity": row["severity"],
         "severity_uplifted_from": row["severity_uplifted_from"],
-        "correlations": correlation_service.list_correlations_for_alert(alert_id),
+        "total_correlations": len(correlations),
+        "correlations": correlations,
     }
 
 @app.get("/dlp-events/{dlp_event_id}/correlations")
@@ -1083,10 +1085,13 @@ def endpoint_health(
         endpoint = endpoints_by_id.get(row["agent_id"])
         if endpoint is None:
             continue
-        pending_actions = int(((payload.get("signals") or {}).get("pending_updates") or 0))
+        signals = payload.get("signals") or {}
+        pending_actions = int(signals.get("pending_updates") or 0)
         latest_agent_version = payload.get("agent_version") or endpoint.agent_version
         active_policy_version = payload.get("policy_version") or endpoint.policy_version
         status = "drifted" if endpoint.policy_version != active_policy_version else endpoint.status
+        cpu_raw = signals.get("cpu_percent")
+        mem_raw = signals.get("memory_percent")
         records.append(
             EndpointHealthRecord(
                 id=endpoint.id,
@@ -1103,7 +1108,11 @@ def endpoint_health(
                 risk_score=endpoint.risk_score,
                 open_alerts=int(row["open_alerts"]),
                 pending_actions=pending_actions,
-                tags=[],
+                cpu_percent=float(cpu_raw) if cpu_raw is not None else None,
+                memory_percent=float(mem_raw) if mem_raw is not None else None,
+                dlp_events=int(signals.get("dlp_events") or 0),
+                blocked_events=int(signals.get("blocked_events") or 0),
+                rollback_readiness=payload.get("rollback_readiness"),
             )
         )
     return records
@@ -1465,6 +1474,414 @@ def deny_endpoint_quarantine_restore(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Rollback-intent management (ransomware snapshot recovery)
+# ---------------------------------------------------------------------------
+# Mirrors the quarantine-restore approval model: operators queue a rollback
+# intent tied to a specific agent simulation result.  High/critical severity
+# intents require dual-operator approval (different account must approve).
+# The intent is validated against valid_until at queue time so expired
+# simulations can't be replayed.
+# ---------------------------------------------------------------------------
+
+_ROLLBACK_INTENT_CONTROLS: list[str] = [
+    "iso27001-2022:A.5.26",
+    "iso27001-2022:A.5.30",
+    "iso27001-2022:A.8.8",
+    "iso27001-2022:A.8.13",
+    "soc2-2017:CC7.4",
+    "soc2-2017:CC7.5",
+    "nist-csf-2.0:RS.MI",
+    "nist-csf-2.0:RC.RP",
+]
+
+
+def _emit_rollback_compliance(
+    *,
+    customer_id: UUID | None,
+    action: str,
+    resource: str,
+    account: Account,
+    payload: dict[str, Any],
+) -> None:
+    """Emit a compliance evidence event for an operator-driven rollback intent
+    action. Follows the same guard/silence pattern as _emit_quarantine_compliance."""
+    if customer_id is None:
+        return
+    from app.services.compliance import _emit_compliance_event, controls_for_event
+
+    controls = controls_for_event(action)
+    if not controls:
+        return
+    try:
+        _emit_compliance_event(
+            customer_id=customer_id,
+            action=action,
+            resource=resource,
+            actor=f"account:{account.id}",
+            payload=payload,
+            evidence_controls=controls,
+        )
+    except Exception:  # pragma: no cover
+        _logger.exception("failed to emit compliance evidence for %s", action)
+
+
+def _check_rollback_intent_allowed(endpoint_id: str, account: Account) -> None:
+    try:
+        eff = policy_v2_service.effective_policy(account, endpoint_id=endpoint_id)
+        if eff and eff.resolved_policy and eff.resolved_policy.modules:
+            rm = eff.resolved_policy.modules.get("ransomware_mitigation") or {}
+            if rm.get("rollback_approval") == "disabled":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Rollback is disabled by the ransomware mitigation policy for this endpoint."
+                )
+    except HTTPException:
+        raise
+    except (policy_v2_service.PolicyV2Error, ValueError, Exception):
+        # In simulated/fallback mode, keep the default fallback active
+        pass
+
+
+@app.post(
+    "/endpoints/{endpoint_id}/rollback-restore",
+    response_model=ModuleActionResult,
+    status_code=202,
+)
+def queue_rollback_restore(
+    endpoint_id: str,
+    payload: RollbackRestoreRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    """Trigger a rollback operation on an enrolled endpoint, mirroring quarantine restore."""
+    _check_rollback_intent_allowed(endpoint_id, account)
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+
+    approval_required = payload.severity_hint in {"high", "critical"}
+    action_payload: dict[str, Any] = {
+        "simulation_id": payload.simulation_id,
+        "candidate_set_hash": payload.candidate_set_hash,
+        "affected_paths": payload.affected_paths,
+        "recovery_point_id": payload.recovery_point_id,
+        "provider": payload.provider,
+        "severity_hint": payload.severity_hint,
+    }
+    if payload.provider_metadata:
+        action_payload["provider_metadata"] = payload.provider_metadata
+    if payload.reason:
+        action_payload["reason"] = payload.reason
+
+    result = _module_action(
+        endpoint_id,
+        "rollback_restore",
+        payload=action_payload,
+        approval_required=approval_required,
+        controls=_ROLLBACK_INTENT_CONTROLS,
+        created_by=str(account.id),
+        requested_by=account.id,
+        customer_id=customer_id,
+    )
+    audit.record(
+        action="endpoint.rollback.requested",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_rollback_compliance(
+        customer_id=customer_id,
+        action="endpoint.rollback.requested",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "simulation_id": payload.simulation_id,
+            "candidate_set_hash": payload.candidate_set_hash,
+            "recovery_point_id": payload.recovery_point_id,
+            "provider": payload.provider,
+            "provider_metadata": payload.provider_metadata or None,
+            "severity_hint": payload.severity_hint,
+            "approval_required": approval_required,
+            "reason": payload.reason or None,
+        },
+    )
+    return result
+
+
+@app.post(
+    "/endpoints/{endpoint_id}/rollback-intent",
+    response_model=ModuleActionResult,
+    status_code=202,
+)
+def queue_rollback_intent(
+    endpoint_id: str,
+    payload: RollbackIntentRequest,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    """Queue a rollback intent for an enrolled endpoint.
+
+    The simulation referenced by ``simulation_id`` / ``candidate_set_hash``
+    must not have expired (``valid_until`` is enforced at request time).
+    Intents with ``severity_hint`` of ``high`` or ``critical`` are placed in
+    ``awaiting_approval`` status and require a *second* operator account to
+    approve (dual-operator model).  Medium and lower intents are queued
+    directly for the agent to pick up on next poll.
+    """
+    _check_rollback_intent_allowed(endpoint_id, account)
+    now = datetime.now(UTC)
+    valid_until = payload.valid_until
+    if valid_until.tzinfo is None:
+        valid_until = valid_until.replace(tzinfo=UTC)
+    if valid_until <= now:
+        raise HTTPException(status_code=400, detail="simulation has expired (valid_until is in the past)")
+
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+
+    approval_required = payload.severity_hint in {"high", "critical"}
+    action_payload = payload.model_dump(mode="json")
+    result = _module_action(
+        endpoint_id,
+        "rollback_intent",
+        action_payload,
+        approval_required=approval_required,
+        controls=_ROLLBACK_INTENT_CONTROLS,
+        created_by=str(account.id),
+        requested_by=str(account.id),
+        customer_id=customer_id,
+    )
+    audit.record(
+        action="endpoint.rollback.requested",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_rollback_compliance(
+        customer_id=customer_id,
+        action="endpoint.rollback.requested",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "simulation_id": payload.simulation_id,
+            "candidate_set_hash": payload.candidate_set_hash,
+            "recovery_point_id": payload.recovery_point_id,
+            "provider": payload.provider,
+            "provider_metadata": payload.provider_metadata or None,
+            "severity_hint": payload.severity_hint,
+            "valid_until": payload.valid_until.isoformat(),
+            "approval_required": approval_required,
+        },
+    )
+    return result
+
+
+@app.post(
+    "/endpoints/{endpoint_id}/rollback-intent/{action_id}/approve",
+    response_model=ModuleActionResult,
+)
+@app.post(
+    "/endpoints/{endpoint_id}/rollback-restore/{action_id}/approve",
+    response_model=ModuleActionResult,
+)
+def approve_rollback_intent(
+    endpoint_id: str,
+    action_id: UUID,
+    http_request: Request,
+    decision: RollbackIntentDecision | None = None,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    """Approve a high/critical rollback intent.  Enforces the dual-operator
+    rule: the approving account must differ from the requesting account.
+    Also re-validates ``valid_until`` so a long-pending approval can't
+    dispatch an expired simulation."""
+    _check_rollback_intent_allowed(endpoint_id, account)
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+    reason = (decision.reason or "").strip() if decision else ""
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select * from module_actions where id = %s and endpoint_id = %s",
+            (action_id, endpoint_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="action not found")
+        if row["action"] not in {"rollback_intent", "rollback_restore"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"action {action_id} on endpoint {endpoint_id} is '{row['action']}', "
+                    "expected one of: rollback_intent, rollback_restore"
+                ),
+            )
+        if row["status"] != "awaiting_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"action {action_id} for endpoint {endpoint_id} is '{row['status']}', "
+                    "expected 'awaiting_approval'"
+                ),
+            )
+        # Dual-operator check
+        if row.get("requested_by") and str(row["requested_by"]) == str(account.id):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"action {action_id} for endpoint {endpoint_id} was requested by this account; "
+                    "dual-operator approval requires a different approver"
+                ),
+            )
+        # Re-validate valid_until to prevent approving an expired simulation
+        orig_payload: dict[str, Any] = dict(row["payload"] or {})
+        valid_until_str = orig_payload.get("valid_until")
+        if valid_until_str:
+            try:
+                vu = datetime.fromisoformat(valid_until_str)
+                if vu.tzinfo is None:
+                    vu = vu.replace(tzinfo=UTC)
+                if vu <= now:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="simulation has expired; request a new rollback intent",
+                    )
+            except (TypeError, ValueError):
+                pass
+        merged_payload = dict(orig_payload)
+        if reason:
+            merged_payload["approval_reason"] = reason
+        merged_payload["approved_by"] = str(account.id)
+        cur.execute(
+            """
+            update module_actions
+               set status = 'queued',
+                   approved_by = %s,
+                   approved_at = %s,
+                   payload = %s::jsonb
+             where id = %s
+             returning *
+            """,
+            (str(account.id), now, json.dumps(merged_payload), action_id),
+        )
+        updated = cur.fetchone()
+    result = _module_action_result_from_row(updated)
+    audit.record(
+        action="endpoint.rollback.approved",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_rollback_compliance(
+        customer_id=customer_id,
+        action="endpoint.rollback.approved",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "requested_by": result.requested_by,
+            "approved_by": str(account.id),
+            "reason": reason or None,
+        },
+    )
+    return result
+
+
+@app.post(
+    "/endpoints/{endpoint_id}/rollback-intent/{action_id}/deny",
+    response_model=ModuleActionResult,
+)
+@app.post(
+    "/endpoints/{endpoint_id}/rollback-restore/{action_id}/deny",
+    response_model=ModuleActionResult,
+)
+def deny_rollback_intent(
+    endpoint_id: str,
+    action_id: UUID,
+    http_request: Request,
+    decision: RollbackIntentDecision | None = None,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    """Reject an awaiting-approval rollback intent. Reason is persisted in the
+    action payload and in the compliance evidence trail."""
+    _check_rollback_intent_allowed(endpoint_id, account)
+    customer_id = _resolve_endpoint_or_404(endpoint_id)
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "edit")
+    reason = (decision.reason or "").strip() if decision else ""
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "select * from module_actions where id = %s and endpoint_id = %s",
+            (action_id, endpoint_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="action not found")
+        if row["action"] not in {"rollback_intent", "rollback_restore"}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"action {action_id} on endpoint {endpoint_id} is '{row['action']}', "
+                    "expected one of: rollback_intent, rollback_restore"
+                ),
+            )
+        if row["status"] != "awaiting_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"action {action_id} for endpoint {endpoint_id} is '{row['status']}', "
+                    "expected 'awaiting_approval'"
+                ),
+            )
+        merged_payload: dict[str, Any] = dict(row["payload"] or {})
+        if reason:
+            merged_payload["denial_reason"] = reason
+        merged_payload["denied_by"] = str(account.id)
+        cur.execute(
+            """
+            update module_actions
+               set status = 'denied',
+                   processed_by = %s,
+                   processed_at = %s,
+                   payload = %s::jsonb
+             where id = %s
+             returning *
+            """,
+            (str(account.id), now, json.dumps(merged_payload), action_id),
+        )
+        updated = cur.fetchone()
+    result = _module_action_result_from_row(updated)
+    audit.record(
+        action="endpoint.rollback.denied",
+        resource=f"endpoint:{endpoint_id}",
+        actor=str(account.id),
+        after=result.model_dump(mode="json"),
+        request_id=_request_id(http_request),
+    )
+    _emit_rollback_compliance(
+        customer_id=customer_id,
+        action="endpoint.rollback.denied",
+        resource=f"endpoint:{endpoint_id}",
+        account=account,
+        payload={
+            "action_id": result.id,
+            "requested_by": result.requested_by,
+            "denied_by": str(account.id),
+            "reason": reason or None,
+        },
+    )
+    return result
+
+
 @app.get(
     "/endpoints/{endpoint_id}/quarantine-inventory",
     response_model=QuarantineInventoryResponse,
@@ -1509,6 +1926,7 @@ _RESPONSE_ACTION_STATUSES = {
     "completed",
     "failed",
     "denied",
+    "cancelled",
 }
 
 
@@ -1621,9 +2039,11 @@ def list_pending_quarantine_restores(
                    ma.result, ma.processed_at, ma.requested_by, ma.approved_by,
                    ma.approved_at, ma.customer_id,
                    ea.hostname as ea_hostname,
-                   coalesce(ma.customer_id, ea.customer_id) as resolved_customer_id
+                    coalesce(ma.customer_id, ea.customer_id) as resolved_customer_id,
+                    h.payload->'rollback_readiness' as rollback_readiness
               from module_actions ma
               left join enrolled_agents ea on ea.agent_id = ma.endpoint_id
+                left join heartbeats h on h.agent_id = ma.endpoint_id
              where {' and '.join(clauses)}
              order by ma.created_at asc
              limit %s
@@ -1642,6 +2062,241 @@ def list_pending_quarantine_restores(
             )
         )
     return out
+
+
+@app.get(
+    "/rollback-intents/pending",
+    response_model=list[PendingRollbackIntent],
+)
+def list_pending_rollback_intents(
+    customer_id: UUID | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    account: Account = Depends(current_account),
+) -> list[PendingRollbackIntent]:
+    """Tenant-wide approval inbox for high/critical rollback intents.
+
+    Returns every ``awaiting_approval`` ``rollback_intent`` the caller
+    is allowed to see (scoped by partner/customer membership), along with
+    the endpoint hostname so the console can render a single approval
+    queue page without one-fetch-per-endpoint.
+    """
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+
+    clauses = [
+        "ma.action in ('rollback_intent', 'rollback_restore')",
+        "ma.status = 'awaiting_approval'",
+    ]
+    params: list[object] = []
+    if customer_id is not None:
+        clauses.append("ma.customer_id = %s")
+        params.append(customer_id)
+    else:
+        scope = tenancy.compute_scope(account)
+        if not scope.is_platform:
+            tenant_clauses: list[str] = []
+            if scope.customer_ids:
+                tenant_clauses.append("ma.customer_id = any(%s)")
+                params.append(scope.customer_ids)
+            if scope.partner_ids:
+                # join through enrolled_agents -> customers to honor
+                # partner-scoped visibility.
+                tenant_clauses.append(
+                    "ea.customer_id in (select id from customers where partner_id = any(%s))"
+                )
+                params.append(scope.partner_ids)
+            if tenant_clauses:
+                clauses.append("(" + " or ".join(tenant_clauses) + ")")
+            else:
+                return []
+    params.append(limit)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select ma.id, ma.endpoint_id, ma.action, ma.payload, ma.status,
+                   ma.approval_required, ma.evidence_controls, ma.created_at,
+                   ma.result, ma.processed_at, ma.requested_by, ma.approved_by,
+                   ma.approved_at, ma.customer_id,
+                   ea.hostname as ea_hostname,
+                    coalesce(ma.customer_id, ea.customer_id) as resolved_customer_id,
+                    h.payload->'rollback_readiness' as rollback_readiness
+              from module_actions ma
+              left join enrolled_agents ea on ea.agent_id = ma.endpoint_id
+                left join heartbeats h on h.agent_id = ma.endpoint_id
+             where {' and '.join(clauses)}
+             order by ma.created_at asc
+             limit %s
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+    out: list[PendingRollbackIntent] = []
+    for row in rows:
+        out.append(
+            PendingRollbackIntent(
+                action=_module_action_result_from_row(row),
+                endpoint_id=row["endpoint_id"],
+                hostname=row.get("ea_hostname"),
+                customer_id=row.get("resolved_customer_id"),
+                rollback_readiness=row.get("rollback_readiness"),
+            )
+        )
+    return out
+
+
+@app.get("/actions/queue", response_model=list[QueuedActionItem])
+def list_action_queue(
+    status: str | None = Query(default=None),
+    action: str | None = Query(default=None, min_length=1, max_length=120),
+    customer_id: UUID | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    account: Account = Depends(current_account),
+) -> list[QueuedActionItem]:
+    """Cross-endpoint action queue for the MSP operator console.
+
+    Returns module_actions enriched with endpoint hostname and company name,
+    scoped to the caller's tenant. Supports optional filters on ``status``,
+    ``action`` type, and ``customer_id``."""
+    if customer_id is not None:
+        _require_customer_access(customer_id, account, "incidents", "view")
+
+    clauses: list[str] = []
+    params: list[object] = []
+
+    if customer_id is not None:
+        clauses.append("ma.customer_id = %s")
+        params.append(customer_id)
+    else:
+        scope = tenancy.compute_scope(account)
+        if not scope.is_platform:
+            tenant_clauses: list[str] = []
+            if scope.customer_ids:
+                tenant_clauses.append("ma.customer_id = any(%s)")
+                params.append(scope.customer_ids)
+            if scope.partner_ids:
+                tenant_clauses.append(
+                    "ea.customer_id in (select id from customers where partner_id = any(%s))"
+                )
+                params.append(scope.partner_ids)
+            if tenant_clauses:
+                clauses.append("(" + " or ".join(tenant_clauses) + ")")
+            else:
+                return []
+
+    if status is not None:
+        if status not in _RESPONSE_ACTION_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"status must be one of {sorted(_RESPONSE_ACTION_STATUSES)}",
+            )
+        clauses.append("ma.status = %s")
+        params.append(status)
+
+    if action is not None:
+        clauses.append("ma.action = %s")
+        params.append(action)
+
+    where = ("where " + " and ".join(clauses)) if clauses else ""
+    params.append(limit)
+
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            f"""
+            select ma.id, ma.endpoint_id, ma.action, ma.payload, ma.status,
+                   ma.approval_required, ma.evidence_controls, ma.created_at,
+                   ma.result, ma.processed_at, ma.requested_by, ma.approved_by,
+                   ma.approved_at,
+                   coalesce(ma.customer_id, ea.customer_id) as customer_id,
+                   coalesce(ea.hostname, ma.endpoint_id) as hostname,
+                   c.name as customer_name
+              from module_actions ma
+              left join enrolled_agents ea on ea.agent_id = ma.endpoint_id
+              left join customers c on c.id = coalesce(ma.customer_id, ea.customer_id)
+             {where}
+             order by ma.created_at desc
+             limit %s
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+
+    out: list[QueuedActionItem] = []
+    for row in rows:
+        base = _module_action_result_from_row(row)
+        out.append(
+            QueuedActionItem(
+                **base.model_dump(),
+                hostname=row["hostname"] or row["endpoint_id"],
+                customer_name=row.get("customer_name"),
+            )
+        )
+    return out
+
+
+@app.post("/actions/{action_id}/cancel", response_model=ModuleActionResult)
+def cancel_action(
+    action_id: UUID,
+    http_request: Request,
+    account: Account = Depends(current_account),
+) -> ModuleActionResult:
+    """Cancel a queued action before it is picked up by an agent.
+
+    Only actions in ``queued`` status can be cancelled; returns 409 if the
+    action is already in a terminal or in-progress state."""
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select ma.id, ma.endpoint_id, ma.action, ma.payload, ma.status,
+                   ma.approval_required, ma.evidence_controls, ma.created_at,
+                   ma.result, ma.processed_at, ma.requested_by, ma.approved_by,
+                   ma.approved_at, ma.customer_id
+              from module_actions ma
+             where ma.id = %s
+            """,
+            (action_id,),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="action not found")
+
+    resolved_customer_id = row.get("customer_id")
+    if resolved_customer_id is not None:
+        _require_customer_access(resolved_customer_id, account, "incidents", "edit")
+    else:
+        if not tenancy.compute_scope(account).is_platform:
+            raise HTTPException(status_code=403, detail="requires incidents:edit for this action")
+
+    if row["status"] != "queued":
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot cancel action with status '{row['status']}' — only 'queued' actions can be cancelled",
+        )
+
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            update module_actions
+               set status = 'cancelled',
+                   processed_at = %s,
+                   processed_by = %s
+             where id = %s
+             returning *
+            """,
+            (now, str(account.id), action_id),
+        )
+        updated = cur.fetchone()
+
+    audit.record(
+        action="action.cancel",
+        resource=f"module_action:{action_id}",
+        actor=str(account.id),
+        before={"status": "queued"},
+        after={"status": "cancelled"},
+        request_id=_request_id(http_request),
+    )
+    return _module_action_result_from_row(updated)
 
 
 @app.patch("/branding", response_model=MeResponse)

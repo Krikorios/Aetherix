@@ -25,7 +25,7 @@ from app.services.compliance import controls_for_event
 from app.services.crypto import canonical_json
 
 
-DESTRUCTIVE_ACTIONS = {"block", "isolate", "rollback", "quarantine", "kill"}
+DESTRUCTIVE_ACTIONS = {"block", "isolate", "rollback", "quarantine", "kill", "ransomware_rollback", "rollback_restore"}
 REVIEW_ACTIONS = {"review", "operator_required", "monitor"}
 ALLOWED_POLICY_ACTIONS = {"allow", "review", "block"}
 DEFAULT_SENSITIVITY_LABELS = ["Public", "Internal", "Confidential", "Restricted"]
@@ -194,6 +194,8 @@ class PolicySimulationService:
         "block": 12,
         "isolate": 24,
         "rollback": 18,
+        "ransomware_rollback": 18,
+        "rollback_restore": 18,
         "quarantine": 10,
         "kill": 14,
         "review": 4,
@@ -291,6 +293,12 @@ class PolicySimulationService:
                 risk_delta += edr_adjustment
                 risk_delta_total += edr_adjustment
                 notes.extend(edr_notes)
+
+            if module_name == "ransomware_mitigation" and enabled:
+                rm_adjustment, rm_notes = cls._ransomware_mitigation_impact(module_payload)
+                risk_delta += rm_adjustment
+                risk_delta_total += rm_adjustment
+                notes.extend(rm_notes)
 
             if module_name == "external_attack_surface_management" and enabled:
                 easm_adjustment, easm_notes = cls._easm_impact(module_payload)
@@ -551,6 +559,24 @@ class PolicySimulationService:
             threshold = 0
         if threshold:
             notes.append(f"confidence_threshold:{threshold}")
+
+        return adjustment, notes
+
+    @classmethod
+    def _ransomware_mitigation_impact(cls, module_payload: Any) -> tuple[int, list[str]]:
+        rm = dict(module_payload or {})
+        adjustment = 0
+        notes: list[str] = []
+
+        if rm.get("rollback_approval") == "operator_required":
+            adjustment += 2
+            notes.append("rollback_approval:operator_required")
+        if bool(rm.get("auto_rollback", False)):
+            adjustment += cls.MODULE_IMPACT_WEIGHTS["rollback"]
+            notes.append("response:auto_rollback")
+        if bool(rm.get("canary_protection_enabled", True)):
+            adjustment += 2
+            notes.append("canary_protection")
 
         return adjustment, notes
 

@@ -1,8 +1,14 @@
-import React, { useState } from "react";
-import { ArrowLeft, ChevronDown, ChevronRight, Save, ShieldAlert } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { ArrowLeft, ChevronDown, ChevronRight, Save, ShieldAlert, FlaskConical } from "lucide-react";
 import {
+  apiGet,
   apiPost,
+  apiPut,
+  type CompanySummaryPage,
+  type EffectivePolicyResponse,
   type PolicyDocumentV2Input,
+  type PolicyGetResponse,
+  type PolicySimulationRecord,
 } from "../api";
 import { ErrorBanner, SuccessBanner } from "../components";
 
@@ -122,7 +128,7 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
   const [draft, setDraft] = useState<PolicyDocumentV2Input>(() => {
     const base: Record<string, Record<string, unknown>> = {};
     for (const module of MODULES) {
-      base[module.key] = { enabled: false };
+      base[module.key] = { enabled: CORE_MODULES.has(module.key) };
     }
     return {
       schema_version: "2.0",
@@ -133,6 +139,49 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
       white_label_names: {},
     };
   });
+
+  const [companyRows, setCompanyRows] = useState<CompanySummaryPage["items"]>([]);
+  const [simulation, setSimulation] = useState<PolicySimulationRecord | null>(null);
+  const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
+
+  // Load companies for scope selection
+  useEffect(() => {
+    const loadCompanies = async () => {
+      setIsLoadingCompanies(true);
+      try {
+        const res = await apiGet<CompanySummaryPage>("/companies/summary?limit=100");
+        setCompanyRows(res.items || []);
+      } catch (e) {
+        console.error("Failed to load companies for policy scope", e);
+      } finally {
+        setIsLoadingCompanies(false);
+      }
+    };
+    loadCompanies();
+  }, []);
+
+  // Load existing policy when editing
+  const [isLoadingPolicy, setIsLoadingPolicy] = useState(false);
+  useEffect(() => {
+    if (mode !== "edit" || !policyId) return;
+
+    const loadExisting = async () => {
+      setIsLoadingPolicy(true);
+      setError(null);
+      try {
+        const res = await apiGet<PolicyGetResponse>(`/policies/${policyId}`);
+        const payload = res.latest_version?.payload;
+        if (payload) {
+          setDraft(payload as PolicyDocumentV2Input);
+        }
+      } catch (e: any) {
+        setError(e?.message || "Failed to load policy for editing");
+      } finally {
+        setIsLoadingPolicy(false);
+      }
+    };
+    void loadExisting();
+  }, [mode, policyId]);
 
   const [openModules, setOpenModules] = useState<Set<string>>(new Set(["general", "antimalware", "semantic_dlp"]));
   const [isSaving, setIsSaving] = useState(false);
@@ -170,6 +219,46 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
     return module.addon ? `Requires ${module.addon} add-on` : "Not available in current plan";
   };
 
+  // Scope / lineage helpers (used by the scope + inheritance selects)
+  const setScopeField = <K extends keyof PolicyDocumentV2Input["scope"]>(
+    key: K,
+    value: PolicyDocumentV2Input["scope"][K]
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      scope: { ...current.scope, [key]: value },
+    }));
+  };
+
+  const setLineageField = <K extends keyof PolicyDocumentV2Input["lineage"]>(
+    key: K,
+    value: PolicyDocumentV2Input["lineage"][K]
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      lineage: { ...current.lineage, [key]: value },
+    }));
+  };
+
+  // Run simulation against the current draft (new) or the saved policy (edit)
+  const runSimulation = async () => {
+    setError(null);
+    setSuccess(null);
+    try {
+      let result: PolicySimulationRecord;
+      if (mode === "edit" && policyId) {
+        result = await apiPost<PolicySimulationRecord>(`/policies/${policyId}/simulate`, {});
+      } else {
+        // For new policies we simulate the in-memory draft
+        result = await apiPost<PolicySimulationRecord>("/policies/document/simulate", draft);
+      }
+      setSimulation(result);
+      setSuccess(`Simulation complete — ${result.summary.modules_with_destructive_actions} module(s) have destructive actions.`);
+    } catch (err: any) {
+      setError(err?.message || "Simulation failed");
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
@@ -177,16 +266,20 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
     setSuccess(null);
 
     try {
-      // In a real flow you might want to support both create and update
-      const response = await apiPost("/policies", draft);
-      setSuccess("Policy created successfully! You can now close this editor and assign it from the Policies list.");
+      if (mode === "edit" && policyId) {
+        // Update existing policy document (PUT semantics via the available client helper)
+        await apiPut(`/policies/${policyId}`, draft);
+        setSuccess("Policy updated successfully. Changes will be picked up by assigned agents on next heartbeat.");
+      } else {
+        await apiPost("/policies", draft);
+        setSuccess("Policy created successfully! Close this editor and assign it from the Policies list.");
+      }
 
-      // Optional: You could auto-navigate back after a short delay
       setTimeout(() => {
         if (onBack) onBack();
-      }, 1800);
+      }, 1400);
     } catch (err: any) {
-      setError(err.message || "Failed to create policy");
+      setError(err?.message || (mode === "edit" ? "Failed to update policy" : "Failed to create policy"));
     } finally {
       setIsSaving(false);
     }
@@ -198,7 +291,10 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
         <button className="btnGhost" onClick={onBack} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <ArrowLeft size={16} /> Back to Policies
         </button>
-        <h1 style={{ margin: 0 }}>{mode === "new" ? "Create New Policy" : "Edit Policy"}</h1>
+        <h1 style={{ margin: 0 }}>
+          {mode === "new" ? "Create New Policy" : "Edit Policy"}
+          {isLoadingPolicy ? " (loading…)" : ""}
+        </h1>
       </div>
 
       {error && <ErrorBanner message={error} />}
@@ -221,16 +317,15 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
             Company Scope
             <select
               value={draft.scope.customer_id ?? ""}
-              onChange={(e) => {
-                const id = e.target.value || null;
-                setDraft((current) => ({
-                  ...current,
-                  scope: { ...current.scope, customer_id: id },
-                }));
-              }}
+              onChange={(e) => setScopeField("customer_id", e.target.value || null)}
+              disabled={isLoadingCompanies}
             >
               <option value="">Global / Partner-level</option>
-              {/* In real implementation, populate from companies */}
+              {companyRows.map((row) => (
+                <option key={row.customer.id} value={row.customer.id}>
+                  {row.customer.name}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -238,15 +333,10 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
             Parent Policy
             <select
               value={draft.lineage.parent_policy_id ?? ""}
-              onChange={(e) =>
-                setDraft((current) => ({
-                  ...current,
-                  lineage: { ...current.lineage, parent_policy_id: e.target.value || null },
-                }))
-              }
+              onChange={(e) => setLineageField("parent_policy_id", e.target.value || null)}
             >
               <option value="">None (Standalone)</option>
-              {/* Populate with existing policies */}
+              {/* In a full implementation we would load policies here for selection */}
             </select>
           </label>
 
@@ -254,15 +344,7 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
             Inheritance Mode
             <select
               value={draft.lineage.inheritance_mode}
-              onChange={(e) =>
-                setDraft((current) => ({
-                  ...current,
-                  lineage: {
-                    ...current.lineage,
-                    inheritance_mode: e.target.value as any,
-                  },
-                }))
-              }
+              onChange={(e) => setLineageField("inheritance_mode", e.target.value as "inherit_with_overrides" | "replace")}
             >
               <option value="inherit_with_overrides">Inherit with overrides</option>
               <option value="replace">Replace (no inheritance)</option>
@@ -363,16 +445,18 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
             <button 
               type="submit" 
               className="btnPrimary" 
-              disabled={isSaving}
+              disabled={isSaving || isLoadingPolicy}
               style={{ minWidth: "160px" }}
             >
-              {isSaving ? "Creating Policy..." : mode === "new" ? "Create & Save Policy" : "Save Changes"}
+              {isSaving
+                ? (mode === "edit" ? "Saving Changes..." : "Creating Policy...")
+                : (mode === "new" ? "Create & Save Policy" : "Save Changes")}
             </button>
 
             <button 
               type="button" 
               className="btn" 
-              onClick={() => alert("Full simulation & impact analysis will run here in the dedicated editor (next iteration).")}
+              onClick={runSimulation}
             >
               Run Simulation &amp; Impact Analysis
             </button>
@@ -390,6 +474,24 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
             This dedicated editor will support live simulation, destructive action warnings, 
             inheritance previews, and direct promotion — all without leaving the powerful editing experience.
           </p>
+
+          {/* Simulation Results */}
+          {simulation && (
+            <div style={{ marginTop: "24px", padding: "16px", background: "#f8fafc", borderRadius: "8px" }}>
+              <h3 style={{ marginTop: 0 }}>Simulation Results</h3>
+              <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                <div>Total Modules: <strong>{simulation.summary.modules_total}</strong></div>
+                <div>Enabled: <strong>{simulation.summary.modules_enabled}</strong></div>
+                <div>Would Block: <strong>{simulation.summary.would_block}</strong></div>
+                <div>Destructive Actions: <strong>{simulation.summary.modules_with_destructive_actions}</strong></div>
+              </div>
+              <p style={{ fontSize: "13px", marginTop: "8px" }}>
+                {simulation.summary.modules_with_destructive_actions > 0 
+                  ? "This policy contains destructive actions and will require explicit promotion approval."
+                  : "This policy looks safe to promote without additional gates."}
+              </p>
+            </div>
+          )}
         </div>
       </form>
     </div>

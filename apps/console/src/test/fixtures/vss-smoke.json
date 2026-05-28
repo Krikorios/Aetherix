@@ -1,0 +1,114 @@
+{
+  "provider_metadata": {
+    "vss_shadow_copy_id": "{11111111-2222-3333-4444-555555555555}",
+    "vss_writer_status": {
+      "System Writer": "Stable",
+      "SqlServerWriter": "Stable"
+    },
+    "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "vss_alternate_data_streams": ["Zone.Identifier", "Aetherix.Marker"]
+  },
+  "rollback_readiness": {
+    "provider_available": true,
+    "provider_name": "vss",
+    "provider_version": "vss-guard-smoke",
+    "recovery_points": [
+      {
+        "id": "rp-vss-guard-001",
+        "provider": "vss",
+        "created_at": "2026-05-28T11:58:00Z",
+        "expires_at": null,
+        "protected_root": "C:\\",
+        "verified": true
+      }
+    ],
+    "os_platform": "windows",
+    "functional": true,
+    "diagnosis": "VSS writers stable",
+    "recovery_point_count": 1,
+    "available_filesystems": ["ntfs"],
+    "service_available": true,
+    "sufficient_privilege": true,
+    "volume_capabilities": ["vss:C:"],
+    "snapshot_service_info": "VSS v1.6, Writers: 2/2 ready",
+    "privilege_boundary": "SeBackupPrivilege+SeRestorePrivilege",
+    "recent_fim_paths": ["C:\\Users\\Alice\\Documents\\report.docx"],
+    "provider_metadata": {
+      "vss_shadow_copy_id": "{11111111-2222-3333-4444-555555555555}",
+      "vss_writer_status": {
+        "System Writer": "Stable",
+        "SqlServerWriter": "Stable"
+      },
+      "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "vss_alternate_data_streams": ["Zone.Identifier", "Aetherix.Marker"]
+    }
+  },
+  "rollback_restore_request": {
+    "simulation_id": "sim-vss-guard-001",
+    "candidate_set_hash": "hash-vss-guard-001",
+    "affected_paths": ["C:\\Users\\Alice\\Documents\\report.docx"],
+    "recovery_point_id": "rp-vss-guard-001",
+    "provider": "vss",
+    "provider_metadata": {
+      "vss_shadow_copy_id": "{11111111-2222-3333-4444-555555555555}",
+      "vss_writer_status": {
+        "System Writer": "Stable",
+        "SqlServerWriter": "Stable"
+      },
+      "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "vss_alternate_data_streams": ["Zone.Identifier", "Aetherix.Marker"]
+    },
+    "severity_hint": "high",
+    "reason": "VSS metadata preservation guard"
+  },
+  "endpoint_health": {
+    "id": "agent-vss-guard-001",
+    "hostname": "vss-guard-host",
+    "os": "windows",
+    "status": "healthy",
+    "risk_score": 8,
+    "last_heartbeat": "2026-05-28T12:00:00Z",
+    "policy_version": "policy-vss-guard",
+    "agent_version": "0.1.0",
+    "latest_agent_version": "0.1.0",
+    "active_policy_version": "policy-vss-guard",
+    "open_alerts": 0,
+    "pending_actions": 0,
+    "tags": ["vss", "smoke"],
+    "rollback_readiness": {
+      "provider_available": true,
+      "provider_name": "vss",
+      "provider_version": "vss-guard-smoke",
+      "recovery_points": [
+        {
+          "id": "rp-vss-guard-001",
+          "provider": "vss",
+          "created_at": "2026-05-28T11:58:00Z",
+          "expires_at": null,
+          "protected_root": "C:\\",
+          "verified": true
+        }
+      ],
+      "os_platform": "windows",
+      "functional": true,
+      "diagnosis": "VSS writers stable",
+      "recovery_point_count": 1,
+      "available_filesystems": ["ntfs"],
+      "service_available": true,
+      "sufficient_privilege": true,
+      "volume_capabilities": ["vss:C:"],
+      "snapshot_service_info": "VSS v1.6, Writers: 2/2 ready",
+      "privilege_boundary": "SeBackupPrivilege+SeRestorePrivilege",
+      "recent_fim_paths": ["C:\\Users\\Alice\\Documents\\report.docx"],
+      "provider_metadata": {
+        "vss_shadow_copy_id": "{11111111-2222-3333-4444-555555555555}",
+        "vss_writer_status": {
+          "System Writer": "Stable",
+          "SqlServerWriter": "Stable"
+        },
+        "vss_original_acl_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "vss_alternate_data_streams": ["Zone.Identifier", "Aetherix.Marker"]
+      }
+    }
+  }
+}

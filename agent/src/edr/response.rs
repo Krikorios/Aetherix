@@ -225,6 +225,14 @@ pub fn execute(
             );
             // TODO: apply platform firewall rules while preserving control-plane access.
         }
+        EdrAction::Rollback => {
+            evidence.status = ResponseStatus::Staged;
+            evidence.platform_api = "rollback-provider".to_string();
+            evidence.decision_trace.push(
+                "rollback requires a RollbackProvider; dispatched through poll_and_execute_actions"
+                    .to_string(),
+            );
+        }
     }
 
     evidence

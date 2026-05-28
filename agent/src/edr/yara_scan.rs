@@ -483,6 +483,8 @@ fn scan_data(
             matched_rules: all_rule_ids.clone(),
             evidence_controls: Vec::new(),
             response: None,
+            recovery_hints: None,
+            rollback_evidence: None,
         });
     }
 
@@ -509,6 +511,8 @@ fn create_minimal_event(rule_id: &str, source: &str, sha256: &str, policy_versio
         matched_rules: vec![rule_id.to_string()],
         evidence_controls: Vec::new(),
         response: None,
+        recovery_hints: None,
+        rollback_evidence: None,
     }
 }
 

@@ -42,6 +42,8 @@ struct Heartbeat {
     edr_events: Vec<aetherix_agent::edr::EdrEvent>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     cis_results: Vec<cis::CisCheckResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rollback_readiness: Option<aetherix_agent::edr::rollback::RollbackReadiness>,
 }
 
 struct HeartbeatContext<'a> {
@@ -50,6 +52,7 @@ struct HeartbeatContext<'a> {
     credentials: &'a AgentCredentials,
     hostname: &'a str,
     os: &'a str,
+    rollback_provider: &'a dyn aetherix_agent::edr::rollback::RollbackProvider,
 }
 
 #[derive(Serialize)]
@@ -304,6 +307,50 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cis_scanner = cis::CisScanner::new();
     let cis_results = cis_scanner.scan();
 
+    // Platform-aware provider selection (Windows VSS provider or NoopRollbackProvider fallback)
+    let rollback_provider: Arc<dyn aetherix_agent::edr::rollback::RollbackProvider + Send + Sync> = {
+        #[cfg(windows)]
+        {
+            let vss = aetherix_agent::edr::rollback::VssRollbackProvider::new();
+            let probe = vss.probe();
+            if probe.functional {
+                println!(
+                    "aetherix-agent: VSS rollback provider ready — {} volume(s), {} recovery point(s)",
+                    probe.volume_capabilities.len(),
+                    probe.recovery_point_count
+                );
+                Arc::new(vss)
+            } else {
+                println!(
+                    "aetherix-agent: VSS rollback provider not functional ({}), falling back to noop",
+                    probe.diagnosis
+                );
+                Arc::new(aetherix_agent::edr::rollback::NoopRollbackProvider)
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            Arc::new(aetherix_agent::edr::rollback::NoopRollbackProvider)
+        }
+    };
+
+
+    // Enrich ransomware EDR events with recovery point hints from the provider.
+    aetherix_agent::edr::rollback::enrich_events_with_recovery_hints(
+        &mut edr_events,
+        &*rollback_provider,
+    );
+
+    let fim_paths_for_readiness: Vec<String> = fim_events
+        .iter()
+        .map(|e| e.file_path.clone())
+        .collect();
+    let rollback_readiness =
+        Some(aetherix_agent::edr::rollback::compute_rollback_readiness(
+            &*rollback_provider,
+            &fim_paths_for_readiness,
+        ));
+
     let heartbeat = Heartbeat {
         signature,
         nonce,
@@ -318,6 +365,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         collected_at,
         policy_version: policy_version.clone(),
         agent_version: DEFAULT_AGENT_VERSION.to_string(),
+        rollback_readiness,
     };
 
     if let Some(ref api_url) = api_url {
@@ -346,6 +394,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let agent_id_clone = agent_id.clone();
     let hostname_clone = hostname.clone();
     let os_clone = os.clone();
+    let rollback_provider_loop = rollback_provider.clone();
     let shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>> =
         Arc::new(RwLock::new(None));
     if let Some(policy) = active_edr_policy_for_shared.as_ref() {
@@ -398,15 +447,31 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     edr_events.extend(proc_events);
                 }
 
-                // 3. Apply active response actions locally
+                // 3. Enrich ransomware events with recovery point hints
+                aetherix_agent::edr::rollback::enrich_events_with_recovery_hints(
+                    &mut edr_events,
+                    &*rollback_provider_loop,
+                );
+
+                // 4. Apply active response actions locally
                 let quarantine_secret = credentials_clone.as_ref().map(|creds| creds.agent_secret.as_bytes()).unwrap_or(b"default-agent-key");
                 execute_edr_response_actions(&mut edr_events, quarantine_secret);
 
-                // 4. Send heartbeat with dynamic EDR and FIM events
+                // 5. Send heartbeat with dynamic EDR and FIM events
                 if !fim_events.is_empty() || !edr_events.is_empty() {
                     if let Some(ref url) = api_url_clone {
                         let endpoint = format!("{}/agent/heartbeat", url.trim_end_matches('/'));
                         let collected_at = Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+                        let fim_paths_for_readiness: Vec<String> = fim_events
+                            .iter()
+                            .map(|e| e.file_path.clone())
+                            .collect();
+                        let rollback_readiness = Some(
+                            aetherix_agent::edr::rollback::compute_rollback_readiness(
+                                &*rollback_provider_loop,
+                                &fim_paths_for_readiness,
+                            ),
+                        );
                         let hb = Heartbeat {
                             agent_id: agent_id_clone.clone(),
                             hostname: hostname_clone.clone(),
@@ -421,6 +486,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             fim_events,
                             edr_events,
                             cis_results: Vec::new(),
+                            rollback_readiness,
                         };
 
                         if let Err(e) = client_clone.post(&endpoint).json(&hb).send() {
@@ -485,7 +551,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if env_bool("AETHERIX_ENABLE_DLP_ENFORCEMENT") {
         if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
-            run_dlp_enforcement_loop(&client, api_url, credentials, &hostname, &os, shared_policy.clone())
+            run_dlp_enforcement_loop(&client, api_url, credentials, &hostname, &os, shared_policy.clone(), &*rollback_provider)
                 .map_err(|err| format!("dlp enforcement failed: {err}"))?;
         }
     }
@@ -524,6 +590,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .as_ref()
                 .map(|(_, t)| t.clone())
                 .unwrap_or_else(|| Utc::now().format("%Y-%m-%dT%H:%M:%S+00:00").to_string());
+            let rollback_readiness = Some(
+                aetherix_agent::edr::rollback::compute_rollback_readiness(
+                    &*rollback_provider,
+                    &[],
+                ),
+            );
             let hb = Heartbeat {
                 agent_id: agent_id.clone(),
                 hostname: hostname.clone(),
@@ -538,6 +610,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 fim_events: Vec::new(),
                 edr_events: Vec::new(),
                 cis_results: Vec::new(),
+                rollback_readiness,
             };
             let endpoint = format!("{}/agent/heartbeat", url.trim_end_matches('/'));
             if let Err(e) = client.post(&endpoint).json(&hb).send() {
@@ -581,6 +654,7 @@ fn run_dlp_enforcement_loop(
     hostname: &str,
     os: &str,
     shared_policy: Arc<RwLock<Option<policy::RuntimePolicy>>>,
+    rollback_provider: &dyn aetherix_agent::edr::rollback::RollbackProvider,
 ) -> anyhow::Result<()> {
     let poll_interval = env_u64("AETHERIX_DLP_POLL_INTERVAL_SECONDS").max(1);
     let run_seconds = env_u64("AETHERIX_DLP_RUN_SECONDS");
@@ -724,6 +798,7 @@ fn run_dlp_enforcement_loop(
             credentials,
             hostname,
             os,
+            rollback_provider,
         };
         if let Err(err) = poll_and_execute_actions(&heartbeat_context, &mut active_policy, &shared_policy) {
             eprintln!("aetherix-agent: action poller error: {err}");
@@ -977,6 +1052,24 @@ fn poll_and_execute_actions(
                 emit_remote_action_evidence(context, event);
                 ack_action(context, &action.id);
             }
+            "rollback" | "rollback_restore" => {
+                let event = handle_remote_rollback_action(
+                    &action,
+                    active_policy,
+                    context,
+                );
+                emit_remote_action_evidence(context, event);
+                ack_action(context, &action.id);
+            }
+            "rollback_simulate" => {
+                let event = handle_remote_rollback_simulation(
+                    &action,
+                    active_policy,
+                    context,
+                );
+                emit_remote_action_evidence(context, event);
+                ack_action(context, &action.id);
+            }
             other => {
                 eprintln!("aetherix-agent: unsupported action {other}");
                 ack_action(context, &action.id);
@@ -1214,6 +1307,7 @@ fn normalize_remote_edr_action(action: &str) -> aetherix_agent::edr::EdrAction {
         "quarantine_restore" | "restore_quarantine" | "release_from_quarantine" => {
             aetherix_agent::edr::EdrAction::QuarantineRestore
         }
+        "rollback" | "rollback_restore" => aetherix_agent::edr::EdrAction::Rollback,
         _ => aetherix_agent::edr::EdrAction::Review,
     }
 }
@@ -1224,6 +1318,7 @@ fn dangerous_remote_action(action: &aetherix_agent::edr::EdrAction) -> bool {
         aetherix_agent::edr::EdrAction::Quarantine
             | aetherix_agent::edr::EdrAction::Kill
             | aetherix_agent::edr::EdrAction::Isolate
+            | aetherix_agent::edr::EdrAction::Rollback
     )
 }
 
@@ -1249,6 +1344,9 @@ fn remote_action_is_policy_promoted(
             aetherix_agent::edr::EdrAction::Isolate => {
                 aetherix_agent::edr::EdrDetectionKind::RansomwareCanary
             }
+            aetherix_agent::edr::EdrAction::Rollback => {
+                aetherix_agent::edr::EdrDetectionKind::RansomwareRollback
+            }
             _ => aetherix_agent::edr::EdrDetectionKind::ResponseAction,
         });
     active_policy.edr_action_for_kind(&kind) == *action
@@ -1259,6 +1357,7 @@ fn parse_remote_detection_kind(value: &str) -> Option<aetherix_agent::edr::EdrDe
         "yara_match" => Some(aetherix_agent::edr::EdrDetectionKind::YaraMatch),
         "ioc_match" => Some(aetherix_agent::edr::EdrDetectionKind::IocMatch),
         "ransomware_canary" => Some(aetherix_agent::edr::EdrDetectionKind::RansomwareCanary),
+        "ransomware_rollback" => Some(aetherix_agent::edr::EdrDetectionKind::RansomwareRollback),
         "suspicious_process_chain" => Some(
             aetherix_agent::edr::EdrDetectionKind::SuspiciousProcessChain,
         ),
@@ -1268,6 +1367,12 @@ fn parse_remote_detection_kind(value: &str) -> Option<aetherix_agent::edr::EdrDe
 
 fn emit_remote_action_evidence(context: &HeartbeatContext, event: aetherix_agent::edr::EdrEvent) {
     let endpoint = format!("{}/agent/heartbeat", context.api_url.trim_end_matches('/'));
+    let rollback_readiness = Some(
+        aetherix_agent::edr::rollback::compute_rollback_readiness(
+            context.rollback_provider,
+            &[],
+        ),
+    );
     let hb = Heartbeat {
         agent_id: context.credentials.agent_id.clone(),
         hostname: context.hostname.to_string(),
@@ -1282,10 +1387,517 @@ fn emit_remote_action_evidence(context: &HeartbeatContext, event: aetherix_agent
         fim_events: Vec::new(),
         edr_events: vec![event],
         cis_results: Vec::new(),
+        rollback_readiness,
     };
     if let Err(err) = context.client.post(endpoint).json(&hb).send() {
         eprintln!("aetherix-agent: failed to emit remote response evidence: {err}");
     }
+}
+
+/// Handle a `rollback` action from the control-plane action queue.
+///
+/// Validates the approved intent (expiry, required fields), checks policy
+/// promotion, calls `RollbackProvider::restore()`, and returns an `EdrEvent`
+/// carrying both `ResponseEvidence` (for compatibility) and `RollbackEvidence`
+/// (for the full rollback-specific schema).
+///
+/// Every code path (including refusal and error) produces both evidence types
+/// so the control plane always has a complete audit record.
+fn handle_remote_rollback_action(
+    action: &ModuleAction,
+    active_policy: &policy::RuntimePolicy,
+    context: &HeartbeatContext,
+) -> aetherix_agent::edr::EdrEvent {
+    use aetherix_agent::edr::rollback;
+    use aetherix_agent::edr::{EdrAction, EdrDetectionKind, EdrEvent, ResponseStatus};
+
+    let action_name = action.action.as_str();
+    let evidence_controls = action
+        .evidence_controls
+        .clone()
+        .unwrap_or_else(|| active_policy.evidence_controls.clone());
+
+    // --- Endpoint / tenant binding verification ---
+    if action.target_id != context.credentials.agent_id {
+        return build_rollback_refusal_event(
+            &action.id,
+            action_name,
+            active_policy,
+            evidence_controls,
+            ResponseStatus::NotApplicable,
+            &[
+                "endpoint binding mismatch: action target_id does not match this agent".to_string(),
+                format!("action.target_id={}, agent_id={}", action.target_id, context.credentials.agent_id),
+                format!("action_queue_id={}", action.id),
+            ],
+            "endpoint_binding_mismatch",
+            "not_applicable",
+            Some("this action was not issued for this endpoint"),
+        );
+    }
+    if let Some(payload) = action.payload.as_ref() {
+        if let Some(action_customer) = payload.get("customer_id").and_then(|v| v.as_str()) {
+            let my_customer = context.credentials.customer_id.as_deref().unwrap_or("");
+            if !action_customer.is_empty() && action_customer != my_customer {
+                return build_rollback_refusal_event(
+                    &action.id,
+                    action_name,
+                    active_policy,
+                    evidence_controls,
+                    ResponseStatus::NotApplicable,
+                    &[
+                        "tenant binding mismatch: action customer_id does not match this agent".to_string(),
+                        format!("action.customer_id={action_customer}, agent.customer_id={my_customer}"),
+                        format!("action_queue_id={}", action.id),
+                    ],
+                    "tenant_binding_mismatch",
+                    "not_applicable",
+                    Some("this action was issued for a different tenant"),
+                );
+            }
+        }
+    }
+
+    // --- Idempotency guard + cached-evidence return ---
+    if rollback::is_action_consumed(&action.id) {
+        if let Some(cached) = rollback::load_evidence(&action.id) {
+            let mut cached = cached;
+            cached
+                .decision_trace
+                .push(format!("cached_re_report: approved_action_id={}", action.id));
+            cached.evidence_controls = evidence_controls.clone();
+
+            let mut response = rollback::convert_rollback_evidence_to_response(&cached);
+            response
+                .decision_trace
+                .push(format!("cached_re_report: approved_action_id={}", action.id));
+            response.evidence_controls = evidence_controls.clone();
+
+            let mut event = EdrEvent::new(
+                EdrDetectionKind::RansomwareRollback,
+                &cached.simulation_id,
+                EdrAction::Rollback,
+                &active_policy.policy_version_hash,
+            );
+            event.evidence_controls = evidence_controls.clone();
+            event.tags.push("remote_response_action".to_string());
+            event.tags.push(format!("remote_action:{action_name}"));
+            event.tags.push("rollback_cached".to_string());
+            event.matched_indicator = Some(action.id.clone());
+            event.response = Some(response);
+            event.rollback_evidence = Some(cached);
+            return event;
+        }
+        return build_rollback_refusal_event(
+            &action.id,
+            action_name,
+            active_policy,
+            evidence_controls,
+            ResponseStatus::NotApplicable,
+            &[
+                format!(
+                    "rollback action {} already consumed on this endpoint",
+                    action.id
+                ),
+                format!("action_queue_id={}", action.id),
+            ],
+            "action_already_consumed",
+            "not_applicable",
+            Some("duplicate intent: action already consumed — cached evidence unavailable"),
+        );
+    }
+
+    // --- Parse payload ---
+    let payload = match action.payload.as_ref() {
+        Some(p) => p,
+        None => {
+            return build_rollback_refusal_event(
+                &action.id,
+                action_name,
+                active_policy,
+                evidence_controls,
+                ResponseStatus::Failed,
+                &[
+                    "rollback intent missing payload".to_string(),
+                    format!("action_queue_id={}", action.id),
+                ],
+                "rollback intent payload is empty",
+                "failed",
+                None,
+            );
+        }
+    };
+
+    // --- Parse the approved rollback intent ---
+    let intent = match rollback::parse_rollback_intent(&action.id, payload) {
+        Some(i) => i,
+        None => {
+            return build_rollback_refusal_event(
+                &action.id,
+                action_name,
+                active_policy,
+                evidence_controls,
+                ResponseStatus::Failed,
+                &[
+                    "rollback intent missing required fields (simulation_id, candidate_set_hash, recovery_point_id, valid_until)".to_string(),
+                    format!("action_queue_id={}", action.id),
+                ],
+                "malformed rollback intent",
+                "failed",
+                None,
+            );
+        }
+    };
+
+    // --- Validate intent expiry ---
+    if let Err(err) = rollback::validate_intent_expiry(&intent) {
+        return build_rollback_refusal_event(
+            &action.id,
+            action_name,
+            active_policy,
+            evidence_controls,
+            ResponseStatus::NotApplicable,
+            &[
+                format!("rollback intent expired: {err}"),
+                format!("action_queue_id={}", action.id),
+                format!("simulation_id={}", intent.simulation_id),
+            ],
+            "intent_expired",
+            "not_applicable",
+            Some(&format!("intent expired: {err}")),
+        );
+    }
+
+    // --- Policy check: rollback is destructive and must be policy-promoted ---
+    if !remote_action_is_policy_promoted(&EdrAction::Rollback, Some(payload), active_policy) {
+        return build_rollback_refusal_event(
+            &action.id,
+            action_name,
+            active_policy,
+            evidence_controls,
+            ResponseStatus::Staged,
+            &[
+                "rollback action denied: current policy has not promoted rollback for this detection kind".to_string(),
+                format!("action_queue_id={}", action.id),
+                format!("simulation_id={}", intent.simulation_id),
+            ],
+            "policy_not_promoted",
+            "staged",
+            Some("current policy has not promoted rollback for this detection kind"),
+        );
+    }
+
+    // --- Correlation link entries from payload (if present) ---
+    let mut correlation_links: Vec<String> = Vec::new();
+    if let Some(corr_ids) = payload.get("correlation_link_ids").and_then(|v| v.as_array()) {
+        for v in corr_ids {
+            if let Some(id) = v.as_str() {
+                correlation_links.push(format!("corroborated_by_correlation_link:{id}"));
+            }
+        }
+    }
+    // Also support a single link
+    if correlation_links.is_empty() {
+        if let Some(id) = payload.get("correlation_link_id").and_then(|v| v.as_str()) {
+            correlation_links.push(format!("corroborated_by_correlation_link:{id}"));
+        }
+    }
+
+    // --- Execute via provider ---
+    let candidates = rollback::intent_to_candidate_set(&intent);
+    let rollback_evidence = match context.rollback_provider.restore(&candidates, &action.id) {
+        Ok(mut ev) => {
+            ev.decision_trace.extend(correlation_links.clone());
+            ev
+        }
+        Err(err) => {
+            rollback::mark_action_consumed(&action.id);
+            let refusal = build_rollback_refusal_event(
+                &action.id,
+                action_name,
+                active_policy,
+                evidence_controls,
+                ResponseStatus::Failed,
+                &[
+                    "rollback provider returned error".to_string(),
+                    format!("provider_error={err}"),
+                    format!("action_queue_id={}", action.id),
+                    format!("simulation_id={}", intent.simulation_id),
+                ],
+                &format!("rollback_provider_error: {err}"),
+                "failed",
+                Some(&format!("provider error: {err}")),
+            );
+            if let Some(ref ev) = refusal.rollback_evidence {
+                rollback::store_evidence(&action.id, ev);
+                rollback::evict_old_evidence();
+            }
+            return refusal;
+        }
+    };
+
+    // --- Mark as consumed (idempotency) and persist evidence ---
+    rollback::mark_action_consumed(&action.id);
+    rollback::store_evidence(&action.id, &rollback_evidence);
+    rollback::evict_old_evidence();
+
+    // --- Success: convert and attach both evidence types ---
+    let response = rollback::convert_rollback_evidence_to_response(&rollback_evidence);
+    let mut event = EdrEvent::new(
+        EdrDetectionKind::RansomwareRollback,
+        &intent.simulation_id,
+        EdrAction::Rollback,
+        &active_policy.policy_version_hash,
+    );
+    event.evidence_controls = evidence_controls;
+    event.tags.push("remote_response_action".to_string());
+    event.tags.push(format!("remote_action:{action_name}"));
+    event.tags.push("rollback_executed".to_string());
+    event.matched_indicator = Some(action.id.clone());
+    event.response = Some(response);
+    event.rollback_evidence = Some(rollback_evidence);
+    event
+}
+
+/// Build an `EdrEvent` for a rollback refusal or error, attaching both
+/// `ResponseEvidence` and `RollbackEvidence` so the evidence pipeline always
+/// sees a complete record.
+///
+/// `action_name` — the original module action string (e.g. `"rollback"`,
+/// `"rollback_restore"`, `"rollback_simulate"`) used for evidence tags so the
+/// control plane can distinguish the action variant that was refused.
+#[allow(clippy::too_many_arguments)]
+fn build_rollback_refusal_event(
+    action_id: &str,
+    action_name: &str,
+    active_policy: &policy::RuntimePolicy,
+    evidence_controls: Vec<String>,
+    response_status: aetherix_agent::edr::ResponseStatus,
+    decision_trace: &[String],
+    error_message: &str,
+    rollback_status: &str,
+    provider_refusal: Option<&str>,
+) -> aetherix_agent::edr::EdrEvent {
+    let mut event = aetherix_agent::edr::EdrEvent::new(
+        aetherix_agent::edr::EdrDetectionKind::RansomwareRollback,
+        "rollback",
+        aetherix_agent::edr::EdrAction::Review,
+        &active_policy.policy_version_hash,
+    );
+    event.evidence_controls = evidence_controls.clone();
+    event.tags.push("remote_response_action".to_string());
+    event.tags.push(format!("remote_action:{action_name}"));
+    event.tags.push(format!("rollback_{rollback_status}"));
+    event.matched_indicator = Some(action_id.to_string());
+
+    let resp = aetherix_agent::edr::ResponseEvidence {
+        action: aetherix_agent::edr::EdrAction::Review,
+        status: response_status,
+        attempted_at: chrono::Utc::now().to_rfc3339(),
+        policy_version: active_policy.policy_version_hash.clone(),
+        rule_id: "rollback".to_string(),
+        target_pid: None,
+        target_path: None,
+        file_sha256: None,
+        platform: std::env::consts::OS.to_string(),
+        platform_api: "rollback-provider".to_string(),
+        decision_trace: decision_trace.to_vec(),
+        error: Some(error_message.to_string()),
+        quarantine: None,
+        quarantine_items: vec![],
+        evidence_controls: evidence_controls.clone(),
+    };
+    event.response = Some(resp);
+
+    // Attach a minimal RollbackEvidence so the field is always populated.
+    event.rollback_evidence = Some(aetherix_agent::edr::rollback::RollbackEvidence {
+        status: rollback_status.to_string(),
+        decision_trace: decision_trace.to_vec(),
+        evidence_controls: evidence_controls.clone(),
+        endpoint_id: String::new(),
+        customer_id: None,
+        policy_version: active_policy.policy_version_hash.clone(),
+        requester_id: String::new(),
+        approver_ids: vec![],
+        simulation_id: String::new(),
+        candidate_set_hash: String::new(),
+        approved_action_id: action_id.to_string(),
+        provider: "noop".to_string(),
+        recovery_point_id: String::new(),
+        recovery_point_created_at: String::new(),
+        recovery_point_expires_at: None,
+        recovery_point_verified: false,
+        metadata_preserved: None,
+        provider_refusal: provider_refusal.map(str::to_string),
+        restored_paths: vec![],
+        failed_paths: vec![],
+        skipped_paths: vec![],
+        provider_version: "0.1.0".to_string(),
+        os_platform: std::env::consts::OS.to_string(),
+        privilege_context: "none".to_string(),
+    });
+
+    event
+}
+
+/// Handle a `rollback_simulate` action — calls `RollbackProvider::simulate_restore`
+/// and returns results as response evidence. Does NOT mutate the host.
+fn handle_remote_rollback_simulation(
+    action: &ModuleAction,
+    active_policy: &policy::RuntimePolicy,
+    context: &HeartbeatContext,
+) -> aetherix_agent::edr::EdrEvent {
+    use aetherix_agent::edr::rollback;
+    use aetherix_agent::edr::{EdrAction, EdrDetectionKind, EdrEvent, ResponseStatus};
+
+    let action_name = action.action.as_str();
+    let evidence_controls = action
+        .evidence_controls
+        .clone()
+        .unwrap_or_else(|| active_policy.evidence_controls.clone());
+
+    let payload = match action.payload.as_ref() {
+        Some(p) => p,
+        None => {
+            return build_rollback_refusal_event(
+                &action.id,
+                "rollback_simulate",
+                active_policy,
+                evidence_controls,
+                ResponseStatus::Failed,
+                &[
+                    "rollback simulation missing payload".to_string(),
+                    format!("action_queue_id={}", action.id),
+                ],
+                "rollback simulation payload is empty",
+                "failed",
+                None,
+            );
+        }
+    };
+
+    // Parse simulation fields (subset of the restore intent)
+    let simulation_id = payload
+        .get("simulation_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sim");
+    let candidate_set_hash = payload
+        .get("candidate_set_hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let recovery_point_id = payload
+        .get("recovery_point_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let affected_paths: Vec<String> = payload
+        .get("affected_paths")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let max_depth = payload
+        .get("max_depth")
+        .and_then(|v| v.as_u64())
+        .map(|d| d as u8)
+        .unwrap_or(8);
+
+    let scope = rollback::RollbackScope {
+        incident_id: action.id.clone(),
+        detector_rule_id: simulation_id.to_string(),
+        affected_paths: affected_paths.clone(),
+        observed_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    let candidates = rollback::RollbackCandidateSet {
+        scope,
+        recovery_point_id: recovery_point_id.to_string(),
+        paths: affected_paths,
+        total_bytes_estimate: payload
+            .get("total_bytes_estimate")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        max_depth,
+        candidate_set_hash: candidate_set_hash.to_string(),
+    };
+
+    let sim_result = match context.rollback_provider.simulate_restore(&candidates) {
+        Ok(sim) => sim,
+        Err(err) => {
+            return build_rollback_refusal_event(
+                &action.id,
+                action_name,
+                active_policy,
+                evidence_controls,
+                ResponseStatus::Failed,
+                &[
+                    "rollback simulation provider error".to_string(),
+                    format!("provider_error={err}"),
+                    format!("action_queue_id={}", action.id),
+                ],
+                &format!("simulation_provider_error: {err}"),
+                "failed",
+                Some(&format!("simulation error: {err}")),
+            );
+        }
+    };
+
+    // Build event with simulation result in decision trace and response
+    let mut decision_trace = vec![
+        format!("simulation_result: {} candidate(s), {} restorable, {} skipped",
+            sim_result.candidate_count,
+            sim_result.restorable_count,
+            sim_result.skipped_paths.len(),
+        ),
+        format!("simulation_id={}", sim_result.simulation_id),
+        format!("candidate_set_hash={}", sim_result.candidate_set_hash),
+        format!("destructive={}", sim_result.destructive),
+        format!("valid_until={}", sim_result.valid_until),
+    ];
+
+    // Add correlation link entries from payload
+    if let Some(corr_ids) = payload.get("correlation_link_ids").and_then(|v| v.as_array()) {
+        for v in corr_ids {
+            if let Some(id) = v.as_str() {
+                decision_trace.push(format!("corroborated_by_correlation_link:{id}"));
+            }
+        }
+    }
+    if let Some(id) = payload.get("correlation_link_id").and_then(|v| v.as_str()) {
+        decision_trace.push(format!("corroborated_by_correlation_link:{id}"));
+    }
+
+    decision_trace.extend(sim_result.decision_trace);
+
+    let response = aetherix_agent::edr::ResponseEvidence {
+        action: EdrAction::Review,
+        status: ResponseStatus::Executed,
+        attempted_at: chrono::Utc::now().to_rfc3339(),
+        policy_version: active_policy.policy_version_hash.clone(),
+        rule_id: simulation_id.to_string(),
+        target_pid: None,
+        target_path: None,
+        file_sha256: None,
+        platform: std::env::consts::OS.to_string(),
+        platform_api: "rollback:simulation".to_string(),
+        decision_trace,
+        error: None,
+        quarantine: None,
+        quarantine_items: vec![],
+        evidence_controls: evidence_controls.clone(),
+    };
+
+    let mut event = EdrEvent::new(
+        EdrDetectionKind::RansomwareRollback,
+        simulation_id,
+        EdrAction::Review,
+        &active_policy.policy_version_hash,
+    );
+    event.evidence_controls = evidence_controls;
+    event.tags.push("remote_response_action".to_string());
+    event.tags.push("remote_action:rollback_simulate".to_string());
+    event.tags.push("rollback_simulation".to_string());
+    event.matched_indicator = Some(action.id.clone());
+    event.response = Some(response);
+    event
 }
 
 #[cfg(unix)]

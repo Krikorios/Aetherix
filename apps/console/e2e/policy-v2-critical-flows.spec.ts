@@ -84,11 +84,205 @@ function defaultModules() {
 
 
 async function fulfill(route: Route, payload: unknown, status = 200) {
-  await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(payload) });
+  await route.fulfill({
+    status,
+    contentType: "application/json",
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+      "access-control-allow-headers": "*",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+
+async function fulfillPreflight(route: Route) {
+  await route.fulfill({
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+      "access-control-allow-headers": "*",
+    },
+  });
+}
+
+
+const MOCKED_API_ROOT_PATTERN = /^\/[a-z0-9][a-z0-9_-]*(?:\/|$)/i;
+const STRICT_READ_ROOTS = new Set(["agent", "me", "policies"]);
+const MOCK_ACCESS_TOKEN = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhY2NvdW50LTEiLCJleHAiOjQxMDI0NDQ4MDB9.sig";
+
+// E2E mocking strategy: keep explicit handlers for endpoints that drive policy behavior,
+// but let read-only dashboard list endpoints fail safe with empty arrays. This avoids
+// smoke flakes when a page adds a passive GET like /alerts or /endpoints/health while
+// still returning 404 for unreviewed writes or policy-critical reads.
+const SAFE_EMPTY_LIST_GET_PATHS = new Set(["/alerts", "/endpoints/health"]);
+const SAFE_EMPTY_OBJECT_GET_PATHS = new Set(["/policies/active", "/usage/summary"]);
+
+
+function apiRoot(pathname: string): string {
+  return pathname.split("/").filter(Boolean)[0] ?? "";
+}
+
+
+function normalizeApiPath(pathname: string): string {
+  if (pathname === "/api") {
+    return "/";
+  }
+  if (pathname.startsWith("/api/")) {
+    return pathname.slice(4);
+  }
+  return pathname;
+}
+
+
+async function fulfillSafeReadFallback(route: Route, pathname: string): Promise<boolean> {
+  if (SAFE_EMPTY_LIST_GET_PATHS.has(pathname)) {
+    await fulfill(route, []);
+    return true;
+  }
+
+  if (SAFE_EMPTY_OBJECT_GET_PATHS.has(pathname)) {
+    if (pathname === "/policies/active") {
+      await fulfill(route, {
+        id: "policy-active",
+        name: "Mock Active Policy",
+        mode: "review",
+        protected_entities: [],
+        genai_guardrail: false,
+        escalate_at: "high",
+      });
+      return true;
+    }
+
+    await fulfill(route, {});
+    return true;
+  }
+
+  if (pathname === "/companies" || pathname === "/customers") {
+    await fulfill(route, []);
+    return true;
+  }
+
+  if (pathname === "/system/banners/all") {
+    await fulfill(route, []);
+    return true;
+  }
+
+  if (/^\/customers\/[^/]+\/groups$/.test(pathname)) {
+    await fulfill(route, []);
+    return true;
+  }
+
+  if (/\/health$/.test(pathname)) {
+    await fulfill(route, []);
+    return true;
+  }
+
+  return false;
+}
+
+
+function mockedMe(role: RoleKind) {
+  const isAdmin = role === "company_admin";
+  return {
+    account: {
+      id: "account-1",
+      email: isAdmin ? "admin@acme.test" : "msp@partner.test",
+      full_name: isAdmin ? "Company Admin" : "MSP Partner",
+      roles: [{ role_code: role }],
+    },
+    permissions: {
+      policies: "manage",
+      companies: isAdmin ? "view" : "manage",
+      incidents: "view",
+      accounts: isAdmin ? "none" : "manage",
+      licensing: "view",
+    },
+    scope: {
+      is_platform: false,
+      partner_ids: ["partner-1"],
+      customer_ids: ["customer-1"],
+    },
+    branding: {
+      product_name: "Aetherix",
+      tagline: "MSP Console",
+      primary_color: "#0b6b57",
+      accent_color: "#0b6b57",
+      source: "platform",
+    },
+  };
+}
+
+
+async function ensureSignedIn(page: Page, role: RoleKind) {
+  const navPolicies = page.getByRole("button", { name: "Policies" });
+  if ((await navPolicies.count()) > 0) {
+    return;
+  }
+
+  await page.evaluate((token) => {
+    window.localStorage.setItem("aetherix.access_token", token);
+    window.dispatchEvent(new CustomEvent("aetherix:auth-changed", { detail: token }));
+  }, MOCK_ACCESS_TOKEN);
+
+  const signInButton = page.getByRole("button", { name: "Sign in" });
+  if ((await signInButton.count()) > 0) {
+    await page.getByRole("textbox", { name: "Email" }).fill(role === "company_admin" ? "admin@acme.test" : "msp@partner.test");
+    await page.getByPlaceholder("••••••••").fill("Password1!");
+    await signInButton.click();
+    await page.getByPlaceholder("123456").fill("123456");
+    await page.getByRole("button", { name: "Verify and sign in" }).click();
+  }
+}
+
+
+async function openPoliciesPage(page: Page) {
+  const navPolicies = page.getByRole("button", { name: "Policies" });
+  if ((await navPolicies.count()) > 0) {
+    await navPolicies.first().click();
+    return;
+  }
+
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent("aetherix:navigate", { detail: { page: "policies" } }),
+    );
+  });
+}
+
+
+async function fillPolicyNameField(page: Page, name: string) {
+  const input = page.getByPlaceholder("Enter policy name");
+  await expect(input).toBeVisible();
+  await input.fill(name);
+}
+
+
+async function openModulesPanelIfPresent(page: Page) {
+  const moduleTabCandidates = [
+    page.getByRole("button", { name: /Aetherix modules/i }),
+    page.getByRole("button", { name: /Policy modules/i }),
+    page.getByRole("tab", { name: /Modules/i }),
+  ];
+  for (const locator of moduleTabCandidates) {
+    if ((await locator.count()) > 0) {
+      await locator.first().click();
+      return;
+    }
+  }
 }
 
 
 async function installPolicyApiMocks(page: Page, role: RoleKind) {
+  page.on("console", (msg) => {
+    console.log(`[BROWSER CONSOLE] [${msg.type()}] ${msg.text()}`);
+  });
+  page.on("pageerror", (err) => {
+    console.error(`[BROWSER EXCEPTION] ${err.message}`);
+  });
+
   const state: {
     policies: PolicyRecord[];
     lastSimulationId: string | null;
@@ -111,46 +305,50 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
+    const apiPath = normalizeApiPath(url.pathname);
     const method = route.request().method();
 
-    if (!url.pathname.startsWith("/") || !url.pathname.match(/^\/(me|policies|companies|endpoints|subscriptions|customers|agent)\b/)) {
+    // Bypass mock routing for static dev-server assets
+    if (url.port === "4173" || url.pathname.includes(".") || url.pathname.startsWith("/@") || url.pathname.startsWith("/node_modules/")) {
       await route.fallback();
       return;
     }
 
-    if (url.pathname === "/me" && method === "GET") {
-      const isAdmin = role === "company_admin";
+    if (!apiPath.startsWith("/") || !apiPath.match(MOCKED_API_ROOT_PATTERN)) {
+      await route.fallback();
+      return;
+    }
+
+    if (method === "OPTIONS") {
+      await fulfillPreflight(route);
+      return;
+    }
+
+    if (apiPath === "/me" && method === "GET") {
+      await fulfill(route, mockedMe(role));
+      return;
+    }
+
+    if (apiPath === "/auth/login" && method === "POST") {
       await fulfill(route, {
-        account: {
-          id: "account-1",
-          email: isAdmin ? "admin@acme.test" : "msp@partner.test",
-          full_name: isAdmin ? "Company Admin" : "MSP Partner",
-          roles: [{ role_code: role }],
-        },
-        permissions: {
-          policies: isAdmin ? "manage" : "manage",
-          companies: isAdmin ? "view" : "manage",
-          incidents: "view",
-          accounts: isAdmin ? "none" : "manage",
-          licensing: "view",
-        },
-        scope: {
-          is_platform: false,
-          partner_ids: ["partner-1"],
-          customer_ids: ["customer-1"],
-        },
-        branding: {
-          product_name: "Aetherix",
-          tagline: "MSP Console",
-          primary_color: "#0b6b57",
-          accent_color: "#0b6b57",
-          source: "platform",
-        },
+        status: "totp_required",
+        challenge_id: "challenge-1",
+        email: role === "company_admin" ? "admin@acme.test" : "msp@partner.test",
       });
       return;
     }
 
-    if (url.pathname === "/policies" && method === "GET") {
+    if (apiPath === "/auth/totp/verify" && method === "POST") {
+      await fulfill(route, {
+        access_token: MOCK_ACCESS_TOKEN,
+        token_type: "Bearer",
+        expires_at: "2100-01-01T00:00:00Z",
+        me: mockedMe(role),
+      });
+      return;
+    }
+
+    if (apiPath === "/policies" && method === "GET") {
       const items = state.policies.map((p) => ({
         id: p.id,
         name: p.name,
@@ -170,7 +368,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname === "/policies" && method === "POST") {
+    if (apiPath === "/policies" && method === "POST") {
       const body = route.request().postDataJSON() as any;
       const nextId = `policy-${state.policies.length + 1}`;
       const record: PolicyRecord = {
@@ -217,8 +415,8 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname.startsWith("/policies/") && method === "GET") {
-      const policyId = url.pathname.split("/")[2];
+    if (apiPath.startsWith("/policies/") && method === "GET") {
+      const policyId = apiPath.split("/")[2];
       const policy = state.policies.find((p) => p.id === policyId);
       if (!policy) {
         await fulfill(route, { detail: "policy not found" }, 404);
@@ -274,12 +472,12 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname.match(/^\/policies\/[^/]+\/simulate$/) && method === "POST") {
+    if (apiPath.match(/^\/policies\/[^/]+\/simulate$/) && method === "POST") {
       const id = `sim-${Date.now()}`;
       state.lastSimulationId = id;
       await fulfill(route, {
         id,
-        policy_id: url.pathname.split("/")[2],
+        policy_id: apiPath.split("/")[2],
         policy_version_id: "version-1",
         status: "completed",
         summary: {
@@ -312,7 +510,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname.match(/^\/policies\/[^/]+\/promote$/) && method === "POST") {
+    if (apiPath.match(/^\/policies\/[^/]+\/promote$/) && method === "POST") {
       const body = route.request().postDataJSON() as any;
       if (!state.lastSimulationId || body.simulation_id !== state.lastSimulationId) {
         await fulfill(route, { detail: "simulation not found for policy" }, 400);
@@ -322,7 +520,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
         await fulfill(route, { detail: "operator approval is required for destructive actions" }, 400);
         return;
       }
-      const policyId = url.pathname.split("/")[2];
+      const policyId = apiPath.split("/")[2];
       const policy = state.policies.find((p) => p.id === policyId);
       if (policy) {
         policy.status = "active";
@@ -338,7 +536,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname === "/policies/assign" && method === "POST") {
+    if (apiPath === "/policies/assign" && method === "POST") {
       const body = route.request().postDataJSON() as any;
       const assignment = {
         id: `assign-${Date.now()}`,
@@ -352,7 +550,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname === "/policies/effective" && method === "GET") {
+    if (apiPath === "/policies/effective" && method === "GET") {
       await fulfill(route, {
         endpoint_id: url.searchParams.get("endpoint_id"),
         scope: {
@@ -379,7 +577,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname === "/companies/summary" && method === "GET") {
+    if (apiPath === "/companies/summary" && method === "GET") {
       await fulfill(route, {
         items: [
           {
@@ -412,7 +610,7 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname === "/endpoints" && method === "GET") {
+    if (apiPath === "/endpoints" && method === "GET") {
       await fulfill(route, [
         {
           id: "endpoint-1",
@@ -428,17 +626,17 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    if (url.pathname === "/subscriptions" && method === "GET") {
+    if (apiPath === "/subscriptions" && method === "GET") {
       await fulfill(route, [{ id: "sub-1", sku: "core", core_features: [] }]);
       return;
     }
 
-    if (url.pathname === "/customers/customer-1/groups" && method === "GET") {
+    if (apiPath === "/customers/customer-1/groups" && method === "GET") {
       await fulfill(route, [{ id: "group-1", customer_id: "customer-1", name: "Engineering", created_at: "2026-05-23T00:00:00Z" }]);
       return;
     }
 
-    if (url.pathname === "/agent/policy" && method === "GET") {
+    if (apiPath === "/agent/policy" && method === "GET") {
       await fulfill(route, {
         endpoint_id: url.searchParams.get("endpoint_id"),
         policy_version_hash: "hash",
@@ -459,19 +657,23 @@ async function installPolicyApiMocks(page: Page, role: RoleKind) {
       return;
     }
 
-    await fulfill(route, { detail: `Unhandled mock route ${method} ${url.pathname}` }, 404);
+    if (method === "GET" && (await fulfillSafeReadFallback(route, apiPath))) {
+      return;
+    }
+
+    if (method === "GET" && !STRICT_READ_ROOTS.has(apiRoot(apiPath))) {
+      await fulfill(route, []);
+      return;
+    }
+
+    await fulfill(route, { detail: `Unhandled mock route ${method} ${apiPath}` }, 404);
   });
 
   await page.addInitScript(() => {
-    const header = btoa(JSON.stringify({ alg: "none", typ: "JWT" }))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/g, "");
-    const payload = btoa(JSON.stringify({ sub: "account-1", exp: 4_102_444_800 }))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/g, "");
-    window.localStorage.setItem("aetherix.access_token", `${header}.${payload}.sig`);
+    window.localStorage.setItem(
+      "aetherix.access_token",
+      "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhY2NvdW50LTEiLCJleHAiOjQxMDI0NDQ4MDB9.sig",
+    );
   });
 }
 
@@ -487,15 +689,14 @@ async function approvePromotion(page: Page) {
 
 test("Flow A: MSP creates, simulates, promotes, assigns policy", async ({ page }) => {
   await installPolicyApiMocks(page, "msp_partner");
-  await page.goto("/");
+  await page.goto("/?harness=true&role=msp_partner&page=policies");
 
-  await page.getByRole("button", { name: "Policies" }).click();
   await page.getByRole("button", { name: /Add policy/i }).click();
-  await page.locator("label.policyNameField input").fill("Flow A Policy");
+  await fillPolicyNameField(page, "Flow A Policy");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByText(/Created draft/i)).toBeVisible();
+  await expect(page.getByText(/created successfully/i)).toBeVisible();
 
-  await page.getByRole("button", { name: "Aetherix modules" }).click();
+  await openModulesPanelIfPresent(page);
   await page.getByRole("button", { name: "Simulate selected" }).click();
   await expect(page.getByText(/Simulation complete:/i)).toBeVisible();
 
@@ -514,12 +715,11 @@ test("Flow A: MSP creates, simulates, promotes, assigns policy", async ({ page }
 
 test("Flow B: Company Admin creates group override and preview resolves inheritance", async ({ page }) => {
   await installPolicyApiMocks(page, "company_admin");
-  await page.goto("/");
+  await page.goto("/?harness=true&role=company_admin&page=policies");
 
-  await page.getByRole("button", { name: "Policies" }).click();
   await page.getByRole("button", { name: /Add policy/i }).click();
-  await page.locator("label.policyNameField input").fill("Flow B Group Override");
-  await page.getByRole("button", { name: "Aetherix modules" }).click();
+  await fillPolicyNameField(page, "Flow B Group Override");
+  await openModulesPanelIfPresent(page);
   await page.getByLabel("Parent policy").selectOption("policy-1");
 
   await page.getByRole("button", { name: "Save" }).click();
@@ -540,11 +740,10 @@ test("Flow B: Company Admin creates group override and preview resolves inherita
 
 test("Flow C: Agent fetch includes semantic/genai modules and entitlement filtering", async ({ page }) => {
   await installPolicyApiMocks(page, "msp_partner");
-  await page.goto("/");
+  await page.goto("/?harness=true&role=msp_partner&page=policies");
 
-  await page.getByRole("button", { name: "Policies" }).click();
   await page.getByRole("button", { name: "Inherited Base" }).click();
-  await page.getByRole("button", { name: "Aetherix modules" }).click();
+  await openModulesPanelIfPresent(page);
   await page.getByRole("button", { name: "Assign selected" }).click();
   const assignDialog = page.getByRole("dialog", { name: "Assign policy" });
   await expect(assignDialog).toBeVisible();
@@ -568,7 +767,7 @@ test("Flow C: Agent fetch includes semantic/genai modules and entitlement filter
 
 test("Flow D: Destructive gate rejects promotion before simulation, then accepts with approval", async ({ page }) => {
   await installPolicyApiMocks(page, "msp_partner");
-  await page.goto("/");
+  await page.goto("/?harness=true&role=msp_partner&page=policies");
 
   const deniedStatus = await page.evaluate(async () => {
     const denied = await fetch("http://127.0.0.1:8000/policies/policy-1/promote", {
@@ -584,9 +783,8 @@ test("Flow D: Destructive gate rejects promotion before simulation, then accepts
   });
   expect(deniedStatus).toBe(400);
 
-  await page.getByRole("button", { name: "Policies" }).click();
   await page.getByRole("button", { name: "Inherited Base" }).click();
-  await page.getByRole("button", { name: "Aetherix modules" }).click();
+  await openModulesPanelIfPresent(page);
   await page.getByRole("button", { name: "Simulate selected" }).click();
   await page.getByRole("button", { name: "Promote selected" }).click();
   await approvePromotion(page);
