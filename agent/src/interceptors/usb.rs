@@ -40,6 +40,7 @@ impl UsbInterceptor {
                         content: format!("USB Drive Mounted: {} at {}", name, mount),
                         destination: Some(mount.clone()),
                         process_name: None,
+                        sha256_hash: None,
                     });
                 }
             }

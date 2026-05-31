@@ -176,7 +176,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut active_edr_policy = if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
+    let active_edr_policy = if let (Some(api_url), Some(credentials)) = (api_url.as_deref(), credentials.as_ref()) {
         policy::fetch_effective_policy(&client, api_url, &credentials.agent_id, &credentials.agent_secret).ok()
     } else {
         None
@@ -387,10 +387,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let credentials_clone = credentials.clone();
     let api_url_clone = api_url.clone();
     let client_clone = client.clone();
-    let policy_version_clone = policy_version.clone();
     let active_edr_policy_for_shared = active_edr_policy.clone();
-    let edr_policy_shared = Arc::new(RwLock::new(active_edr_policy.take()));
-    let edr_policy_loop = edr_policy_shared.clone();
     let agent_id_clone = agent_id.clone();
     let hostname_clone = hostname.clone();
     let os_clone = os.clone();
@@ -402,6 +399,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             *guard = Some(policy.clone());
         }
     }
+
+    let shared_policy_heartbeat = shared_policy.clone();
 
     thread::Builder::new()
         .name("aetherix-edr-heartbeat-loop".to_string())
@@ -417,12 +416,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 let mut edr_events = Vec::new();
 
+                let policy_guard = shared_policy_heartbeat.read().ok().and_then(|guard| guard.clone());
+                let current_policy_version = policy_guard
+                    .as_ref()
+                    .map(|p| p.policy_version_hash.clone())
+                    .unwrap_or_else(|| "default-policy-v1".to_string());
+
                 // 1. Run YARA scan and ransomware canary/entropy/mass-write checks on FIM events
                 for event in &fim_events {
                     if event.event_type == fim::FimEventType::Added || event.event_type == fim::FimEventType::Modified {
                         // Dynamic YARA scan
-                        let mut yara_matches = aetherix_agent::edr::yara_scan::scan_path(&event.file_path, &yara_rule_store_arc, &policy_version_clone);
-                        let policy_guard = edr_policy_loop.read().ok().and_then(|guard| guard.clone());
+                        let mut yara_matches = aetherix_agent::edr::yara_scan::scan_path(&event.file_path, &yara_rule_store_arc, &current_policy_version);
                         apply_policy_to_edr_events(&mut yara_matches, policy_guard.as_ref());
                         for y_match in yara_matches {
                             println!("Dynamic YARA Match! File: {} matched rule: {}", event.file_path, y_match.rule_id);
@@ -431,8 +435,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     // Dynamic Ransomware checks
-                    if let Some(mut r_event) = aetherix_agent::edr::ransomware::on_file_change(&event.file_path, &policy_version_clone) {
-                        let policy_guard = edr_policy_loop.read().ok().and_then(|guard| guard.clone());
+                    if let Some(mut r_event) = aetherix_agent::edr::ransomware::on_file_change(&event.file_path, &current_policy_version) {
                         apply_policy_to_edr_events(std::slice::from_mut(&mut r_event), policy_guard.as_ref());
                         println!("Dynamic Ransomware alert! File: {}, rule: {}", event.file_path, r_event.rule_id);
                         edr_events.push(r_event);
@@ -441,8 +444,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
                 // 2. Run Process Tree checks
                 if let Ok(mut pm) = process_monitor_arc.lock() {
-                    let mut proc_events = pm.scan(&policy_version_clone);
-                    let policy_guard = edr_policy_loop.read().ok().and_then(|guard| guard.clone());
+                    let mut proc_events = pm.scan(&current_policy_version);
                     apply_policy_to_edr_events(&mut proc_events, policy_guard.as_ref());
                     edr_events.extend(proc_events);
                 }
@@ -477,7 +479,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                             hostname: hostname_clone.clone(),
                             os: os_clone.clone(),
                             collected_at,
-                            policy_version: policy_version_clone.clone(),
+                            policy_version: current_policy_version.clone(),
                             agent_version: DEFAULT_AGENT_VERSION.to_string(),
                             signature: None,
                             nonce: None,
@@ -501,11 +503,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Shared policy state used by both the DLP enforcement loop (writer)
     // and the local browser bridge (reader). Wrapped in an Arc<RwLock<...>>
     // so refreshes from the loop become visible to the bridge instantly.
-    if let Some(policy) = edr_policy_shared.read().ok().and_then(|guard| guard.clone()) {
-        if let Ok(mut guard) = shared_policy.write() {
-            *guard = Some(policy);
-        }
-    }
 
     let bridge_enabled = env_bool("AETHERIX_ENABLE_LOCAL_BRIDGE");
     let native_bridge_enabled = env_bool("AETHERIX_ENABLE_NATIVE_BRIDGE");
@@ -1804,6 +1801,7 @@ fn build_rollback_refusal_event(
         recovery_point_verified: false,
         metadata_preserved: None,
         provider_refusal: provider_refusal.map(str::to_string),
+        refusal_reason_code: provider_refusal.map(|r| r.to_string()),
         restored_paths: vec![],
         failed_paths: vec![],
         skipped_paths: vec![],

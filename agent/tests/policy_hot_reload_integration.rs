@@ -112,6 +112,7 @@ fn restricted_paste_event() -> DlpEvent {
         content: "[restricted] customer ssn 111-22-3333".to_string(),
         destination: Some("https://chatgpt.com".to_string()),
         process_name: None,
+        sha256_hash: None,
     }
 }
 

@@ -12,6 +12,8 @@ pub struct AgentDlpEvidenceRequest {
     pub destination: Option<String>,
     pub label_detected: Option<String>,
     pub content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
     pub policy_version: String,
     pub endpoint_id: String,
     pub event_type: String,
@@ -34,12 +36,19 @@ pub fn emit_dlp_evidence(
         endpoint_id,
     );
 
+    let raw_sha256 = event.sha256_hash.clone().unwrap_or_else(|| {
+        let mut hasher = Sha256::new();
+        hasher.update(event.content.as_bytes());
+        format!("{:x}", hasher.finalize())
+    });
+
     let payload = AgentDlpEvidenceRequest {
         action_type: decision.action_type.clone(),
         decision: action_to_string(&decision.action).to_string(),
         destination: decision.destination.clone(),
         label_detected: decision.label_detected.clone(),
-        content_hash: redact_hash(&event.content),
+        content_hash: format!("sha256:{}", raw_sha256),
+        sha256_hash: Some(raw_sha256),
         policy_version: policy_version.to_string(),
         endpoint_id: endpoint_id.to_string(),
         event_type: format!("{:?}", event.event_type).to_lowercase(),
@@ -61,6 +70,7 @@ pub fn emit_dlp_evidence(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn redact_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());

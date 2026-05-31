@@ -2,7 +2,7 @@
 
 This repository contains the Aetherix platform: a lightweight Rust endpoint agent, a FastAPI/Postgres control plane, a React/Vite MSP console, policy simulation, tenant-aware customer onboarding, Companies + Licensing, Accounts hierarchy design, and customized installer/Quick Deploy generation.
 
-See [docs/current-capabilities-snapshot-2026-05-29.md](docs/current-capabilities-snapshot-2026-05-29.md) for the latest capability snapshot. Older milestone notes, including [docs/milestone-summary-2026-05-23.md](docs/milestone-summary-2026-05-23.md), are historical records and may not reflect current EDR, rollback, OpenSearch, or authentication status.
+Start with [docs/README.md](docs/README.md) for the active documentation set. Use [docs/current-capabilities-snapshot-2026-05-29.md](docs/current-capabilities-snapshot-2026-05-29.md) for the latest capability snapshot and [docs/roadmap-2026.md](docs/roadmap-2026.md) for the next development phase.
 
 ## Workspace
 
@@ -33,6 +33,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+Use Python 3.12 or 3.13 for the API environment. The current pinned backend dependencies do not yet resolve cleanly on Python 3.14.
 
 Apply database migrations (recommended before starting the API):
 
@@ -127,7 +129,7 @@ cd agent && cargo test
 npm run build
 ```
 
-See [docs/development.md](docs/development.md) for the development checklist, API contracts, and next simulation modules. See [docs/policy-engine.md](docs/policy-engine.md) for the subscription-aware Policy Engine v2 design.
+See [docs/development.md](docs/development.md) for the development checklist, API contracts, and validation workflow. See [docs/policy-engine.md](docs/policy-engine.md) for the subscription-aware Policy Engine v2 design.
 
 ## First POC Goals
 

@@ -1740,6 +1740,12 @@ def ingest_agent_rollback_simulation(
             "provider": payload.provider,
             "recovery_point_id": payload.recovery_point_id,
             "simulation_confidence": confidence,
+            # Rich refusal details from improved SimulationRollbackProvider (Agent 1)
+            "refusal_reasons": [
+                {"path": d.path, "outcome": d.outcome, "reason": d.reason}
+                for d in payload.skipped_paths
+                if getattr(d, "outcome", None) and "Refused" in str(getattr(d, "outcome", ""))
+            ][:10],
         },
     )
 

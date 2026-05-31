@@ -892,3 +892,80 @@ export type QueuedActionItem = ModuleActionResult & {
   hostname: string;
   customer_name: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Production trust surface — SSO/OIDC + impersonation lifecycle (Agent 2/3 contract)
+// ---------------------------------------------------------------------------
+//
+// The console exposes the operator-facing affordances; the server side is
+// owned by Agent 3 per `docs/multi-agent-coordination-protocol.md`. These
+// types are the authoritative shape Agent 3 must honor for parity.
+
+/** Feature flag — keep SSO behind an env switch until at least one IdP is
+ *  enrolled end-to-end. Reads `VITE_AETHERIX_ENABLE_SSO=1` at build time. */
+export const SSO_ENABLED: boolean =
+  (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_AETHERIX_ENABLE_SSO === "1";
+
+export type SsoProvider = "oidc" | "saml";
+
+export type SsoStartResponse = {
+  /** Provider-side URL the console should redirect to (302-equivalent). */
+  redirect_url: string;
+  /** Opaque server-issued state token; echoed back on callback. */
+  state: string;
+};
+
+/** Begin the SSO/OIDC flow. Server returns a provider redirect URL. */
+export function startSsoLogin(provider: SsoProvider, returnTo?: string): Promise<SsoStartResponse> {
+  const params = new URLSearchParams({ provider });
+  if (returnTo) params.set("return_to", returnTo);
+  return apiPost<SsoStartResponse>(`/auth/sso/start?${params.toString()}`, {});
+}
+
+// --- Impersonation -----------------------------------------------------------
+
+export type ImpersonationScope = {
+  partner_id: string | null;
+  customer_id: string | null;
+};
+
+export type ImpersonationSession = {
+  id: string;
+  /** Operator who initiated the session. */
+  actor_account_id: string;
+  /** Account being impersonated. */
+  subject_account_id: string;
+  scope: ImpersonationScope;
+  reason: string;
+  /** ISO timestamp when the session began. */
+  started_at: string;
+  /** ISO timestamp; null while the session is active. */
+  ended_at: string | null;
+  /** Server-issued evidence id (audit spine reference). */
+  evidence_event_id: string;
+};
+
+export type ImpersonationStartRequest = {
+  subject_account_id: string;
+  scope: ImpersonationScope;
+  reason: string;
+};
+
+/** Start an impersonation session. Server MUST:
+ *  - require an active dual-operator approval when scope crosses partners,
+ *  - emit `evidence_event` with kind=`impersonation_started`,
+ *  - return a bearer token scoped to the subject for the console to use. */
+export function startImpersonation(req: ImpersonationStartRequest): Promise<ImpersonationSession & { access_token: string }> {
+  return apiPost(`/auth/impersonation/start`, req);
+}
+
+/** End the active impersonation session. Server MUST emit
+ *  `impersonation_ended` evidence and invalidate the scoped token. */
+export function endImpersonation(sessionId: string): Promise<ImpersonationSession> {
+  return apiPost(`/auth/impersonation/${sessionId}/end`, {});
+}
+
+/** Fetch the currently active impersonation session for the caller, if any. */
+export function getActiveImpersonation(): Promise<ImpersonationSession | null> {
+  return apiGet<ImpersonationSession | null>(`/auth/impersonation/active`);
+}

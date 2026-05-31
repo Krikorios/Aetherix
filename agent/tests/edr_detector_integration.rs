@@ -160,18 +160,185 @@ fn test_default_policy_keeps_ransomware_in_review_without_mutation() {
 }
 
 #[test]
-fn test_isolation_records_intent_evidence() {
-    let key = response::quarantine_key_material("test-key");
-    let evidence = response::execute(
-        &EdrAction::Isolate,
-        None,
-        None,
-        None,
-        "ransomware_canary_tripped",
-        "policy-isolate",
-        &["nist-csf-2.0:RS.MI".to_string()],
-        &key,
-    );
-    assert_eq!(evidence.status, ResponseStatus::Executed);
-    assert_eq!(evidence.platform_api, "isolation-intent");
+fn test_simulation_rollback_provider_simulate_and_restore_happy_path() {
+    use aetherix_agent::edr::rollback::{
+        SimulationRollbackProvider, RollbackProvider, RollbackScope, RollbackCandidateSet, RecoveryPoint
+    };
+
+    // 1. Setup simulation provider with a pre-configured recovery point
+    let point = RecoveryPoint {
+        id: "rp-happy".to_string(),
+        provider: "simulation".to_string(),
+        created_at: "2026-05-28T12:00:00Z".to_string(),
+        expires_at: None,
+        protected_roots: vec!["/home/victim/docs".to_string()],
+        read_only: true,
+        verified: true,
+    };
+    let provider = SimulationRollbackProvider::new(true).with_recovery_points(vec![point]);
+
+    // 2. Simulate restore happy path
+    let scope = RollbackScope {
+        incident_id: "inc-123".to_string(),
+        detector_rule_id: "rule-123".to_string(),
+        affected_paths: vec!["/home/victim/docs/report.docx".to_string()],
+        observed_at: "2026-05-30T12:00:00Z".to_string(),
+    };
+    let candidates = RollbackCandidateSet {
+        scope,
+        recovery_point_id: "rp-happy".to_string(),
+        paths: vec!["/home/victim/docs/report.docx".to_string()],
+        total_bytes_estimate: 4096,
+        max_depth: 8,
+        candidate_set_hash: "hash-happy".to_string(),
+    };
+
+    let sim = provider.simulate_restore(&candidates).unwrap();
+    assert_eq!(sim.candidate_count, 1);
+    assert_eq!(sim.restorable_count, 1);
+    assert!(sim.skipped_paths.is_empty());
+
+    // 3. Perform restore happy path
+    let evidence = provider.restore(&candidates, "action-123").unwrap();
+    assert_eq!(evidence.status, "executed");
+    assert_eq!(evidence.restored_paths.len(), 1);
+    assert_eq!(evidence.restored_paths[0].path, "/home/victim/docs/report.docx");
+}
+
+#[test]
+fn test_simulation_rollback_provider_restore_error_paths() {
+    use aetherix_agent::edr::rollback::{
+        SimulationRollbackProvider, RollbackProvider, RollbackScope, RollbackCandidateSet, RecoveryPoint
+    };
+
+    // 1. Setup simulation provider with an unverified recovery point
+    let point = RecoveryPoint {
+        id: "rp-unverified".to_string(),
+        provider: "simulation".to_string(),
+        created_at: "2026-05-28T12:00:00Z".to_string(),
+        expires_at: None,
+        protected_roots: vec!["/home/victim/docs".to_string()],
+        read_only: true,
+        verified: false, // Unverified!
+    };
+    let provider = SimulationRollbackProvider::new(true).with_recovery_points(vec![point]);
+
+    let scope = RollbackScope {
+        incident_id: "inc-123".to_string(),
+        detector_rule_id: "rule-123".to_string(),
+        affected_paths: vec!["/home/victim/docs/report.docx".to_string()],
+        observed_at: "2026-05-30T12:00:00Z".to_string(),
+    };
+    let candidates = RollbackCandidateSet {
+        scope,
+        recovery_point_id: "rp-unverified".to_string(),
+        paths: vec!["/home/victim/docs/report.docx".to_string()],
+        total_bytes_estimate: 4096,
+        max_depth: 8,
+        candidate_set_hash: "hash-unverified".to_string(),
+    };
+
+    // 2. Simulation should find 0 restorable count due to unverified point
+    let sim = provider.simulate_restore(&candidates).unwrap();
+    assert_eq!(sim.restorable_count, 0);
+
+    // 3. Restore should report failure or not_applicable
+    let evidence = provider.restore(&candidates, "action-123").unwrap();
+    assert_eq!(evidence.status, "not_applicable");
+    assert!(evidence.restored_paths.is_empty());
+    assert!(!evidence.skipped_paths.is_empty());
+}
+
+#[test]
+fn test_rollback_refusal_evidence_shape_details() {
+    use aetherix_agent::edr::rollback::{
+        SimulationRollbackProvider, RollbackProvider, RollbackScope, RollbackCandidateSet, RecoveryPoint
+    };
+
+    // Setup simulation provider with an unverified recovery point
+    let point = RecoveryPoint {
+        id: "rp-unverified".to_string(),
+        provider: "simulation".to_string(),
+        created_at: "2026-05-28T12:00:00Z".to_string(),
+        expires_at: None,
+        protected_roots: vec!["/home/victim/docs".to_string()],
+        read_only: true,
+        verified: false,
+    };
+    let provider = SimulationRollbackProvider::new(true).with_recovery_points(vec![point]);
+
+    let scope = RollbackScope {
+        incident_id: "inc-123".to_string(),
+        detector_rule_id: "rule-123".to_string(),
+        affected_paths: vec!["/home/victim/docs/report.docx".to_string()],
+        observed_at: "2026-05-30T12:00:00Z".to_string(),
+    };
+    let candidates = RollbackCandidateSet {
+        scope,
+        recovery_point_id: "rp-unverified".to_string(),
+        paths: vec!["/home/victim/docs/report.docx".to_string()],
+        total_bytes_estimate: 4096,
+        max_depth: 8,
+        candidate_set_hash: "hash-unverified".to_string(),
+    };
+
+    let evidence = provider.restore(&candidates, "action-123").unwrap();
+    assert_eq!(evidence.status, "not_applicable");
+    assert_eq!(evidence.recovery_point_verified, false);
+    assert_eq!(evidence.refusal_reason_code, Some("recovery_point_unverified".to_string()));
+    assert!(evidence.provider_refusal.is_some());
+    assert!(evidence.provider_refusal.as_ref().unwrap().contains("recovery_point_unverified"));
+    assert_eq!(evidence.skipped_paths.len(), 1);
+    assert_eq!(evidence.skipped_paths[0].refusal_reason_code, Some("recovery_point_unverified".to_string()));
+}
+
+
+#[test]
+fn test_clipboard_interceptor_sha256_emission() {
+    use aetherix_agent::interceptors::clipboard::ClipboardInterceptor;
+
+    struct FakeClipboard {
+        text: String,
+    }
+    impl aetherix_agent::interceptors::clipboard::ClipboardBackend for FakeClipboard {
+        fn get_text(&mut self) -> Result<String, anyhow::Error> {
+            Ok(self.text.clone())
+        }
+        fn set_text(&mut self, value: &str) -> Result<(), anyhow::Error> {
+            self.text = value.to_string();
+            Ok(())
+        }
+    }
+
+    let backend = FakeClipboard {
+        text: "restricted ssn 111-22-3333".to_string(),
+    };
+    let mut interceptor = ClipboardInterceptor::new(backend);
+
+    let event = interceptor.poll().unwrap();
+    assert!(event.sha256_hash.is_some());
+    let hash = event.sha256_hash.unwrap();
+    assert_eq!(hash.len(), 64);
+}
+
+#[test]
+fn test_file_upload_interceptor_sha256_emission() {
+    use aetherix_agent::interceptors::file_upload::FileUploadInterceptor;
+
+    let dir = TempDir::new().unwrap();
+    let file_path = dir.path().join("upload.txt");
+    fs::write(&file_path, "restricted upload file content").unwrap();
+
+    let mut interceptor = FileUploadInterceptor::new(vec![dir.path().to_path_buf()], vec!["txt".to_string()]);
+    // First scan primes the interceptor (does not emit events for existing files)
+    let _ = interceptor.scan();
+
+    // Modify/rewrite file to trigger a scan change event
+    fs::write(&file_path, "updated restricted upload file content").unwrap();
+    let candidates = interceptor.scan();
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].event.sha256_hash.is_some());
+    let hash = candidates[0].event.sha256_hash.as_ref().unwrap();
+    assert_eq!(hash.len(), 64);
 }

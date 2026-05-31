@@ -29,6 +29,8 @@ pub struct DlpEvent {
     pub content: String,
     pub destination: Option<String>,
     pub process_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -167,6 +169,7 @@ mod tests {
             content: "[restricted] quarterly mrr and customer pii".to_string(),
             destination: Some("https://chatgpt.com".to_string()),
             process_name: Some("chrome".to_string()),
+            sha256_hash: None,
         }
     }
 
@@ -278,6 +281,7 @@ mod tests {
             content: "[restricted] secret".to_string(),
             destination: Some("https://chatgpt.com".to_string()),
             process_name: Some("chrome".to_string()),
+            sha256_hash: None,
         };
 
         // browser_enforcement is false → should return None even with label match

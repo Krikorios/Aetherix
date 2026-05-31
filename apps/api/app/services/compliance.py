@@ -318,6 +318,8 @@ def export_bundle(customer_id: UUID, framework: str) -> dict[str, Any]:
 
 def export_bundle_pdf(customer_id: UUID, framework: str) -> bytes:
     from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+
     bundle = export_bundle(customer_id, framework)
 
     # Query reviews and attestations
@@ -349,94 +351,94 @@ def export_bundle_pdf(customer_id: UUID, framework: str) -> bytes:
     
     # Header
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(190, 10, txt="AETHERIX COMPLIANCE EXPORT", ln=True, align="C")
+    pdf.cell(190, 10, text="AETHERIX COMPLIANCE EXPORT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
     pdf.ln(5)
     
     # Metadata
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(40, 8, txt="Framework:")
+    pdf.cell(40, 8, text="Framework:")
     pdf.set_font("Helvetica", "", 12)
-    pdf.cell(150, 8, txt=str(framework), ln=True)
+    pdf.cell(150, 8, text=str(framework), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(40, 8, txt="Customer ID:")
+    pdf.cell(40, 8, text="Customer ID:")
     pdf.set_font("Helvetica", "", 12)
-    pdf.cell(150, 8, txt=str(bundle['customer_id']), ln=True)
+    pdf.cell(150, 8, text=str(bundle['customer_id']), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(40, 8, txt="Generated At:")
+    pdf.cell(40, 8, text="Generated At:")
     pdf.set_font("Helvetica", "", 12)
-    pdf.cell(150, 8, txt=str(bundle['generated_at']), ln=True)
+    pdf.cell(150, 8, text=str(bundle['generated_at']), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(40, 8, txt="HMAC Signature:")
+    pdf.cell(40, 8, text="HMAC Signature:")
     pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(150, 8, txt=str(bundle['signature']['value']))
+    pdf.multi_cell(150, 8, text=str(bundle['signature']['value']))
     pdf.ln(5)
 
     # 1. Attestations
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(190, 10, txt="Compliance Attestations & Signatures", ln=True)
+    pdf.cell(190, 10, text="Compliance Attestations & Signatures", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(2)
     
     if not attestations:
         pdf.set_font("Helvetica", "I", 11)
-        pdf.cell(190, 8, txt="No compliance attestations recorded for this period.", ln=True)
+        pdf.cell(190, 8, text="No compliance attestations recorded for this period.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(5)
     else:
         for att in attestations:
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(190, 8, txt=f"Attestation by {att['attested_name']} ({att['attested_role']})", ln=True)
+            pdf.cell(190, 8, text=f"Attestation by {att['attested_name']} ({att['attested_role']})", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(190, 6, txt=f"Period: {att['period_start']} to {att['period_end']} | Created: {att['created_at'].isoformat() if hasattr(att['created_at'], 'isoformat') else str(att['created_at'])}", ln=True)
+            pdf.cell(190, 6, text=f"Period: {att['period_start']} to {att['period_end']} | Created: {att['created_at'].isoformat() if hasattr(att['created_at'], 'isoformat') else str(att['created_at'])}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_font("Helvetica", "I", 10)
-            pdf.multi_cell(190, 6, txt=f"Statement: {att['statement']}")
+            pdf.multi_cell(190, 6, text=f"Statement: {att['statement']}")
             pdf.set_font("Helvetica", "", 9)
-            pdf.multi_cell(190, 5, txt=f"Signature: {att['signature']}")
+            pdf.multi_cell(190, 5, text=f"Signature: {att['signature']}")
             pdf.ln(4)
 
     # 2. Control Reviews
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(190, 10, txt="Control Reviews", ln=True)
+    pdf.cell(190, 10, text="Control Reviews", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(2)
 
     if not reviews:
         pdf.set_font("Helvetica", "I", 11)
-        pdf.cell(190, 8, txt="No control reviews recorded.", ln=True)
+        pdf.cell(190, 8, text="No control reviews recorded.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(5)
     else:
         for rev in reviews:
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(190, 8, txt=f"Control {rev['control_id']} - Decision: {rev['decision'].upper()}", ln=True)
+            pdf.cell(190, 8, text=f"Control {rev['control_id']} - Decision: {rev['decision'].upper()}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(190, 6, txt=f"Reviewed By: {rev['reviewed_by_name']} ({rev['reviewed_by_role']}) at {rev['reviewed_at'].isoformat() if hasattr(rev['reviewed_at'], 'isoformat') else str(rev['reviewed_at'])}", ln=True)
+            pdf.cell(190, 6, text=f"Reviewed By: {rev['reviewed_by_name']} ({rev['reviewed_by_role']}) at {rev['reviewed_at'].isoformat() if hasattr(rev['reviewed_at'], 'isoformat') else str(rev['reviewed_at'])}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             if rev['note']:
                 pdf.set_font("Helvetica", "I", 10)
-                pdf.multi_cell(190, 6, txt=f"Reviewer Note: {rev['note']}")
+                pdf.multi_cell(190, 6, text=f"Reviewer Note: {rev['note']}")
             pdf.ln(4)
 
     # 3. Controls Evidence Summary
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(190, 10, txt="Controls Evidence Summary", ln=True)
+    pdf.cell(190, 10, text="Controls Evidence Summary", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(2)
 
     pdf.set_font("Helvetica", "", 11)
     for control in bundle["controls"]:
-        pdf.cell(190, 8, txt=f"- {control['control_id']} ({control['title']}): {control['evidence_count']} evidence records", ln=True)
+        pdf.cell(190, 8, text=f"- {control['control_id']} ({control['title']}): {control['evidence_count']} evidence records", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(5)
 
     # 4. Evidence Items Detail
     pdf.set_font("Helvetica", "B", 14)
-    pdf.cell(190, 10, txt="Detailed Evidence Items", ln=True)
+    pdf.cell(190, 10, text="Detailed Evidence Items", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(2)
 
     if not bundle["evidence"]:
         pdf.set_font("Helvetica", "I", 11)
-        pdf.cell(190, 8, txt="No evidence items found in compliance chain.", ln=True)
+        pdf.cell(190, 8, text="No evidence items found in compliance chain.", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     else:
         for item in bundle["evidence"]:
             # Check if page break is needed before starting new item
@@ -444,17 +446,17 @@ def export_bundle_pdf(customer_id: UUID, framework: str) -> bytes:
                 pdf.add_page()
             
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(190, 8, txt=f"[{item['source_table'].upper()}] {item['summary']}", ln=True)
+            pdf.cell(190, 8, text=f"[{item['source_table'].upper()}] {item['summary']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_font("Helvetica", "", 10)
-            pdf.cell(190, 6, txt=f"ID: {item['id']} | Observed At: {item['created_at']}", ln=True)
-            pdf.cell(190, 6, txt=f"Mapped Controls: {', '.join(item['controls'])}", ln=True)
+            pdf.cell(190, 6, text=f"ID: {item['id']} | Observed At: {item['created_at']}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(190, 6, text=f"Mapped Controls: {', '.join(item['controls'])}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             resource = item.get("resource")
             chain_hash = item.get("chain_hash")
             if resource:
-                pdf.cell(190, 6, txt=f"Resource: {resource}", ln=True)
+                pdf.cell(190, 6, text=f"Resource: {resource}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             if chain_hash:
-                pdf.cell(190, 6, txt=f"Chain Hash: {chain_hash}", ln=True)
+                pdf.cell(190, 6, text=f"Chain Hash: {chain_hash}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
             # Print payload if available
             payload = item.get("payload") or {}
@@ -463,10 +465,10 @@ def export_bundle_pdf(customer_id: UUID, framework: str) -> bytes:
                 if len(payload_str) > 500:
                     payload_str = payload_str[:500] + "\n... [truncated]"
                 pdf.set_font("Courier", "", 8)
-                pdf.multi_cell(190, 4, txt=payload_str)
+                pdf.multi_cell(190, 4, text=payload_str)
             pdf.ln(4)
 
-    return pdf.output(dest='S')
+    return bytes(pdf.output())
 
 
 def _catalogue(framework: str) -> list[dict[str, Any]]:

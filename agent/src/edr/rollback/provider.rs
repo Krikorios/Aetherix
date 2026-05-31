@@ -236,6 +236,7 @@ impl RollbackProvider for NoopRollbackProvider {
                 "{}: noop provider has no snapshot capability",
                 refusal.as_str()
             )),
+            refusal_reason_code: Some(refusal.as_str().to_string()),
             restored_paths: vec![],
             failed_paths: vec![],
             skipped_paths: vec![],
@@ -286,7 +287,19 @@ impl SimulationRollbackProvider {
             provider_name: "simulation".to_string(),
             provider_version: "0.3.0".to_string(),
             supported_os: vec![std::env::consts::OS.to_string()],
-            recovery_points: vec![],
+            recovery_points: if available {
+                vec![RecoveryPoint {
+                    id: "rp-sim-1".to_string(),
+                    provider: "simulation".to_string(),
+                    created_at: (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339(),
+                    expires_at: None,
+                    protected_roots: vec!["/".to_string(), "/home".to_string()],
+                    read_only: true,
+                    verified: true,
+                }]
+            } else {
+                vec![]
+            },
             privilege_context: "user".to_string(),
             fail_rate: 0.0,
             max_paths_per_restore: 500,
@@ -352,7 +365,7 @@ impl SimulationRollbackProvider {
                 }
 
                 // --- Protected-roots coverage ---
-                if !scope
+                if !scope.affected_paths.is_empty() && !scope
                     .affected_paths
                     .iter()
                     .any(|p| rp.protected_roots.iter().any(|root| p.starts_with(root)))
@@ -390,6 +403,40 @@ impl SimulationRollbackProvider {
         matched
     }
 
+    fn get_unmatched_refusal_code(&self, candidates: &RollbackCandidateSet) -> String {
+        let rp_opt = self.recovery_points.iter().find(|rp| rp.id == candidates.recovery_point_id);
+        match rp_opt {
+            None => "recovery_point_unverified".to_string(),
+            Some(rp) => {
+                if !rp.verified {
+                    "recovery_point_unverified".to_string()
+                } else if !rp.read_only {
+                    "recovery_point_unverified".to_string()
+                } else if let Some(ref expires) = rp.expires_at {
+                    if let Ok(expiry) = chrono::DateTime::parse_from_rfc3339(expires) {
+                        let expiry_utc = expiry.with_timezone(&chrono::Utc);
+                        if chrono::Utc::now() > expiry_utc {
+                            return "point_expired".to_string();
+                        }
+                    }
+                    "recovery_point_unverified".to_string()
+                } else if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&rp.created_at) {
+                    let created_utc = created.with_timezone(&chrono::Utc);
+                    let age_secs = (chrono::Utc::now() - created_utc).num_seconds();
+                    if age_secs < self.min_recovery_point_age_secs as i64 {
+                        "point_too_new".to_string()
+                    } else if age_secs > self.max_recovery_point_age_secs as i64 {
+                        "point_expired".to_string()
+                    } else {
+                        "recovery_point_unverified".to_string()
+                    }
+                } else {
+                    "recovery_point_unverified".to_string()
+                }
+            }
+        }
+    }
+
     fn evaluate_paths(&self, candidates: &RollbackCandidateSet) -> Vec<RollbackPathDecision> {
         let mut decisions = Vec::with_capacity(candidates.paths.len());
 
@@ -407,6 +454,7 @@ impl SimulationRollbackProvider {
                     candidates.paths.len(),
                     self.max_paths_per_restore
                 ),
+                refusal_reason_code: Some("max_paths_exceeded".to_string()),
                 bytes_affected: 0,
                 hash_before: None,
                 hash_after: None,
@@ -427,6 +475,7 @@ impl SimulationRollbackProvider {
                     "byte estimate {} exceeds max_bytes_per_restore={}",
                     candidates.total_bytes_estimate, self.max_bytes_per_restore
                 ),
+                refusal_reason_code: Some("max_bytes_exceeded".to_string()),
                 bytes_affected: 0,
                 hash_before: None,
                 hash_after: None,
@@ -436,11 +485,30 @@ impl SimulationRollbackProvider {
         }
 
         // --- Protected-root allowlist ---
-        let protected_roots: Vec<String> = self
+        let rp_opt = self
             .matching_recovery_points(&candidates.scope)
-            .first()
-            .map(|rp| rp.protected_roots.clone())
-            .unwrap_or_default();
+            .into_iter()
+            .find(|rp| rp.id == candidates.recovery_point_id);
+
+        let protected_roots = match rp_opt {
+            Some(rp) => rp.protected_roots.clone(),
+            None => {
+                let code = self.get_unmatched_refusal_code(candidates);
+                for p in &candidates.paths {
+                    decisions.push(RollbackPathDecision {
+                        path: p.clone(),
+                        outcome: RollbackPathOutcome::RefusedOutOfScope,
+                        reason: "no matching verified recovery point found".to_string(),
+                        refusal_reason_code: Some(code.clone()),
+                        bytes_affected: 0,
+                        hash_before: None,
+                        hash_after: None,
+                        metadata_diff: None,
+                    });
+                }
+                return decisions;
+            }
+        };
 
         for p in &candidates.paths {
             // --- Blast-radius: max_directory_depth ---
@@ -450,6 +518,7 @@ impl SimulationRollbackProvider {
                     path: p.clone(),
                     outcome: RollbackPathOutcome::RefusedOutOfScope,
                     reason: format!("depth {depth} exceeds max_depth={}", candidates.max_depth),
+                    refusal_reason_code: Some("max_depth_exceeded".to_string()),
                     bytes_affected: 0,
                     hash_before: None,
                     hash_after: None,
@@ -469,6 +538,7 @@ impl SimulationRollbackProvider {
                         "path not under any protected root: {:?}",
                         protected_roots
                     ),
+                    refusal_reason_code: Some("not_in_protected_root".to_string()),
                     bytes_affected: 0,
                     hash_before: None,
                     hash_after: None,
@@ -481,6 +551,7 @@ impl SimulationRollbackProvider {
                 path: p.clone(),
                 outcome: RollbackPathOutcome::Restored,
                 reason: "in_point_and_not_overwritten".to_string(),
+                refusal_reason_code: None,
                 bytes_affected: 4096,
                 hash_before: Some("pre_restore_hash".to_string()),
                 hash_after: None,
@@ -626,6 +697,7 @@ impl RollbackProvider for SimulationRollbackProvider {
                 recovery_point_verified: false,
                 metadata_preserved: None,
                 provider_refusal: Some("provider_unavailable: simulation provider not available".to_string()),
+                refusal_reason_code: Some("provider_unavailable".to_string()),
                 restored_paths: vec![],
                 failed_paths: vec![],
                 skipped_paths: vec![],
@@ -647,6 +719,7 @@ impl RollbackProvider for SimulationRollbackProvider {
                         path: d.path,
                         outcome: RollbackPathOutcome::Restored,
                         reason: "ok".to_string(),
+                        refusal_reason_code: None,
                         bytes_affected: d.bytes_affected,
                         hash_before: d.hash_before,
                         hash_after: Some("post_restore_hash".to_string()),
@@ -661,6 +734,22 @@ impl RollbackProvider for SimulationRollbackProvider {
                 }
             }
         }
+
+        let top_refusal_code = if !skipped.is_empty() {
+            skipped[0].refusal_reason_code.clone()
+        } else if !failed.is_empty() {
+            Some("failed_integrity".to_string())
+        } else {
+            None
+        };
+
+        // Determine if recovery point was verified
+        let rp_verified = self
+            .recovery_points
+            .iter()
+            .find(|rp| rp.id == candidates.recovery_point_id)
+            .map(|rp| rp.verified)
+            .unwrap_or(false);
 
         Ok(RollbackEvidence {
             status: if restored.is_empty() && failed.is_empty() {
@@ -694,9 +783,18 @@ impl RollbackProvider for SimulationRollbackProvider {
             recovery_point_id: candidates.recovery_point_id.clone(),
             recovery_point_created_at: String::new(),
             recovery_point_expires_at: None,
-            recovery_point_verified: true,
+            recovery_point_verified: rp_verified,
             metadata_preserved: Some(true),
-            provider_refusal: None,
+            provider_refusal: if restored.is_empty() && failed.is_empty() {
+                if let Some(ref code) = top_refusal_code {
+                    Some(format!("{}: simulation restore refused", code))
+                } else {
+                    Some("simulation restore refused".to_string())
+                }
+            } else {
+                None
+            },
+            refusal_reason_code: top_refusal_code,
             restored_paths: restored,
             failed_paths: failed,
             skipped_paths: skipped,

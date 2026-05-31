@@ -177,6 +177,20 @@ impl FileUploadInterceptor {
                 }
             };
 
+            let sha256_hash = match fs::read(&path) {
+                Ok(bytes) => {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(&bytes);
+                    let h = format!("{:x}", hasher.finalize());
+                    if let Ok(mut cache) = crate::fim::get_recent_hashes().lock() {
+                        cache.insert(path.clone(), h.clone());
+                    }
+                    Some(h)
+                }
+                Err(_) => None,
+            };
+
             let event = DlpEvent {
                 event_type: DlpEventType::Upload,
                 source: EventSource::Endpoint,
@@ -189,6 +203,7 @@ impl FileUploadInterceptor {
                 // `UploadCandidate` for enforcement and logging.
                 destination: None,
                 process_name: Some(format!("file://{}", path.display())),
+                sha256_hash,
             };
             out.push(UploadCandidate { path, event });
         }

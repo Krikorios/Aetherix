@@ -76,6 +76,15 @@ export function PolicyPage() {
     return endpoints.filter((e) => (e.hostname || "").toLowerCase().includes(q) || e.id.toLowerCase().includes(q));
   }, [endpoints, assignment.search]);
 
+  function queryString(filters: Record<string, string | null | undefined>): string {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value);
+    }
+    const raw = params.toString();
+    return raw ? `?${raw}` : "";
+  }
+
   async function loadPolicies() {
     const page = await apiGet<PolicyListResponseV2>(
       `/policies${queryString({ status: filterStatus || null })}`,
@@ -153,15 +162,6 @@ export function PolicyPage() {
         if (mountedRef.current) setGroups([]);
       });
   }, [assignment.customerId, assignment.target]);
-
-  function queryString(filters: Record<string, string | null | undefined>): string {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) params.set(key, value);
-    }
-    const raw = params.toString();
-    return raw ? `?${raw}` : "";
-  }
 
   const visiblePolicies = useMemo(() => {
     const nameQuery = filterName.trim().toLowerCase();

@@ -45,6 +45,7 @@ import { EnrollmentPage } from "./pages/EnrollmentPage";
 import { AccountsPage } from "./pages/AccountsPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { SetupAccountPage } from "./pages/SetupAccountPage";
 import { CompliancePage } from "./pages/CompliancePage";
 import { DigitalRiskPage } from "./pages/DigitalRiskPage";
@@ -485,6 +486,7 @@ export function App() {
       </aside>
 
       <section className={`workspace ${page === "policies" || page === "installers" ? "policyWorkspace" : ""}`}>
+     <ImpersonationBanner />
      {!pageAllowed ? (
        <ForbiddenPage />
      ) : (

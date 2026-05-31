@@ -14,7 +14,9 @@ from __future__ import annotations
 import atexit
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Iterator
+from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
@@ -23,6 +25,47 @@ from psycopg_pool import ConnectionPool
 
 _DEFAULT_URL = "postgresql://aetherix:aetherix@127.0.0.1:55432/aetherix"
 _pool: ConnectionPool | None = None
+_request_tenant_context: ContextVar[tuple[tuple[UUID, ...] | None, tuple[UUID, ...] | None] | None] = ContextVar(
+    "request_tenant_context",
+    default=None,
+)
+
+
+def set_request_tenant_context(
+    partner_ids: list[UUID] | None,
+    customer_ids: list[UUID] | None,
+) -> None:
+    """Store request-scoped tenant scope for subsequent pooled connections."""
+
+    _request_tenant_context.set(
+        (
+            tuple(partner_ids) if partner_ids else None,
+            tuple(customer_ids) if customer_ids else None,
+        )
+    )
+
+
+def clear_request_tenant_context() -> None:
+    """Clear request-scoped tenant scope."""
+
+    _request_tenant_context.set(None)
+
+
+def _apply_request_tenant_context(conn: psycopg.Connection) -> None:
+    """Apply request tenant scope to the active SQL transaction (if present)."""
+
+    scope = _request_tenant_context.get()
+    if scope is None:
+        return
+    partner_ids, customer_ids = scope
+    with conn.cursor() as cur:
+        cur.execute(
+            "select app.set_tenant_context(%s::uuid[], %s::uuid[])",
+            (
+                list(partner_ids) if partner_ids else None,
+                list(customer_ids) if customer_ids else None,
+            ),
+        )
 
 
 def database_url() -> str:
@@ -63,6 +106,7 @@ def connection() -> Iterator[psycopg.Connection]:
     pool = _get_pool()
     with pool.connection() as conn:
         try:
+            _apply_request_tenant_context(conn)
             yield conn
             conn.commit()
         except Exception:
@@ -807,7 +851,7 @@ _SCHEMA_STATEMENTS = (
         source_id text not null,
         framework text not null,
         control_id text not null,
-        reviewed_by_account_id uuid references accounts(id) on delete set null,
+        reviewed_by_account_id uuid,
         reviewed_by_role text not null,
         reviewed_by_name text not null,
         decision text not null,
@@ -831,7 +875,7 @@ _SCHEMA_STATEMENTS = (
     """,
     """alter table compliance_reviews add column if not exists source_table text""",
     """alter table compliance_reviews add column if not exists source_id text""",
-    """alter table compliance_reviews add column if not exists reviewed_by_account_id uuid references accounts(id) on delete set null""",
+    """alter table compliance_reviews add column if not exists reviewed_by_account_id uuid""",
     """alter table compliance_reviews add column if not exists reviewed_by_role text""",
     """alter table compliance_reviews add column if not exists reviewed_by_name text""",
     """alter table compliance_reviews add column if not exists decision text""",
@@ -862,7 +906,7 @@ _SCHEMA_STATEMENTS = (
         framework text not null,
         period_start date not null,
         period_end date not null,
-        attested_by_account_id uuid references accounts(id) on delete set null,
+        attested_by_account_id uuid,
         attested_role text not null,
         attested_name text not null,
         bundle_sha256 text not null,
@@ -883,7 +927,7 @@ _SCHEMA_STATEMENTS = (
     """,
     """alter table compliance_attestations add column if not exists period_start date""",
     """alter table compliance_attestations add column if not exists period_end date""",
-    """alter table compliance_attestations add column if not exists attested_by_account_id uuid references accounts(id) on delete set null""",
+    """alter table compliance_attestations add column if not exists attested_by_account_id uuid""",
     """alter table compliance_attestations add column if not exists attested_role text""",
     """alter table compliance_attestations add column if not exists attested_name text""",
     """alter table compliance_attestations add column if not exists bundle_sha256 text""",
@@ -1134,6 +1178,42 @@ _SCHEMA_STATEMENTS = (
     """,
     """
     create index if not exists account_roles_customer_idx on account_roles(customer_id)
+    """,
+    """
+    do $$
+    begin
+        if not exists (
+            select 1 from pg_constraint
+            where conname = 'fk_compliance_reviews_reviewed_by_account'
+              and conrelid = 'compliance_reviews'::regclass
+        ) then
+            alter table compliance_reviews
+                add constraint fk_compliance_reviews_reviewed_by_account
+                foreign key (reviewed_by_account_id)
+                references accounts(id)
+                on delete set null;
+        end if;
+    exception
+        when duplicate_object then null;
+    end $$;
+    """,
+    """
+    do $$
+    begin
+        if not exists (
+            select 1 from pg_constraint
+            where conname = 'fk_compliance_attestations_attested_by_account'
+              and conrelid = 'compliance_attestations'::regclass
+        ) then
+            alter table compliance_attestations
+                add constraint fk_compliance_attestations_attested_by_account
+                foreign key (attested_by_account_id)
+                references accounts(id)
+                on delete set null;
+        end if;
+    exception
+        when duplicate_object then null;
+    end $$;
     """,
     """
     alter table accounts add column if not exists totp_secret text

@@ -361,6 +361,8 @@ struct EvaluateRequest {
     destination: Option<String>,
     #[serde(default)]
     process_name: Option<String>,
+    #[serde(default)]
+    sha256_hash: Option<String>,
 }
 
 /// Real BLOCK-or-allow verdict for the MV3 extension. The extension
@@ -407,12 +409,21 @@ fn evaluate_event_request(state: &BridgeState, body: &[u8]) -> (StatusCode, Valu
         }
     };
 
+    let sha256_hash = parsed.sha256_hash.clone().or_else(|| {
+        parsed.content.as_ref().map(|c| {
+            let mut hasher = Sha256::new();
+            hasher.update(c.as_bytes());
+            format!("{:x}", hasher.finalize())
+        })
+    });
+
     let event = crate::dlp::DlpEvent {
         event_type,
         source: crate::dlp::EventSource::BrowserExtension,
         content: parsed.content.clone().unwrap_or_default(),
         destination: parsed.destination.clone(),
         process_name: parsed.process_name.clone(),
+        sha256_hash,
     };
 
     match crate::dlp::evaluate_event(&policy, &event) {
@@ -452,6 +463,8 @@ struct ForwardEnvelope<'a> {
     destination: Option<&'a str>,
     label_detected: Option<&'a str>,
     content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sha256_hash: Option<String>,
     policy_version: String,
     endpoint_id: &'a str,
     event_type: &'a str,
@@ -477,6 +490,8 @@ struct BrowserEvidence {
     process_name: Option<String>,
     #[serde(default)]
     action: Option<String>,
+    #[serde(default)]
+    sha256_hash: Option<String>,
 }
 
 pub struct ForwardResult {
@@ -517,6 +532,21 @@ fn forward_evidence_inner(state: &BridgeState, payload: Value) -> Option<Forward
         .and_then(|g| g.as_ref().map(|p| p.policy_version_hash.clone()))
         .unwrap_or_else(|| "unknown".to_string());
 
+    let parsed_sha256 = parsed.sha256_hash.clone().or_else(|| {
+        parsed.content_hash.clone().and_then(|h| {
+            let clean = if h.starts_with("sha256:") {
+                h.trim_start_matches("sha256:").to_string()
+            } else {
+                h
+            };
+            if clean.len() == 64 && clean.chars().all(|c| c.is_ascii_hexdigit()) {
+                Some(clean)
+            } else {
+                None
+            }
+        })
+    });
+
     let content_hash = parsed.content_hash.clone().unwrap_or_else(|| {
         let mut hasher = Sha256::new();
         hasher.update(serde_json::to_vec(&payload).unwrap_or_default());
@@ -529,6 +559,7 @@ fn forward_evidence_inner(state: &BridgeState, payload: Value) -> Option<Forward
         destination: parsed.destination.as_deref(),
         label_detected: parsed.label_detected.as_deref(),
         content_hash,
+        sha256_hash: parsed_sha256.clone(),
         policy_version: policy_version.clone(),
         endpoint_id: &state.agent_id,
         event_type,
@@ -572,6 +603,7 @@ fn forward_evidence_inner(state: &BridgeState, payload: Value) -> Option<Forward
         content: parsed.content_hash.clone().unwrap_or_default(),
         destination: parsed.destination.clone(),
         process_name: parsed.process_name.clone(),
+        sha256_hash: parsed_sha256,
     };
     
     let enf_decision = crate::dlp::EnforcementDecision {
@@ -1005,5 +1037,111 @@ mod tests {
         }
         // Burst capacity is 60 with effectively no time passing.
         assert!(allowed >= 50 && allowed <= 65, "got {allowed}");
+    }
+
+    fn start_recording_mock_backend() -> (String, Arc<Mutex<Vec<Value>>>) {
+        let server = Server::http("127.0.0.1:0").expect("mock backend bind");
+        let addr = server.server_addr().to_ip().unwrap();
+        let payloads = Arc::new(Mutex::new(Vec::new()));
+        let payloads_clone = payloads.clone();
+        thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                let has_bearer = req
+                    .headers()
+                    .iter()
+                    .any(|h| h.field.as_str().to_ascii_lowercase() == "authorization"
+                        && h.value.as_str().starts_with("Bearer "));
+                if !has_bearer {
+                    let _ = req.respond(Response::from_string("unauthorized").with_status_code(StatusCode(401)));
+                    continue;
+                }
+                
+                // Read request body to get JSON payload
+                let reader = req.as_reader();
+                let mut body = Vec::new();
+                let _ = reader.read_to_end(&mut body);
+                if let Ok(json) = serde_json::from_slice::<Value>(&body) {
+                    if let Ok(mut lock) = payloads_clone.lock() {
+                        lock.push(json);
+                    }
+                }
+                
+                let _ = req.respond(Response::from_string("{\"id\":\"evt\"}").with_status_code(StatusCode(200)));
+            }
+        });
+        (format!("http://{addr}"), payloads)
+    }
+
+    #[test]
+    fn test_browser_preflight_computes_sha256_from_raw_content() {
+        let dir = tempdir().unwrap();
+        let addr = start_bridge(
+            Some(sample_policy()),
+            "http://127.0.0.1:1".to_string(),
+            dir.path().join("q.ndjson"),
+        );
+
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/evaluate"))
+            .json(&serde_json::json!({
+                "event_type": "paste",
+                "content": "[restricted] secret quarterly mrr",
+                "destination": "https://claude.ai",
+                "process_name": "chrome"
+            }))
+            .send()
+            .unwrap();
+
+        assert!(resp.status().is_success());
+        let body: Value = resp.json().unwrap();
+        assert_eq!(body["decision"], serde_json::json!("review"));
+        assert_eq!(body["label_detected"], serde_json::json!("restricted"));
+    }
+
+    #[test]
+    fn test_browser_dlp_event_forwards_with_computed_or_provided_sha256() {
+        let dir = tempdir().unwrap();
+        let (backend_url, payloads) = start_recording_mock_backend();
+        let addr = start_bridge(
+            Some(sample_policy()),
+            backend_url,
+            dir.path().join("q.ndjson"),
+        );
+
+        let evidence = serde_json::json!({
+            "action": "dlp.paste_block",
+            "event_type": "paste",
+            "destination": "claude",
+            "label_detected": "restricted",
+            "content_hash": "sha256:49fbc5e54c86d8a2307ef11c97a82bbfbbf544f83bbfbbfbbfbbfbbfbbfbbfbb",
+            "policy_action_field": "paste_sensitive",
+            "decision": "block",
+        });
+
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/dlp-event"))
+            .json(&evidence)
+            .send()
+            .unwrap();
+        assert!(resp.status().is_success());
+
+        thread::sleep(Duration::from_millis(100));
+
+        let recorded = payloads.lock().unwrap();
+        assert!(!recorded.is_empty());
+        
+        let mut found_evidence_with_hash = false;
+        for payload in recorded.iter() {
+            if payload.get("sha256_hash").is_some() {
+                assert_eq!(
+                    payload["sha256_hash"],
+                    serde_json::json!("49fbc5e54c86d8a2307ef11c97a82bbfbbf544f83bbfbbfbbfbbfbbfbbfbbfbb")
+                );
+                found_evidence_with_hash = true;
+            }
+        }
+        assert!(found_evidence_with_hash, "mock backend should have received a payload with sha256_hash");
     }
 }

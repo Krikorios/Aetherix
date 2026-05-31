@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { KeyRound, Mail, ShieldCheck } from "lucide-react";
 import QRCode from "qrcode";
 
-import { apiGet, apiPost, setAccessToken, type MeResponse } from "../api";
+import { apiGet, apiPost, setAccessToken, startSsoLogin, SSO_ENABLED, type MeResponse } from "../api";
 
 const DEFAULT_TAGLINE = "Sign in to your workspace";
 
@@ -186,6 +186,33 @@ export function LoginPage({
             >
               {submitting ? "Signing in…" : "Sign in"}
             </button>
+
+            {SSO_ENABLED ? (
+              <>
+                <div className="loginDivider" aria-hidden="true"><span>or</span></div>
+                <button
+                  type="button"
+                  className="btnGhost loginSsoButton"
+                  disabled={submitting}
+                  onClick={async () => {
+                    setError(null);
+                    setSubmitting(true);
+                    try {
+                      const { redirect_url } = await startSsoLogin("oidc", window.location.pathname);
+                      window.location.assign(redirect_url);
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Could not start SSO sign-in.");
+                      setSubmitting(false);
+                    }
+                  }}
+                >
+                  Continue with single sign-on
+                </button>
+                <p className="loginSsoHint">
+                  Your administrator can enable SAML or OIDC sign-in from <strong>Configuration → Identity</strong>.
+                </p>
+              </>
+            ) : null}
           </form>
         ) : (
           <form className="loginForm" onSubmit={handleTotp} noValidate>

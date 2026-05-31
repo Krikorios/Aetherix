@@ -1,6 +1,7 @@
 import React from "react";
 import { TrendingUp, GitMerge } from "lucide-react";
 import type { CorrelationResponse } from "../../api";
+import { CorrelationEvidenceGroups } from "./CorrelationEvidenceGroups";
 
 interface CorrelationBannerProps {
   data: CorrelationResponse | null | undefined;
@@ -199,6 +200,11 @@ export function CorrelationBanner({ data, isLoading }: CorrelationBannerProps) {
           </div>
         </div>
       )}
+
+      {/* Grouped supporting signals — same layout as AlertsPage, so operators
+          see file_path / sha256 / process / DLP matches without leaving the
+          three-panel protection workspace. */}
+      <CorrelationEvidenceGroups data={data} />
     </div>
   );
 }

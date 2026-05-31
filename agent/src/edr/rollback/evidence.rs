@@ -195,6 +195,7 @@ pub fn build_rollback_failed_event(
         recovery_point_verified: false,
         metadata_preserved: None,
         provider_refusal,
+        refusal_reason_code: Some("failed".to_string()),
         restored_paths: vec![],
         failed_paths: vec![],
         skipped_paths: vec![],
@@ -226,6 +227,7 @@ pub fn build_rollback_refused_event(
     policy_version: &str,
     evidence_controls: Vec<String>,
     refusal_reason: &str,
+    refusal_reason_code: Option<String>,
     decision_trace: Vec<String>,
 ) -> EdrEvent {
     let rollback_evidence = RollbackEvidence {
@@ -247,6 +249,7 @@ pub fn build_rollback_refused_event(
         recovery_point_verified: false,
         metadata_preserved: None,
         provider_refusal: Some(refusal_reason.to_string()),
+        refusal_reason_code: refusal_reason_code.clone(),
         restored_paths: vec![],
         failed_paths: vec![],
         skipped_paths: vec![],
@@ -399,7 +402,7 @@ mod tests {
     fn build_rollback_executed_event_carries_evidence() {
         let evidence = RollbackEvidence {
             status: "executed".to_string(),
-            decision_trace: vec!["restore ok".to_string()],
+            decision_trace: vec!["trace-1".to_string()],
             evidence_controls: vec![],
             endpoint_id: "ep-1".to_string(),
             customer_id: None,
@@ -416,6 +419,7 @@ mod tests {
             recovery_point_verified: true,
             metadata_preserved: Some(true),
             provider_refusal: None,
+            refusal_reason_code: None,
             restored_paths: vec![],
             failed_paths: vec![],
             skipped_paths: vec![],
@@ -464,6 +468,7 @@ mod tests {
             "pol-v1",
             vec![],
             "action_already_consumed",
+            Some("action_already_consumed".to_string()),
             vec!["duplicate".to_string()],
         );
         assert!(event.tags.contains(&"rollback_refused".to_string()));

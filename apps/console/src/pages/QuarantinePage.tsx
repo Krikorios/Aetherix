@@ -22,7 +22,7 @@ import {
   ActionStatus,
 } from "../components/protection/types";
 import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner } from "../components";
-import { apiGet, apiPost, type MeResponse, type CorrelationResponse } from "../api";
+import { apiGet, apiPost, type MeResponse, type CorrelationResponse, type EffectivePolicyResponse } from "../api";
 
 export interface QuarantineInventoryItem {
   quarantine_id: string;
@@ -90,7 +90,10 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
   const [success, setSuccess] = useState<string | null>(null);
 
   const [policy, setPolicy] = useState<EffectivePolicy>({
-    policy_version: "v2.10.4",
+    // Initial value before /policies/effective resolves; aligned with the
+    // other Protection-section pages (see audit I-1) so the operator does not
+    // see two different policy-version conventions across the same nav group.
+    policy_version: "No active assignment",
     last_updated: new Date(Date.now() - 3600000).toISOString(),
     status: "protected",
     approval_required: true,
@@ -166,6 +169,33 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
     void load();
   }, [me]);
 
+  // 1b. Fetch effective policy so the ModuleHeader version badge stays
+  //     consistent with AntimalwareBehavior and other Protection-section
+  //     pages (audit I-1). Falls back to "No active assignment".
+  useEffect(() => {
+    async function loadPolicy() {
+      try {
+        const customerId = me.scope.customer_ids[0];
+        const path = customerId ? `/policies/effective?customer_id=${customerId}` : `/policies/effective`;
+        const effective = await apiGet<EffectivePolicyResponse>(path);
+        const version =
+          effective.assignments_applied[0]?.policy_version_id ??
+          effective.policy_ids_applied[0] ??
+          "No active assignment";
+        setPolicy((prev) => ({
+          ...prev,
+          policy_version: version,
+          last_updated: new Date().toISOString(),
+          approval_required: !!effective.resolved_policy.modules?.ransomware_mitigation && prev.approval_required,
+        }));
+      } catch {
+        // Keep the default "No active assignment" placeholder rather than
+        // showing a stale fake version string.
+      }
+    }
+    void loadPolicy();
+  }, [me]);
+
   // 2. Fetch global pending restores
   useEffect(() => {
     async function fetchPending() {
@@ -228,6 +258,7 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
             approval_required: act.approval_required,
             requested_by: act.requested_by || "system",
             created_at: act.created_at,
+            result: act.result ?? null,
             note: act.status === "denied"
               ? `Denied by operator. Reason: ${act.payload?.denial_reason || "None"}`
               : act.result
@@ -290,14 +321,10 @@ export function QuarantinePage({ me }: { me: MeResponse }) {
     setIsWorking(true);
 
     const isRestoreOrRelease = selectedAction === "request_restore" || selectedAction === "release_from_quarantine";
-    let approvalRequired = false;
-
-    if (isRestoreOrRelease) {
-      const isHighOrCritical = selectedItem.severity === "high" || selectedItem.severity === "critical";
-      approvalRequired = isHighOrCritical ? true : !!policy.controls?.quarantine_restore_approval;
-    } else {
-      approvalRequired = policy.approval_required;
-    }
+    const isHighOrCritical = selectedItem.severity === "high" || selectedItem.severity === "critical";
+    const approvalRequired: boolean = isRestoreOrRelease
+      ? (isHighOrCritical ? true : !!policy.controls?.quarantine_restore_approval)
+      : policy.approval_required;
 
     try {
       if (isRestoreOrRelease) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { TrendingUp, TrendingDown, RefreshCw, Activity, Brain, Cpu, BarChart2, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, RefreshCw, Activity, Brain, Cpu, BarChart2, AlertTriangle, ShieldOff, Shield } from "lucide-react";
 import { LoadingState } from "../components/protection/EmptyState";
 import { ConsolePage, ErrorBanner, PageHeader } from "../components";
 import { apiGet, type MeResponse } from "../api";
@@ -113,9 +113,9 @@ export function DataInsightsPage({ me }: { me: MeResponse }) {
           { label: "Total Endpoints", value: data.total_endpoints, icon: <Cpu size={16} />, color: "var(--accent)" },
           { label: "Events (30d)", value: fmt(data.total_events_30d), icon: <Activity size={16} />, color: "var(--accent)" },
           { label: "AI Calls (30d)", value: fmt(data.total_ai_calls_30d), icon: <Brain size={16} />, color: "var(--accent)" },
-          { label: "Avg AI Efficiency", value: `${data.avg_ai_efficiency_score}%`, icon: <BarChart2 size={16} />, color: scoreColor(data.avg_ai_efficiency_score) },
-          { label: "DLP Events (30d)", value: fmt(data.total_dlp_events_30d), icon: <AlertTriangle size={16} />, color: "var(--warning)" },
-          { label: "Blocked (30d)", value: fmt(data.total_blocked_30d), icon: <AlertTriangle size={16} />, color: "var(--danger)" },
+          { label: "Avg AI Efficiency", value: data.total_events_30d > 0 ? `${data.avg_ai_efficiency_score}%` : "N/A", icon: <BarChart2 size={16} />, color: data.total_events_30d > 0 ? scoreColor(data.avg_ai_efficiency_score) : "var(--muted)" },
+          { label: "DLP Events (30d)", value: fmt(data.total_dlp_events_30d), icon: data.total_dlp_events_30d > 0 ? <AlertTriangle size={16} /> : <Shield size={16} />, color: data.total_dlp_events_30d > 0 ? "var(--warning)" : "var(--muted)" },
+          { label: "Blocked (30d)", value: fmt(data.total_blocked_30d), icon: data.total_blocked_30d > 0 ? <AlertTriangle size={16} /> : <ShieldOff size={16} />, color: data.total_blocked_30d > 0 ? "var(--danger)" : "var(--muted)" },
           { label: "Storage Used", value: `${data.total_storage_gb.toFixed(1)} GB`, icon: <BarChart2 size={16} />, color: "var(--muted)" },
         ].map(({ label, value, icon, color }) => (
           <div key={label} className="panel" style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: "10px" }}>

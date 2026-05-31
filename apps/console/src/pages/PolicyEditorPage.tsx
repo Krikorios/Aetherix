@@ -168,8 +168,13 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
     loadEditorOptions();
   }, [policyId]);
 
-  // Load existing policy when editing
   const [isLoadingPolicy, setIsLoadingPolicy] = useState(false);
+  const [openModules, setOpenModules] = useState<Set<string>>(new Set(["general", "antimalware", "semantic_dlp"]));
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Load existing policy when editing
   useEffect(() => {
     if (mode !== "edit" || !policyId) return;
 
@@ -190,11 +195,6 @@ export function PolicyEditorPage({ me, mode = "new", policyId, onBack }: PolicyE
     };
     void loadExisting();
   }, [mode, policyId]);
-
-  const [openModules, setOpenModules] = useState<Set<string>>(new Set(["general", "antimalware", "semantic_dlp"]));
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const toggleModuleOpen = (key: string) => {
     setOpenModules((prev) => {

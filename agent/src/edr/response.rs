@@ -461,6 +461,8 @@ fn severity_hint_for_rule(rule_id: &str) -> String {
         "high".to_string()
     } else if normalized.contains("medium") || normalized.contains("pua") {
         "medium".to_string()
+    } else if normalized.contains("low") || normalized.contains("info") || normalized.contains("audit") {
+        "low".to_string()
     } else {
         "medium".to_string()
     }
@@ -471,7 +473,8 @@ fn restore_approval_hint(severity_hint: &str) -> String {
         "critical" | "high" => {
             "dual_operator_approval_recommended_by_default".to_string()
         }
-        "medium" | "low" => "single_operator_approval_with_tenant_policy".to_string(),
+        "medium" => "single_operator_approval_with_tenant_policy".to_string(),
+        "low" | "info" => "no_approval_required_for_low_severity".to_string(),
         _ => "single_operator_approval_with_tenant_policy".to_string(),
     }
 }

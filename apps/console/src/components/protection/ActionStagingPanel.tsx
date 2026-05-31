@@ -3,6 +3,7 @@ import { PlayCircle, ShieldCheck } from "lucide-react";
 import { Detection, StagedAction, SimulationPreview } from "./types";
 import { StagedActionBadge } from "./StagedActionBadge";
 import { EmptyState } from "./EmptyState";
+import { RollbackRefusalEvidence } from "./RollbackRefusalEvidence";
 
 interface ActionStagingPanelProps {
   detection: Detection | null;
@@ -207,25 +208,29 @@ export function ActionStagingPanel({
                   key={hi.id}
                   style={{
                     display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
+                    flexDirection: "column",
+                    gap: "8px",
                     padding: "8px",
                     background: "rgba(251, 252, 247, 0.95)",
                     border: "1px solid var(--line)",
                     borderRadius: "6px",
                   }}
                 >
-                  <div>
-                    <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--ink)", display: "block" }}>
-                      {hi.action.replaceAll("_", " ").toUpperCase()}
-                    </span>
-                    <span style={{ fontSize: "10px", color: "var(--muted)" }}>
-                      Requested by {hi.requested_by}
-                    </span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--ink)", display: "block" }}>
+                        {hi.action.replaceAll("_", " ").toUpperCase()}
+                      </span>
+                      <span style={{ fontSize: "10px", color: "var(--muted)" }}>
+                        Requested by {hi.requested_by}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                      <StagedActionBadge status={hi.status} />
+                    </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    <StagedActionBadge status={hi.status} />
-                  </div>
+                  {/* Surface rollback refusal evidence when present (null otherwise). */}
+                  <RollbackRefusalEvidence result={hi.result} />
                 </div>
               ))
             )}

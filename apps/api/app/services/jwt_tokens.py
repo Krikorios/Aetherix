@@ -40,6 +40,11 @@ def _secret() -> str:
     secret = os.environ.get("AETHERIX_JWT_SECRET")
     if secret:
         return secret
+    env = os.environ.get("AETHERIX_ENV", "dev").strip().lower()
+    if env not in ("", "dev", "development", "test", "testing", "ci"):
+        raise RuntimeError(
+            "AETHERIX_JWT_SECRET must be set when AETHERIX_ENV=" + env
+        )
     global _DEV_SECRET
     if _DEV_SECRET is None:
         _DEV_SECRET = secrets.token_urlsafe(48)

@@ -5,6 +5,7 @@ import { DetectionTable } from "../components/protection/DetectionTable";
 import { DetailPanel } from "../components/protection/DetailPanel";
 import { ActionStagingPanel } from "../components/protection/ActionStagingPanel";
 import { LoadingState } from "../components/protection/EmptyState";
+import { CorrelationBanner } from "../components/protection/CorrelationBanner";
 import { Detection, StagedAction, SimulationPreview, EffectivePolicy, DetectionStatus } from "../components/protection/types";
 import { ConsolePage, ErrorBanner, MetricGrid, SuccessBanner } from "../components";
 
@@ -16,6 +17,7 @@ import {
   type EffectivePolicyResponse,
   type SecurityAlert,
   type RiskBand,
+  type CorrelationResponse,
 } from "../api";
 
 const WEB_KEYWORDS = ["web", "browser", "extension", "genai", "ai", "phish", "url", "upload", "paste"];
@@ -110,6 +112,13 @@ export function WebProtectionPage({ me }: { me?: MeResponse }) {
   const [isWorking, setIsWorking] = useState(false);
   const [confirmRequest, setConfirmRequest] = useState<{ detection: Detection; action: string } | null>(null);
 
+  // Cross-module correlation for the selected web/browser DLP alert. Browser
+  // DLP events now carry sha256_hash, so the correlation banner surfaces
+  // grouped sha256_match / DLP supporting signals here too (audit: parity with
+  // the Antimalware & Behavior detail panel).
+  const [correlationData, setCorrelationData] = useState<CorrelationResponse | null>(null);
+  const [correlationLoading, setCorrelationLoading] = useState(false);
+
   const customerId = me?.scope?.customer_ids?.[0] ?? null;
   const partnerId = me?.scope?.partner_ids?.[0] ?? null;
 
@@ -180,6 +189,19 @@ export function WebProtectionPage({ me }: { me?: MeResponse }) {
   }, [loadData]);
 
   const selectedDetection = detections.find((d) => d.id === selectedId) || null;
+
+  // Fetch cross-module correlation data (sha256_match / DLP) for the selected alert.
+  useEffect(() => {
+    if (!selectedId) {
+      setCorrelationData(null);
+      return;
+    }
+    setCorrelationLoading(true);
+    apiGet<CorrelationResponse>(`/security-alerts/${selectedId}/correlations`)
+      .then(setCorrelationData)
+      .catch(() => setCorrelationData(null))
+      .finally(() => setCorrelationLoading(false));
+  }, [selectedId]);
 
   const handleSyncPolicy = async () => {
     setIsSyncing(true);
@@ -332,7 +354,12 @@ export function WebProtectionPage({ me }: { me?: MeResponse }) {
           panelSubtitle="Blocked domains, GenAI guardrail violations, and URL policy events"
         />
 
-        <DetailPanel detection={selectedDetection} />
+        <DetailPanel
+          detection={selectedDetection}
+          correlationBanner={
+            <CorrelationBanner data={correlationData} isLoading={correlationLoading} />
+          }
+        />
 
         <ActionStagingPanel
           detection={selectedDetection}

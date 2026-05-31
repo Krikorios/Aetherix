@@ -33,6 +33,7 @@ def _binary_dir_for_platform(platform: str) -> str:
       2. ``agent/dist/<platform>/`` (populated by ``agent/build-all.sh``).
       3. ``agent/target/<target>/release/`` (direct Cargo output).
       4. ``agent/target/release/`` (default host target, fallback).
+            5. ``agent/target/debug/`` (local dev/test fallback).
     """
     env_dir = os.getenv("AETHERIX_AGENT_BINARY_DIR")
     if env_dir:
@@ -56,7 +57,11 @@ def _binary_dir_for_platform(platform: str) -> str:
         return str(target_dir)
 
     # Fall back to default host target
-    return str(project_root / "agent" / "target" / "release")
+    host_release_dir = project_root / "agent" / "target" / "release"
+    if host_release_dir.is_dir():
+        return str(host_release_dir)
+
+    return str(project_root / "agent" / "target" / "debug")
 
 
 def package_installer(

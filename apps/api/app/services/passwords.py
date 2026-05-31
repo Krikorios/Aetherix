@@ -15,7 +15,10 @@ import hmac
 import os
 
 _ALGO = "pbkdf2_sha256"
-_ITERATIONS = 240_000
+# OWASP 2024 guidance for pbkdf2-sha256 is >=600k iterations.
+# Stored hashes embed their own iteration count, so existing
+# credentials keep verifying while new hashes use the updated cost.
+_ITERATIONS = 600_000
 _SALT_BYTES = 16
 _HASH_BYTES = 32
 

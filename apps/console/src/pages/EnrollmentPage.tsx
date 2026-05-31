@@ -296,7 +296,10 @@ export function EnrollmentPage() {
       </div>
 
       <header className="installHeader">
-        <h1>Installers</h1>
+        <div>
+          <p className="pageEyebrow">MSP CONTROL</p>
+          <h1>Installers</h1>
+        </div>
         <div>
           <button type="button" className="installTinyButton" onClick={resetFilters}>Reset view</button>
           <button type="button" className="installIconButton active" aria-label="Filters" disabled title="Advanced filters are not available yet"><Filter size={15} /></button>

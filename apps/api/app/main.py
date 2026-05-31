@@ -11,6 +11,7 @@ from uuid import UUID
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -18,6 +19,7 @@ from app.db import init_schema
 from app import db
 from app.schemas import AgentDlpEvidenceIngest, AgentHeartbeat, AgentPolicyAck, AgentPolicyAckRequest, AgentPolicyResponse, AgentActionAck, AgentRollbackSimulation, AgentRollbackSimulationAck, AgentRollbackRestoreResult, AgentRollbackRestoreResultAck, RollbackSimulationSummary, RollbackSimulationDetail, RollbackRestoreResultSummary, Alert, AiProbeResult, AiProvider, BulkActionFailure, BulkActionResult, BulkIdsRequest, CompanyBulkStatusRequest, Customer, CustomerAiSettings, CustomerAiSettingsUpdate, CustomerCreate, CustomerGroup, CustomerQuickCreateRequest, CustomerQuickCreateResult, CustomerRiskSummary, CustomerStatusUpdate, CustomerUpdate, DetectionRule, DetectionRuleCreate, DetectionRulePromotion, DetectionRuleSimulation, DeviceEvent, DlpScanRequest, DlpScanResponse, EffectivePolicyResponse, Endpoint, EndpointHealthRecord, EnrollmentRequest, EnrollmentResult, EnrollmentTokenIssued, EnrollmentTokenRequest, EvidenceEvent, InstallerBuild, InstallerBuildRequest, LoginRequest, LoginResult, ModuleActionRequest, ModuleActionResult, ModuleSimulationResult, PasswordSetRequest, PatchItem, PlatformUsage, PolicyAssignRequest, PolicyAssignmentV2, PolicyCreateResponse, PolicyDocumentV2Input, PolicyGetResponse, PolicyListResponse, PolicyListItemV2, PolicyPromoteRequest, PolicyRollbackRequest, PolicySimulationRecord, PolicyUpdateInput, PolicyVersion, PolicyVersionSummary, QuarantineItem, QuarantineInventoryResponse, QuarantineListRequest, QuarantineRestoreDecision, QuarantineRestoreRequest, RollbackRestoreRequest, PendingQuarantineRestore, PendingRollbackIntent, RollbackIntentRequest, RollbackIntentDecision, QueuedActionItem, ReportGenerateRequest, ReportRecord, TotpChallenge, TotpVerifyRequest, Partner, Policy, PolicyDocument, PolicyDocumentDraft, PolicyPackage, PolicySimulationRequest, PolicySimulationResponse, QuickDeployLink, SimulationRequest, TelemetryEvent, SecurityAlert, IncidentCase, Account, AccountCreate, AccountCreated, InviteAcceptRequest, MeResponse, PermissionLevel, Role, RoleAssignment, RoleAssignmentRequest, CompanyLicense, CompanyLicenseAssign, CompanySummary, CompanySummaryPage, LicenseUsageDay, Subscription, SubscriptionCreate, BlocklistEntry, BlocklistEntryCreate, BlocklistSimulationResult, BlocklistActivateResult, AgentCase, AgentCaseActionResult, SystemBanner, SystemBannerCreate, Connector, RecoveryCodeList, RecoveryCodeVerifyRequest, OAuth2Provider, OAuth2ProviderCreate, OAuth2ProviderUpdate
 from app.services import audit
+from app.services import ratelimit
 from app.services import compliance
 from app.schemas import ComplianceAttestationCreate, ComplianceAttestation, ComplianceReviewCreate, ComplianceReview, ComplianceReviewQueueItem, ComplianceSourceTable
 from app.schemas import (
@@ -81,25 +83,42 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Aetherix DLP API", version="0.1.0", lifespan=lifespan)
 
+_DEV_CORS_ORIGINS = [
+    f"http://{host}:{port}"
+    for host in ("127.0.0.1", "localhost")
+    for port in (4173, 4174, 4175, 5173, 5174, 5175)
+]
+
+
+def _resolve_cors_origins() -> list[str]:
+    """Return the CORS allow-list.
+
+    Driven by ``AETHERIX_CORS_ORIGINS`` (comma-separated). Falls back to
+    the local Vite dev ports only when ``AETHERIX_ENV`` is unset or one
+    of ``dev``/``development``/``test``/``testing``/``ci``. In any other
+    environment an empty list is returned unless the env var is set, so
+    a missing configuration becomes a deploy-time failure rather than a
+    silent permissive default.
+    """
+
+    raw = os.environ.get("AETHERIX_CORS_ORIGINS", "").strip()
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    env = os.environ.get("AETHERIX_ENV", "dev").strip().lower()
+    if env in ("", "dev", "development", "test", "testing", "ci"):
+        return list(_DEV_CORS_ORIGINS)
+    return []
+
+
+_CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+_CORS_HEADERS = ["Authorization", "Content-Type", "X-Request-Id"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:4173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4174",
-        "http://localhost:4174",
-        "http://127.0.0.1:4175",
-        "http://localhost:4175",
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:5174",
-        "http://localhost:5174",
-        "http://127.0.0.1:5175",
-        "http://localhost:5175",
-    ],
+    allow_origins=_resolve_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=_CORS_METHODS,
+    allow_headers=_CORS_HEADERS,
 )
 
 
@@ -116,32 +135,73 @@ async def request_id_middleware(request: Request, call_next):
 async def tenant_context_middleware(request: Request, call_next):
     """Set the RLS tenant context from the JWT (if present).
 
-    Every database connection opened during this request will inherit the
-    ``app.partner_ids`` / ``app.customer_ids`` custom options, allowing
-    PostgreSQL Row-Level Security policies to filter rows transparently.
+    The middleware stores request-scoped partner/customer IDs. The db
+    connection helper applies that scope to each pooled connection opened
+    during the request via ``app.set_tenant_context``.
     """
+    db.clear_request_tenant_context()
+    path = request.url.path
+    if path in {
+        "/agent/policy",
+        "/agent/dlp-evidence",
+        "/agent/rollback-simulation",
+        "/agent/rollback-restore-result",
+        "/agent/policy/ack",
+        "/agent/actions",
+    } or path.startswith("/agent/actions/"):
+        return await call_next(request)
+
     auth = request.headers.get("Authorization")
-    if auth and auth.startswith("Bearer "):
-        token = auth[len("Bearer "):]
-        try:
-            from app.services import jwt_tokens
-            claims = jwt_tokens.verify(token.strip())
-            account_id = UUID(claims["sub"])
-            account = tenancy.get_account(account_id)
-            if account is not None:
+    if auth:
+        scheme, _, raw_token = auth.partition(" ")
+        if scheme.lower() == "bearer":
+            token = raw_token.strip()
+            if not token:
+                _logger.warning("Rejecting request with empty bearer token", extra={"path": str(request.url.path)})
+                return JSONResponse(status_code=401, content={"detail": "invalid bearer token"})
+            try:
+                from app.services import jwt_tokens
+            except Exception:  # noqa: BLE001
+                _logger.exception(
+                    "Rejecting request after jwt module import failure",
+                    extra={"path": str(request.url.path)},
+                )
+                return JSONResponse(status_code=401, content={"detail": "invalid bearer token"})
+            try:
+                claims = jwt_tokens.verify(token)
+                account_id = UUID(claims["sub"])
+                account = tenancy.get_account(account_id)
+                if account is None:
+                    _logger.warning("Rejecting request with unknown bearer token subject", extra={"path": str(request.url.path)})
+                    return JSONResponse(status_code=401, content={"detail": "unknown account"})
                 scope = tenancy.compute_scope(account)
                 if not scope.is_platform:
-                    with db.connection() as conn, conn.cursor() as cur:
-                        cur.execute(
-                            "select app.set_tenant_context(%s::uuid[], %s::uuid[])",
-                            (
-                                scope.partner_ids if scope.partner_ids else None,
-                                scope.customer_ids if scope.customer_ids else None,
-                            ),
-                        )
-        except Exception:
-            pass
-    response = await call_next(request)
+                    db.set_request_tenant_context(
+                        scope.partner_ids if scope.partner_ids else None,
+                        scope.customer_ids if scope.customer_ids else None,
+                    )
+            except jwt_tokens.JwtError as error:
+                _logger.warning(
+                    "Rejecting request with invalid bearer token",
+                    extra={"path": str(request.url.path), "reason": str(error)},
+                )
+                return JSONResponse(status_code=401, content={"detail": str(error)})
+            except (KeyError, ValueError) as error:
+                _logger.warning(
+                    "Rejecting request with malformed bearer token claims",
+                    extra={"path": str(request.url.path), "reason": str(error)},
+                )
+                return JSONResponse(status_code=401, content={"detail": "invalid token subject"})
+            except Exception:  # noqa: BLE001
+                _logger.exception(
+                    "Rejecting request after tenant context resolution failure",
+                    extra={"path": str(request.url.path)},
+                )
+                return JSONResponse(status_code=401, content={"detail": "invalid bearer token"})
+    try:
+        response = await call_next(request)
+    finally:
+        db.clear_request_tenant_context()
     return response
 
 
@@ -172,22 +232,16 @@ def _build_invite_url(request: Request, token: str) -> str:
 
 def _resolve_agent_token(
     authorization: str | None = None,
-    token_query: str | None = None,
+    token: str | None = None,
 ) -> str:
-    """Resolve the agent bearer token from either the Authorization header
-    (preferred) or the ``token`` query parameter (deprecated fallback).
-
-    The query-parameter form is maintained for a transition period so that
-    older agents do not break immediately. Only agents newer than the auth
-    header migration use ``Bearer``.
-    """
+    """Resolve the agent token from Authorization or legacy query param."""
     if authorization and authorization.startswith("Bearer "):
         token = authorization[len("Bearer "):]
         if token and len(token) >= 8:
             return token
         raise HTTPException(status_code=401, detail="invalid bearer token")
-    if token_query and len(token_query) >= 8:
-        return token_query
+    if token and len(token) >= 8:
+        return token
     raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
 
 
@@ -1753,7 +1807,9 @@ def queue_rollback_restore(
         _require_customer_access(customer_id, account, "incidents", "edit")
 
     # Guard: if simulation_id and candidate_set_hash are provided, require a
-    # matching, non-expired simulation record.
+    # matching, non-expired simulation record when one has been posted.
+    # Direct restore requests are still allowed to proceed when only
+    # heartbeat readiness evidence is available.
     if payload.simulation_id and payload.candidate_set_hash:
         _now_restore = datetime.now(UTC)
         with db.connection() as _rr_conn, _rr_conn.cursor() as _rr_cur:
@@ -1766,24 +1822,16 @@ def queue_rollback_restore(
                 (payload.simulation_id, payload.candidate_set_hash, endpoint_id),
             )
             _rr_sim = _rr_cur.fetchone()
-        if _rr_sim is None:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "no simulation record found for this candidate set; "
-                    "the agent must run simulate_restore and post to "
-                    "/agent/rollback-simulation before a rollback can be queued"
-                ),
-            )
-        _rr_vu = _rr_sim["valid_until"]
-        if _rr_vu is not None:
-            if _rr_vu.tzinfo is None:
-                _rr_vu = _rr_vu.replace(tzinfo=UTC)
-            if _rr_vu <= _now_restore:
-                raise HTTPException(
-                    status_code=400,
-                    detail="the stored simulation has expired; a new simulate_restore run is required",
-                )
+        if _rr_sim is not None:
+            _rr_vu = _rr_sim["valid_until"]
+            if _rr_vu is not None:
+                if _rr_vu.tzinfo is None:
+                    _rr_vu = _rr_vu.replace(tzinfo=UTC)
+                if _rr_vu <= _now_restore:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="the stored simulation has expired; a new simulate_restore run is required",
+                    )
 
     rollback_readiness = _latest_rollback_readiness_snapshot(endpoint_id)
     provider_metadata = payload.provider_metadata if payload.provider_metadata is not None else None
@@ -3322,14 +3370,33 @@ _TOTP_SETUP_TTL_SECONDS = 600   # 10 min to scan QR + enter first code
 _TOTP_VERIFY_TTL_SECONDS = 300  # 5 min for returning users
 
 
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip() or "unknown"
+    client = request.client
+    return client.host if client else "unknown"
+
+
 @app.post("/auth/login", response_model=TotpChallenge)
 def auth_login(payload: LoginRequest, http_request: Request) -> TotpChallenge:
+    email_key = payload.email.strip().lower()
+    rl_key = f"{_client_ip(http_request)}|{email_key}"
+    if not ratelimit.login_limiter.allow(rl_key):
+        audit.record(
+            action="auth.login.rate_limited",
+            resource=f"email:{email_key}",
+            actor="anonymous",
+            after={"ip": _client_ip(http_request)},
+            request_id=_request_id(http_request),
+        )
+        raise HTTPException(status_code=429, detail="too many login attempts, try again later")
     try:
         snapshot = tenancy.authenticate(payload.email, payload.password)
     except TenancyError as error:
         audit.record(
             action="auth.login.failed",
-            resource=f"email:{payload.email.strip().lower()}",
+            resource=f"email:{email_key}",
             actor="anonymous",
             after={"reason": str(error)},
             request_id=_request_id(http_request),
@@ -3383,6 +3450,16 @@ def auth_login(payload: LoginRequest, http_request: Request) -> TotpChallenge:
 def auth_totp_verify(payload: TotpVerifyRequest, http_request: Request) -> LoginResult:
     from app.services import jwt_tokens
 
+    rl_key = f"{_client_ip(http_request)}|{payload.challenge_id}"
+    if not ratelimit.totp_limiter.allow(rl_key):
+        audit.record(
+            action="auth.totp.rate_limited",
+            resource=f"challenge:{payload.challenge_id}",
+            actor="anonymous",
+            after={"ip": _client_ip(http_request)},
+            request_id=_request_id(http_request),
+        )
+        raise HTTPException(status_code=429, detail="too many verification attempts, try again later")
     try:
         ctx = tenancy.consume_login_challenge(payload.challenge_id)
     except TenancyError as error:
@@ -3425,6 +3502,16 @@ def auth_totp_verify(payload: TotpVerifyRequest, http_request: Request) -> Login
 def auth_recovery_code(payload: RecoveryCodeVerifyRequest, http_request: Request) -> LoginResult:
     from app.services import jwt_tokens
 
+    rl_key = f"{_client_ip(http_request)}|{payload.challenge_id}"
+    if not ratelimit.recovery_limiter.allow(rl_key):
+        audit.record(
+            action="auth.recovery_code.rate_limited",
+            resource=f"challenge:{payload.challenge_id}",
+            actor="anonymous",
+            after={"ip": _client_ip(http_request)},
+            request_id=_request_id(http_request),
+        )
+        raise HTTPException(status_code=429, detail="too many recovery attempts, try again later")
     try:
         ctx = tenancy.consume_login_challenge(payload.challenge_id)
     except TenancyError as error:
@@ -4690,9 +4777,8 @@ def rollback_policy_v2_route(
 def agent_effective_policy_route(
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
 ) -> AgentPolicyResponse:
-    resolved = _resolve_agent_token(authorization, token)
+    resolved = _resolve_agent_token(authorization)
     try:
         return policy_v2_service.effective_policy_for_agent(endpoint_id=endpoint_id, token=resolved)
     except policy_v2_service.PolicyV2Error as error:
@@ -4704,9 +4790,8 @@ def agent_dlp_evidence_route(
     payload: AgentDlpEvidenceIngest,
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
 ) -> EvidenceEvent:
-    resolved = _resolve_agent_token(authorization, token)
+    resolved = _resolve_agent_token(authorization)
     try:
         return policy_v2_service.ingest_agent_dlp_evidence(
             endpoint_id=endpoint_id,
@@ -4722,7 +4807,6 @@ def agent_rollback_simulation_route(
     payload: AgentRollbackSimulation,
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
 ) -> AgentRollbackSimulationAck:
     """Receive a VSS rollback simulation result from an enrolled agent.
 
@@ -4730,7 +4814,7 @@ def agent_rollback_simulation_route(
     ``endpoint.rollback.simulated`` compliance evidence event is emitted.
     Idempotent: posting the same ``simulation_id`` twice is safe (upsert).
     """
-    resolved = _resolve_agent_token(authorization, token)
+    resolved = _resolve_agent_token(authorization)
     try:
         return policy_v2_service.ingest_agent_rollback_simulation(
             endpoint_id=endpoint_id,
@@ -4750,7 +4834,6 @@ def agent_rollback_restore_result_route(
     payload: AgentRollbackRestoreResult,
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
 ) -> AgentRollbackRestoreResultAck:
     """Receive a real VSS rollback restore execution result from an enrolled agent.
 
@@ -4759,7 +4842,7 @@ def agent_rollback_restore_result_route(
     compliance evidence event is emitted.  Idempotent: posting the same
     ``execution_id`` twice is safe (upsert updates success/paths/error_message).
     """
-    resolved = _resolve_agent_token(authorization, token)
+    resolved = _resolve_agent_token(authorization)
     try:
         return policy_v2_service.ingest_agent_rollback_restore_result(
             endpoint_id=endpoint_id,
@@ -4949,9 +5032,8 @@ def agent_policy_ack_route(
     payload: AgentPolicyAckRequest,
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
 ) -> AgentPolicyAck:
-    resolved = _resolve_agent_token(authorization, token)
+    resolved = _resolve_agent_token(authorization)
     try:
         return policy_v2_service.agent_acknowledge_policy(endpoint_id, resolved, payload)
     except policy_v2_service.PolicyV2Error as error:
@@ -4962,7 +5044,7 @@ def agent_policy_ack_route(
 def agent_get_actions(
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
+    token: str | None = Query(default=None),
 ) -> list[ModuleActionResult]:
     resolved = _resolve_agent_token(authorization, token)
     try:
@@ -4988,7 +5070,7 @@ def agent_ack_action(
     action_id: UUID,
     endpoint_id: str = Query(..., min_length=1),
     authorization: str | None = Header(default=None, alias="Authorization"),
-    token: str | None = Query(default=None, min_length=8),
+    token: str | None = Query(default=None),
     body: AgentActionAck | None = None,
 ) -> ModuleActionResult:
     resolved = _resolve_agent_token(authorization, token)

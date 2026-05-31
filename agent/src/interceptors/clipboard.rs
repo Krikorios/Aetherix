@@ -91,12 +91,19 @@ impl<B: ClipboardBackend> ClipboardInterceptor<B> {
             return None;
         }
         self.last_seen = Some(trimmed.to_string());
+        let sha256_hash = {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(trimmed.as_bytes());
+            Some(format!("{:x}", hasher.finalize()))
+        };
         Some(DlpEvent {
             event_type: DlpEventType::Paste,
             source: EventSource::Endpoint,
             content: trimmed.to_string(),
             destination: None,
             process_name: None,
+            sha256_hash,
         })
     }
 

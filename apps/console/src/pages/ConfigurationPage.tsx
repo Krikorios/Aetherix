@@ -306,7 +306,7 @@ export function ConfigurationPage({ me }: { me: MeResponse }) {
               </div>
               <div style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
                 Logo URL
-                <input className="input" value={draft.logo_url} onChange={(e) => handleChange("logo_url", e.target.value)} placeholder="https://cdn.example.com/logo.svg" />
+                <input className="input" value={draft.logo_url} onChange={(e) => handleChange("logo_url", e.target.value)} placeholder="Paste a URL to your hosted logo (SVG or PNG)…" />
               </div>
               <div style={{ ...fieldStyle, gridColumn: "1 / -1" }}>
                 Footer Note

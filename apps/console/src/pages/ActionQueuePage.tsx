@@ -16,6 +16,10 @@ import {
 } from "lucide-react";
 import { apiGet, apiPost, type MeResponse, type QueuedActionItem, type ModuleActionStatus } from "../api";
 import { ConsolePage, ErrorBanner, PageHeader, SuccessBanner } from "../components";
+import {
+  RollbackRefusalEvidence,
+  hasRollbackRefusalEvidence,
+} from "../components/protection/RollbackRefusalEvidence";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -273,7 +277,7 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
         {/* ── Header ── */}
         <div className="queueHeaderRow">
           <PageHeader
-            eyebrow="MSP Control"
+            eyebrow="MSP CONTROL"
             title="Queue"
             subtitle={`${items.length} action${items.length === 1 ? "" : "s"} · ${counts.queued} queued · ${counts.awaiting_approval} pending approval`}
           />
@@ -512,6 +516,9 @@ export function ActionQueuePage({ me }: { me: MeResponse }) {
                                 {item.result ? (
                                   <div className="queueDetailSection">
                                     <h4>Result</h4>
+                                    {hasRollbackRefusalEvidence(item.result) ? (
+                                      <RollbackRefusalEvidence result={item.result} showTrace />
+                                    ) : null}
                                     <pre className="queueJsonBlock">{JSON.stringify(item.result, null, 2)}</pre>
                                   </div>
                                 ) : null}

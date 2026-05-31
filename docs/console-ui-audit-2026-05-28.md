@@ -84,9 +84,9 @@ Most pages show a small category label above the H1 (e.g., "ENDPOINT THREAT PROT
 
 | # | Page | Issue | Priority | Status |
 |---|------|-------|----------|--------|
-| F-1 | Network | No category label above "Network" H1 | **P3** | [ ] |
-| F-2 | Installers | No subtitle/category label above "Installation packages" H1 (other MSP CONTROL pages have one) | **P3** | [ ] |
-| F-3 | Queue | Category label reads "MSP Control" (mixed-case) while the nav section heading is "MSP CONTROL" (all-caps) | **P3** | [ ] |
+| F-1 | Network | No category label above "Network" H1 | **P3** | [DONE] `NetworkPage.tsx` — added `MSP CONTROL` eyebrow above the H1 |
+| F-2 | Installers | No subtitle/category label above "Installation packages" H1 (other MSP CONTROL pages have one) | **P3** | [DONE] `EnrollmentPage.tsx` — added `MSP CONTROL` eyebrow above the H1 |
+| F-3 | Queue | Category label reads "MSP Control" (mixed-case) while the nav section heading is "MSP CONTROL" (all-caps) | **P3** | [DONE] `ActionQueuePage.tsx` — eyebrow normalized to `MSP CONTROL` |
 
 ---
 
@@ -114,7 +114,7 @@ The section mixes two fundamentally different page types with no nav-level visua
 
 | # | Issue | Priority | Status |
 |---|-------|----------|--------|
-| I-1 | Quarantine shows policy version **v2.10.4** while Device Control and other Protection pages show **"No active assignment"** — inconsistent policy state across the same nav section with no explanation | **P2** | [ ] |
+| I-1 | Quarantine shows policy version **v2.10.4** while Device Control and other Protection pages show **"No active assignment"** — inconsistent policy state across the same nav section with no explanation | **P2** | [DONE] `QuarantinePage.tsx` — default placeholder now `No active assignment` and a new `/policies/effective` fetch resolves the real `policy_version_id` consistent with `AntimalwareBehavior.tsx` |
 
 ---
 
@@ -123,9 +123,9 @@ The section mixes two fundamentally different page types with no nav-level visua
 | # | Issue | Priority | Status |
 |---|-------|----------|--------|
 | J-1 | "Save Changes" button is disabled but renders with full blue fill — disabled buttons should be visually muted/grayed | **P2** | [DONE] `styles.css` — added `.btnPrimary:disabled` override after the `:hover` rule block |
-| J-2 | Footer Note field pre-filled with `© 2024 Aetherix MSP Platform…` — year is stale (2024 vs 2026) | **P2** | [ ] |
-| J-3 | Primary Color and Accent Color both show the same value `#0b6b57` — the two pickers are visually indistinguishable in current state | **P3** | [ ] |
-| J-4 | Logo URL shows placeholder text `https://cdn.example.com/logo.svg` — field appears filled rather than empty | **P3** | [ ] |
+| J-2 | Footer Note field pre-filled with `© 2024 Aetherix MSP Platform…` — year is stale (2024 vs 2026) | **P2** | [DONE] `ConfigurationPage.tsx` — default branding footer note already updated to 2026 |
+| J-3 | Primary Color and Accent Color both show the same value `#0b6b57` — the two pickers are visually indistinguishable in current state | **P3** | [DONE] `ConfigurationPage.tsx` — `DEFAULT_BRANDING` ships distinct values (`#0f172a` primary, `#3b82f6` accent) |
+| J-4 | Logo URL shows placeholder text `https://cdn.example.com/logo.svg` — field appears filled rather than empty | **P3** | [DONE] `ConfigurationPage.tsx` — placeholder replaced with neutral copy `Paste a URL to your hosted logo (SVG or PNG)…` |
 | J-5 | Configuration placed under ADD-ONS & INTEGRATIONS nav section — it covers platform-wide settings (white-label, branding, support contacts) and belongs in a top-level Settings/Administration section | **P2** | [ ] |
 
 ---
@@ -142,8 +142,8 @@ The section mixes two fundamentally different page types with no nav-level visua
 
 | # | Issue | Priority | Status |
 |---|-------|----------|--------|
-| L-1 | DLP Events (30d) and Blocked (30d) metric cards display red/orange warning triangle icons next to a value of `0` — warning iconography on zero counts is misleading | **P3** | [ ] |
-| L-2 | "Avg AI Efficiency" shows 100% when Total Endpoints = 1 and Events = 0 — displaying 100% efficiency with zero events is nonsensical | **P2** | [ ] |
+| L-1 | DLP Events (30d) and Blocked (30d) metric cards display red/orange warning triangle icons next to a value of `0` — warning iconography on zero counts is misleading | **P3** | [DONE] `DataInsightsPage.tsx` — icons fall back to neutral `Shield`/`ShieldOff` glyphs in muted color when counts are zero |
+| L-2 | "Avg AI Efficiency" shows 100% when Total Endpoints = 1 and Events = 0 — displaying 100% efficiency with zero events is nonsensical | **P2** | [DONE] `DataInsightsPage.tsx` — efficiency card now reads `N/A` (muted) when `total_events_30d == 0` |
 
 ---
 

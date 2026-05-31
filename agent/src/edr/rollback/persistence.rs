@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use super::types::{RollbackEvidence, RollbackPathDecision, RollbackPathOutcome};
+use super::types::RollbackEvidence;
 
 /// ---------------------------------------------------------------------------
 /// Idempotency guard — consumed action ID tracking
@@ -271,6 +271,7 @@ pub fn evict_old_evidence() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edr::rollback::{RollbackPathDecision, RollbackPathOutcome};
     use std::sync::Mutex;
 
     /// Serialize all persistence tests to avoid global-cache interference.
@@ -407,6 +408,7 @@ mod tests {
             recovery_point_verified: true,
             metadata_preserved: Some(true),
             provider_refusal: None,
+            refusal_reason_code: None,
             restored_paths: vec![],
             failed_paths: vec![],
             skipped_paths: vec![],
@@ -459,6 +461,7 @@ mod tests {
             recovery_point_verified: false,
             metadata_preserved: None,
             provider_refusal: None,
+            refusal_reason_code: None,
             restored_paths: vec![],
             failed_paths: vec![],
             skipped_paths: vec![],
@@ -485,6 +488,7 @@ mod tests {
             recovery_point_verified: false,
             metadata_preserved: None,
             provider_refusal: Some("error".to_string()),
+            refusal_reason_code: None,
             restored_paths: vec![],
             failed_paths: vec![],
             skipped_paths: vec![],
@@ -509,7 +513,6 @@ mod tests {
         reset_cache();
         clean_file();
 
-        // Create evidence with per-path outcomes
         let original = super::RollbackEvidence {
             status: "executed".to_string(),
             decision_trace: vec![
@@ -523,20 +526,22 @@ mod tests {
             requester_id: "req-alice".to_string(),
             approver_ids: vec!["approver-bob".to_string()],
             simulation_id: "sim-99".to_string(),
-            candidate_set_hash: "hash-abc-123".to_string(),
+            candidate_set_hash: "hash-99".to_string(),
             approved_action_id: "re-submit-test".to_string(),
-            provider: "vss".to_string(),
-            recovery_point_id: "rp-42".to_string(),
+            provider: "simulation".to_string(),
+            recovery_point_id: "rp-sim-1".to_string(),
             recovery_point_created_at: "2026-05-28T10:00:00Z".to_string(),
             recovery_point_expires_at: Some("2026-06-04T10:00:00Z".to_string()),
             recovery_point_verified: true,
             metadata_preserved: Some(true),
             provider_refusal: None,
+            refusal_reason_code: Some("not_in_protected_root".to_string()),
             restored_paths: vec![
                 RollbackPathDecision {
                     path: "/home/user/docs/report.docx".to_string(),
                     outcome: RollbackPathOutcome::Restored,
                     reason: "ok".to_string(),
+                    refusal_reason_code: None,
                     bytes_affected: 4096,
                     hash_before: Some("abc123".to_string()),
                     hash_after: Some("def456".to_string()),
@@ -546,6 +551,7 @@ mod tests {
                     path: "/home/user/docs/budget.xlsx".to_string(),
                     outcome: RollbackPathOutcome::Restored,
                     reason: "ok".to_string(),
+                    refusal_reason_code: None,
                     bytes_affected: 8192,
                     hash_before: Some("aaa111".to_string()),
                     hash_after: Some("bbb222".to_string()),
@@ -558,6 +564,7 @@ mod tests {
                     path: "/var/tmp/scratch.bin".to_string(),
                     outcome: RollbackPathOutcome::RefusedOutOfScope,
                     reason: "path not under any protected root".to_string(),
+                    refusal_reason_code: Some("not_in_protected_root".to_string()),
                     bytes_affected: 0,
                     hash_before: None,
                     hash_after: None,
@@ -616,6 +623,7 @@ mod tests {
             recovery_point_verified: false,
             metadata_preserved: None,
             provider_refusal: None,
+            refusal_reason_code: None,
             restored_paths: vec![],
             failed_paths: vec![],
             skipped_paths: vec![],

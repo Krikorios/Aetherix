@@ -304,174 +304,83 @@ describe("PolicyPage", () => {
     expect(screen.getByText("No policies found for the current filters.")).toBeInTheDocument();
   });
 
-  it("opens the policy details screen from Add", async () => {
+  it("opens the policy editor via navigate event when Add is clicked", async () => {
+    const user = userEvent.setup();
+    const navHandler = vi.fn();
+    window.addEventListener("aetherix:navigate", navHandler);
+
+    render(<PolicyPage />);
+    await screen.findByRole("button", { name: "Default Policy v1.01" });
+
+    await user.click(screen.getByRole("button", { name: /Add policy/i }));
+
+    expect(navHandler).toHaveBeenCalledTimes(1);
+    const evt = navHandler.mock.calls[0][0] as CustomEvent;
+    expect(evt.detail).toEqual({ page: "policyEditor", policyId: null });
+
+    window.removeEventListener("aetherix:navigate", navHandler);
+  });
+
+  it("toggles selection and enables one-policy actions", async () => {
     const user = userEvent.setup();
     render(<PolicyPage />);
 
     await screen.findByRole("button", { name: "Default Policy v1.01" });
-    await user.click(screen.getByRole("button", { name: /Add/i }));
 
-    expect(screen.getByRole("heading", { name: "Policy details" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Default policy (2)")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Cancel/i }));
-    expect(screen.getByRole("heading", { name: "Policies" })).toBeInTheDocument();
-  });
-
-  it("opens inheritance rules, agent sections, and policy engine modules from the policy shell", async () => {
-    const user = userEvent.setup();
-    render(<PolicyPage />);
-
-    await user.click(await screen.findByRole("button", { name: "Default Policy v1.01" }));
-    await user.click(screen.getByRole("button", { name: "Inheritance rules" }));
-
-    expect(screen.getByRole("heading", { name: "Inheritance rules" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Inheritance module")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Agent 2/3" }));
-    expect(screen.getByRole("heading", { name: "Notifications" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Agent Settings" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Agent Communication" }));
-    expect(screen.getByRole("heading", { name: "Communication" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Priority")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Aetherix modules" }));
-    expect(screen.getByRole("heading", { name: "Policy engine modules" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Simulate selected/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Semantic DLP/i })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Antimalware 4\/6/i }));
-    expect(screen.getByRole("heading", { name: "On-Access Scanning" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Normal/i })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Antimalware On-Execute" }));
-    expect(screen.getByRole("heading", { name: "On-Execute Scanning" })).toBeInTheDocument();
-    expect(screen.getByText("Aetherix uses tenant policy, local behavior signals, and optional AI analysis to identify advanced threats with lower local overhead.")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Antimalware Hyper Detect" }));
-    expect(screen.getByRole("heading", { name: "Hyper Detect" })).toBeInTheDocument();
-    expect(screen.getByText("Targeted attack")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Antimalware Advanced Anti-Exploit" }));
-    expect(screen.getByRole("heading", { name: "Advanced Anti-Exploit" })).toBeInTheDocument();
-    expect(screen.getByText("Predefined protected applications")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Antimalware Security Servers" }));
-    expect(screen.getByRole("heading", { name: "Security Servers" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Scan node")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Antimalware Exclusions" }));
-    expect(screen.getByRole("heading", { name: "Exclusions" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Recommended exclusion")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Sandbox Endpoint Sensor" }));
-    expect(screen.getByRole("heading", { name: "Sandbox Analyzer" })).toBeInTheDocument();
-    expect(screen.getByText(/Aetherix Detonation Cloud/i)).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Default action:" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Firewall General" }));
-    expect(screen.getByRole("heading", { name: "Firewall" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Log verbosity level:" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Firewall Settings" }));
-    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Firewall network name")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Firewall Rules" }));
-    expect(screen.getByRole("heading", { level: 1, name: "Rules" })).toBeInTheDocument();
-    expect(screen.getByText("Incoming ICMP")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Network Protection General" }));
-    expect(screen.getByRole("heading", { name: "Network Protection" })).toBeInTheDocument();
-    expect(screen.getByText("Intercept encrypted traffic")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Network Protection Content Control" }));
-    expect(screen.getByRole("heading", { name: "Web Access Control" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Aetherix DLP modules" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Network Protection Web Protection" }));
-    expect(screen.getByRole("heading", { name: "Antiphishing" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Default action for suspicious webpages:" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Network Protection Network Attacks" }));
-    expect(screen.getByRole("heading", { name: "Network Attack Defense" })).toBeInTheDocument();
-    expect(screen.getByText("Credential Access")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Network Protection Custom Pages" }));
-    expect(screen.getByRole("heading", { name: "Custom Pages" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Assign custom page")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Patch Management Off/i }));
-    expect(screen.getByRole("heading", { name: "Patch Management" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Maintenance window:" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Aetherix patch module" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Relay" }));
-    expect(screen.getByRole("heading", { name: "Relay" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Allowed relay upload domain")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Relay Update" }));
-    expect(screen.getByText("https://relay-updates.aetherix.local:443")).toBeInTheDocument();
-  });
-
-  it("opens add-policy lower subsection pages from the policy shell", async () => {
-    const user = userEvent.setup();
-    render(<PolicyPage />);
-
-    await user.click(await screen.findByRole("button", { name: "Default Policy v1.01" }));
-
-    await user.click(screen.getByRole("button", { name: /Device Control/i }));
-    expect(screen.getByRole("heading", { name: "Device Control" })).toBeInTheDocument();
-    
-    // We expect the new robust UI elements from DeviceControlSection
-    expect(screen.getByRole("button", { name: "Rules" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Exclusions" })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Exchange Protection/i }));
-    expect(screen.getByRole("heading", { name: "User groups" })).toBeInTheDocument();
-    expect(screen.getByText("Domain IP Check (Antispoofing)")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^Risk Management (On|Off)$/i }));
-    expect(screen.getByRole("heading", { name: "Risk Management" })).toBeInTheDocument();
-    expect(screen.getByText("Scheduler")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Risk Management PHASR" }));
-    expect(screen.getByRole("heading", { name: "PHASR" })).toBeInTheDocument();
-    expect(screen.getByText(/living off the land/i)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Blocklist/i }));
-    expect(screen.getByRole("heading", { name: "Blocklist" })).toBeInTheDocument();
-    expect(screen.getByText("Application hash")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /Live Search/i }));
-    expect(screen.getByRole("heading", { name: "Live Search" })).toBeInTheDocument();
-    expect(screen.getByText(/OSQuery/i)).toBeInTheDocument();
-  });
-
-  it("opens the policy details screen from a policy row", async () => {
-    const user = userEvent.setup();
-    render(<PolicyPage />);
-
-    await user.click(await screen.findByRole("button", { name: "Default Policy v1.01" }));
-
-    expect(screen.getByRole("heading", { name: "Policy details" })).toBeInTheDocument();
-    expect(await screen.findByDisplayValue("Default Policy v1.01")).toBeInTheDocument();
-  });
-
-  it("enables row actions from selection and refreshes policies", async () => {
-    const user = userEvent.setup();
-    render(<PolicyPage />);
-
-    await screen.findByRole("button", { name: "Default Policy v1.01" });
-    const cloneButton = screen.getByRole("button", { name: /Clone Policy/i });
-    const deleteButton = screen.getByRole("button", { name: /Delete/i });
-    expect(cloneButton).toBeDisabled();
-    expect(deleteButton).toBeDisabled();
+    const editButton = screen.getByRole("button", { name: "Edit policy" });
+    const simulateButton = screen.getByRole("button", { name: /Simulate selected/i });
+    const assignButton = screen.getByRole("button", { name: /Assign selected/i });
+    expect(editButton).toBeDisabled();
+    expect(simulateButton).toBeDisabled();
+    expect(assignButton).toBeDisabled();
 
     await user.click(screen.getByLabelText("Select Default Policy v1.01"));
-    expect(cloneButton).toBeEnabled();
-    expect(deleteButton).toBeEnabled();
+
+    expect(editButton).toBeEnabled();
+    expect(simulateButton).toBeEnabled();
+    expect(assignButton).toBeEnabled();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+  });
+
+  it("clicking a policy name toggles selection without navigating", async () => {
+    const user = userEvent.setup();
+    const navHandler = vi.fn();
+    window.addEventListener("aetherix:navigate", navHandler);
+
+    render(<PolicyPage />);
+    const row = await screen.findByRole("button", { name: "Default Policy v1.01" });
+    await user.click(row);
+
+    expect(navHandler).not.toHaveBeenCalled();
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+
+    window.removeEventListener("aetherix:navigate", navHandler);
+  });
+
+  it("Edit policy dispatches a navigate event with the selected policy id", async () => {
+    const user = userEvent.setup();
+    const navHandler = vi.fn();
+    window.addEventListener("aetherix:navigate", navHandler);
+
+    render(<PolicyPage />);
+    await screen.findByRole("button", { name: "Default Policy v1.01" });
+    await user.click(screen.getByLabelText("Select Default Policy v1.01"));
+
+    await user.click(screen.getByRole("button", { name: "Edit policy" }));
+
+    expect(navHandler).toHaveBeenCalledTimes(1);
+    const evt = navHandler.mock.calls[0][0] as CustomEvent;
+    expect(evt.detail).toEqual({ page: "policyEditor", policyId: "policy-1" });
+
+    window.removeEventListener("aetherix:navigate", navHandler);
+  });
+
+  it("Refresh re-fetches policies", async () => {
+    const user = userEvent.setup();
+    render(<PolicyPage />);
+
+    await screen.findByRole("button", { name: "Default Policy v1.01" });
+    apiGetMock.mockClear();
 
     await user.click(screen.getByRole("button", { name: /Refresh/i }));
 
@@ -480,38 +389,22 @@ describe("PolicyPage", () => {
     });
   });
 
-  it("handles device control rule modifications and triggers simulation", async () => {
+  it("runs a policy simulation and surfaces the approval-gate summary", async () => {
     const user = userEvent.setup();
     render(<PolicyPage />);
-    
-    // Select policy
-    await user.click(await screen.findByRole("button", { name: "Default Policy v1.01" }));
 
-    // Open Device Control
-    await user.click(screen.getByRole("button", { name: /Device Control/i }));
-    
-    // Enable policy
-    const enableCheckbox = screen.getByRole("checkbox", { name: "Enable device control policy" }) as HTMLInputElement;
-    if (!enableCheckbox.checked) {
-      await user.click(enableCheckbox);
-    }
+    await screen.findByRole("button", { name: "Default Policy v1.01" });
+    await user.click(screen.getByLabelText("Select Default Policy v1.01"));
 
-    // Verify rules tab
-    expect(screen.getByRole("button", { name: "Rules" })).toBeInTheDocument();
-
-    // Simulate clicking the save button inside the detail view
-    const saveButton = screen.getByRole("button", { name: /^Save$/i });
-    await user.click(saveButton);
-
-    // Wait for the success banner
-    expect(await screen.findByText(/Created draft new \(v1\)/i)).toBeInTheDocument();
-
-    // Go to Aetherix modules section to trigger simulation
-    await user.click(screen.getByRole("button", { name: "Aetherix modules" }));
-
-    // Click simulate
     await user.click(screen.getByRole("button", { name: /Simulate selected/i }));
 
-    expect(await screen.findByText(/Simulation complete: 2 module\(s\) trigger approval gates/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Simulation complete: 2 module\(s\) trigger approval gates/i),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(apiPostMock).toHaveBeenCalledWith("/policies/policy-1/simulate", {});
+    });
   });
 });
+
+

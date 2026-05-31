@@ -50,6 +50,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
     // 1. Canary files checking
     let path_lower = path.to_lowercase();
     if path_lower.contains("aetherix_canary") || path_lower.ends_with(".canary") {
+        let file_sha256 = std::fs::read(path).ok().map(|d| compute_sha256(&d));
         return Some(EdrEvent {
             kind: EdrDetectionKind::RansomwareCanary,
             rule_id: "ransomware_canary_tripped".to_string(),
@@ -58,7 +59,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
             process_pid: None,
             parent_pid: None,
             file_path: Some(path.to_string()),
-            file_sha256: None,
+            file_sha256,
             matched_indicator: Some("Canary file modified or deleted".to_string()),
             policy_version: policy_version.to_string(),
             collected_at: chrono::Utc::now().to_rfc3339(),
@@ -116,6 +117,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
         history.push((now, path.to_string()));
         
         if history.len() >= 5 {
+            let file_sha256 = std::fs::read(path).ok().map(|d| compute_sha256(&d));
             return Some(EdrEvent {
                 kind: EdrDetectionKind::RansomwareCanary,
                 rule_id: "mass_write_detect".to_string(),
@@ -124,7 +126,7 @@ pub fn on_file_change(path: &str, policy_version: &str) -> Option<EdrEvent> {
                 process_pid: None,
                 parent_pid: None,
                 file_path: Some(path.to_string()),
-                file_sha256: None,
+                file_sha256,
                 matched_indicator: Some(format!("{} writes detected in 2 seconds", history.len())),
                 policy_version: policy_version.to_string(),
                 collected_at: chrono::Utc::now().to_rfc3339(),

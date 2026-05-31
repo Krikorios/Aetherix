@@ -1,14 +1,16 @@
 # Aetherix Development Guide
 
-Status: required local workflow for POC development, May 2026.
+Status: required local workflow for the current development phase, May 2026.
 
 ## Required Local Services
 
 - macOS, Linux, or Windows with WSL.
 - Docker for Postgres.
 - Node.js 20 or newer.
-- Python 3.12+ with `venv` support.
+- Python 3.12 or 3.13 with `venv` support.
 - Rust stable toolchain.
+
+Python 3.14 is not currently supported by the pinned backend dependency set. If `pip install -r requirements.txt` fails on `sqlalchemy==2.0.44`, recreate the API environment with Python 3.12 or 3.13.
 
 Start Postgres:
 
@@ -113,9 +115,10 @@ Aetherix is developed using three specialized AI agents working in parallel unde
 This model is designed to accelerate progress while protecting cross-track integration points (especially around ResponseEvidence, autonomous vs. operator-controlled actions, quarantine lifecycle (inventory + restore with approval gates), correlation, and console visibility via StagedActionBadge + real backend data).
 
 **Living References** (authoritative for current state):
+- [README.md](README.md) and [docs/README.md](README.md) — entrypoints to the active documentation set.
 - [multi-agent-coordination-protocol.md](multi-agent-coordination-protocol.md) — the operating model and prompt synchronization rules.
 - [current-capabilities-snapshot-2026-05-29.md](current-capabilities-snapshot-2026-05-29.md) — concise post-May 2026 snapshot of what is actually delivered and wired.
-- Recent `coordination-brief-cycle-*.md` files — cycle-by-cycle detail (kept as living records, not rewritten).
+- Recent full `coordination-brief-cycle-*.md` files — cycle-by-cycle detail when tracing changes across cycles.
 
 See the living "Current Capabilities Snapshot" (docs/current-capabilities-snapshot-2026-05-29.md) for the post-May 2026 state of delivered features.
 

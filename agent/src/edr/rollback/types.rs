@@ -86,6 +86,8 @@ pub struct RollbackPathDecision {
     pub path: String,
     pub outcome: RollbackPathOutcome,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_reason_code: Option<String>,
     pub bytes_affected: u64,
     pub hash_before: Option<String>,
     pub hash_after: Option<String>,
@@ -114,6 +116,8 @@ pub struct RollbackEvidence {
     pub recovery_point_verified: bool,
     pub metadata_preserved: Option<bool>,
     pub provider_refusal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_reason_code: Option<String>,
 
     pub restored_paths: Vec<RollbackPathDecision>,
     pub failed_paths: Vec<RollbackPathDecision>,
@@ -135,7 +139,7 @@ pub struct RecoveryPointHint {
 
 /// Rollback readiness summary reported in heartbeats.
 ///
-/// Combines static capability metadata with a startup probe result so the
+/// Combines static capability capability metadata with a startup probe result so the
 /// control plane knows not only *whether* a provider is present, but *why*
 /// it may be non-functional (service down, insufficient privilege, etc.).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,7 +209,7 @@ pub struct ProbeResult {
     /// Whether the agent process has sufficient privilege for snapshot access.
     pub sufficient_privilege: bool,
 
-    // --- Provider-hardening fields (v0.4) ------------------------------------
+    // --- Probe-derived fields (v0.4) ------------------------------------
 
     /// Per-volume snapshot capability (e.g. "apfs:/System/Volumes/Data",
     /// "vss:C:", "btrfs:/@home").
@@ -265,10 +269,12 @@ mod tests {
             recovery_point_verified: true,
             metadata_preserved: Some(true),
             provider_refusal: None,
+            refusal_reason_code: Some("point_expired".to_string()),
             restored_paths: vec![RollbackPathDecision {
                 path: "/a".to_string(),
                 outcome: RollbackPathOutcome::Restored,
                 reason: "ok".to_string(),
+                refusal_reason_code: None,
                 bytes_affected: 1024,
                 hash_before: Some("abc".to_string()),
                 hash_after: Some("def".to_string()),

@@ -237,6 +237,7 @@ mod tests {
             content: "sensitive string".to_string(),
             destination: None,
             process_name: None,
+            sha256_hash: None,
         };
 
         let decision = EnforcementDecision {

@@ -1,6 +1,6 @@
 # Aetherix Roadmap 2026 — From POC to Profitable MSP Platform
 
-Status: planning, May 24, 2026. Companion to
+Status: planning, May 24, 2026. Start with [README.md](README.md) in this folder for the active docs map. Companion to
 [poc-plan.md](poc-plan.md),
 [architecture.md](architecture.md),
 [native-security-gap-review.md](native-security-gap-review.md),
@@ -269,7 +269,7 @@ Native module, not a connector, per
 Move from the schemas/contracts state called out in
 [milestone-summary-2026-05-23.md](milestone-summary-2026-05-23.md) to
 real OSINT/DNS/CT-log collectors + console pages. Aligned with
-[Aetherix EASM Implementation Prompt.md](Aetherix%20EASM%20Implementation%20Prompt.md).
+[architecture.md §3](architecture.md) and the current module contracts.
 
 ### P1-7 Custom Detection Rules UI
 Next planned protection module per
@@ -366,7 +366,7 @@ into a sales deck:
 | P0-6 CI hardening | [milestone-summary-2026-05-23.md](milestone-summary-2026-05-23.md) "Risks and Open Items" #3 |
 | P0-7 SKU matrix | [companies.md](companies.md), [policy-engine.md](policy-engine.md) "subscription-aware" |
 | P1-1 SIEM/HIDS | [native-security-gap-review.md](native-security-gap-review.md) Priority 3 |
-| P1-6 DRP + EASM | [Aetherix EASM Implementation Prompt.md](Aetherix%20EASM%20Implementation%20Prompt.md), [architecture.md §3](architecture.md) |
+| P1-6 DRP + EASM | [architecture.md §3](architecture.md), [native-security-gap-review.md](native-security-gap-review.md) |
 | P1-7 Custom Detection Rules | [milestone-summary-2026-05-23.md](milestone-summary-2026-05-23.md) "Next Priorities" #2 |
 | P2 Agentic IR | [architecture.md §3.3](architecture.md), [poc-plan.md §2](poc-plan.md) pillar 3 |
 | Sequencing principles | [architecture.md §1](architecture.md), [policy-engine.md](policy-engine.md) |

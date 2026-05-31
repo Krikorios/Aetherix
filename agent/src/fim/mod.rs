@@ -248,8 +248,24 @@ fn classify_event(kind: &EventKind) -> Option<FimEventType> {
     }
 }
 
+static RECENT_HASHES: std::sync::OnceLock<Mutex<HashMap<PathBuf, String>>> = std::sync::OnceLock::new();
+
+pub fn get_recent_hashes() -> &'static Mutex<HashMap<PathBuf, String>> {
+    RECENT_HASHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn hash_file(path: &Path) -> std::io::Result<String> {
-    let mut file = std::fs::File::open(path)?;
+    let file = std::fs::File::open(path);
+    if let Err(ref err) = file {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            if let Ok(cache) = get_recent_hashes().lock() {
+                if let Some(hash) = cache.get(path) {
+                    return Ok(hash.clone());
+                }
+            }
+        }
+    }
+    let mut file = file?;
     let mut hasher = Sha256::new();
     let mut buffer = [0; 8192];
 
@@ -262,7 +278,11 @@ fn hash_file(path: &Path) -> std::io::Result<String> {
     }
 
     let result = hasher.finalize();
-    Ok(format!("{:x}", result))
+    let hash = format!("{:x}", result);
+    if let Ok(mut cache) = get_recent_hashes().lock() {
+        cache.insert(path.to_path_buf(), hash.clone());
+    }
+    Ok(hash)
 }
 
 #[cfg(test)]

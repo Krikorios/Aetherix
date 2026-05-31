@@ -225,6 +225,7 @@ export function NetworkPage({ me }: { me: MeResponse }) {
     <main className="networkPage">
       <header className="networkHeader">
         <div>
+          <p className="pageEyebrow">MSP CONTROL</p>
           <h1>Network</h1>
           <p>{endpoints.length} managed endpoint{endpoints.length === 1 ? "" : "s"} enrolled through customer installation packages.</p>
         </div>

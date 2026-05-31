@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from app.db import connection
 from app.schemas import AgentHeartbeat, Alert, DlpScanRequest, DlpScanResponse, Endpoint, Policy
