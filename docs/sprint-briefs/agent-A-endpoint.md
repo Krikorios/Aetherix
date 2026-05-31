@@ -5,8 +5,9 @@ You own ONLY `agent/` (Rust). Do not edit `apps/` or `docs/`. Do not run git.
 
 Build: `cargo build --manifest-path agent/Cargo.toml`
 Test: `cargo test --manifest-path agent/Cargo.toml` (run first for baseline).
-Verified baseline: `--lib` = 134 pass; integration suites pass; **but** there is a
-parallelism flake in `edr::rollback::persistence` (passes single-threaded).
+Verified baseline (PM, committed tree): `--lib` = 131 pass; integration suites
+pass; 0 failures across 5 runs. (A persistence parallelism flake was reported once
+by another run but NOT reproduced on committed code — see task 3.)
 
 ## Tasks (priority order)
 1. **Harden process kill (confirmed termination).** In `src/edr/response.rs`, the
@@ -22,9 +23,12 @@ parallelism flake in `edr::rollback::persistence` (passes single-threaded).
    path (~:697) with `OpenProcess(PROCESS_TERMINATE)` + `TerminateProcess` (windows
    crate, `#[cfg(windows)]`), verify-gone, sysinfo fallback. (Compiles under cfg
    only; state clearly it's unverified on Linux CI.)
-3. **Fix the persistence test parallelism flake.** Make `edr::rollback::persistence`
-   tests not share mutable global state (per-test temp dirs / no poisoned global
-   lock) so the **default parallel** `cargo test` is green and stable across runs.
+3. **Investigate the reported persistence flake.** One earlier run saw
+   `edr::rollback::persistence` fail 12/12 under the parallel runner with
+   `PoisonError`; PM could NOT reproduce on committed code (5/5 green). Confirm
+   whether shared global state (a process-wide lock / shared dir) can poison under
+   load; if so, isolate per-test (temp dirs, no shared mutable global). If you
+   cannot reproduce either, say so — do not "fix" a non-bug.
 4. **Truth-up the stubs in docs-facing strings/code comments** so they don't read as
    done: network isolation is a `TODO` stub (returns Executed — make the evidence
    say "intent only"), USB is detect-only (not "interception"), IOC list is

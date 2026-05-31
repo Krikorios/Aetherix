@@ -6,11 +6,13 @@ snapshots where claims outran code.
 
 **Verification status of the test suites (run by PM, not just claimed):**
 - **API:** `pytest -q` → **278 passed, 1 skipped** against real Postgres. ✅ run
-- **Agent:** `cargo test --lib` → **134 passed**; integration suites pass
-  (`edr_detector_integration` 12, `file_upload_block` 2, `clipboard_block` 2,
-  `policy_hot_reload` 2). ⚠️ **Parallelism flake**: `edr::rollback::persistence`
-  tests share global state and intermittently fail under the default parallel
-  runner (pass single-threaded). Real CI-reliability bug. ✅ run
+- **Agent:** `cargo test` on the **committed tree** → lib **131 passed**;
+  integration suites pass (`edr_detector_integration` 12, `file_upload_block` 2,
+  `clipboard_block` 2, `policy_hot_reload` 2); 0 failures across **5 consecutive
+  PM runs**. ✅ run. NOTE: one background agent run reported a
+  `edr::rollback::persistence` parallelism flake (12 fails) — **PM could not
+  reproduce it on committed code**; likely caused by that agent's in-progress
+  edits or env. Treat as "watch", not confirmed.
 - **Console:** could not execute (`node_modules` absent in this sandbox);
   assessed by code read only. ⚠️ not run
 
@@ -98,7 +100,8 @@ snapshots where claims outran code.
 5. **"Agentic AI" is case CRUD, not an AI agent.** (backend/docs)
 6. **IOC feed is hardcoded test data; YARA ships no rules.** (agent)
 7. **Console leaks raw errors (~91) and renders mock timestamps (~31).** (console)
-8. **Agent test suite has a parallelism flake** (persistence) — flaky CI. (agent)
+8. **Possible agent test parallelism flake** (persistence) — reported once, not
+   reproduced by PM on committed code; verify on your CI before trusting. (agent)
 9. **No signed release shipped yet** (pipeline exists, untriggered). (release)
 ```
 ```
