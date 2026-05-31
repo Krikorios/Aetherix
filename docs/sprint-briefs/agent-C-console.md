@@ -1,49 +1,35 @@
-# Sprint 1 Brief — Agent C (Console)
+# Sprint 2 Brief — Agent C (Console)  [re-baselined 2026-05-31]
 
-You are working on the **Aetherix** endpoint security platform. The repo is a
-monorepo: a Rust endpoint agent (`agent/`), a FastAPI/Postgres backend
-(`apps/api/`), and a React/Vite + TypeScript MSP console (`apps/console/`).
+You own ONLY `apps/console/`. Do not edit other dirs. Do not run git.
+Nothing is done unless it builds AND lints clean. Fix lint properly (no blanket
+rule-disabling).
 
-**You own ONLY the `apps/console/` directory.** Do not edit `agent/`, `apps/api/`,
-or `docs/` (you may READ `docs/console-ui-audit-2026-05-28.md` for reference).
+Setup: `npm install` then `npm --workspace apps/console run build` /
+`run lint` / `run test`. Capture real baselines first — **do NOT trust the repo's
+`lint_output.txt` (stale, from another machine).** Earlier "syntax errors" and
+"nav↔title mismatches" appear already resolved; verify, don't assume.
 
-## Rules
-- Nothing is "done" unless it builds AND lints clean. Do not overclaim.
-- Do not run git. Leave your edits in the working tree.
-- Fix lint issues properly — do not blanket-disable rules. Only use a targeted
-  `eslint-disable` as a last resort, with a comment explaining why.
-- Keep changes small and focused on the tasks below.
+## Tasks (priority order)
+1. **Stop leaking raw backend errors to users (~91 sites).** Pattern
+   `setError(err instanceof Error ? err.message : …)` renders backend/Pydantic/HTTP
+   text to end users (e.g. `CompliancePage.tsx:210`, `QuarantinePage.tsx`,
+   `BlocklistPage.tsx`, `PolicyPage.tsx`). Introduce a shared error-display helper
+   that shows a safe user message and logs the detail to console only. Apply across
+   pages.
+2. **Remove mock/synthetic data from component bodies (~31 `Date.now()` across
+   ~20 files).** Especially `ExecutiveSummaryPage.tsx:69,197` (Date.now() in
+   calculations — audit-accuracy risk) and `AntimalwareBehavior.tsx:65`. Replace
+   mock fallbacks with real backend data or explicit empty states (no fabricated
+   timestamps shown as real).
+3. **Clarify locked add-on pages.** EmailSecurity / MobileSecurity / Sandbox render a
+   static AddOnPage but sit in nav as if available. Visually mark them as
+   locked/upsell so users aren't misled.
+4. **Clean lint + build to zero errors** and keep unit tests green. Reduce `any`
+   usage (~25 sites) where reasonable.
+5. **Add tests for the highest-traffic wired pages** (Dashboard, PolicyPage,
+   QuarantinePage) beyond the current ~2/38 coverage.
 
-## Setup
-- `npm install` (from repo root) if needed.
-- Build: `npm --workspace apps/console run build`
-- Lint: `npm --workspace apps/console run lint`
-- Unit tests: `npm --workspace apps/console run test`
-- Run build + lint FIRST to capture the baseline error counts.
-
-## Tasks (in priority order)
-1. **Clean build.** Fix any syntax/TypeScript errors that block
-   `npm --workspace apps/console run build`. The audit historically flags
-   `AntimalwareBehavior.tsx` and `EASMPage.tsx` — verify current state.
-2. **Clean lint.** Resolve ALL ESLint errors (~165 reported). Common categories:
-   unused imports, `any` types, `Date.now()`/`Math.random()` called in render or
-   state initializers, and setState-within-effect.
-3. **Remove raw backend/developer content shown to logged-in users** (per the audit):
-   - Executive Summary footer exposes raw table/route names.
-   - Compliance Center shows a raw JSON validation error.
-   - Queue page shows a "Not Found" banner.
-   Replace each with a user-appropriate empty/error state.
-4. **Fix nav-item ↔ page-title mismatches** from the audit, e.g.:
-   - "Threats Xplorer" nav → page titled "DLP Scanner"
-   - "Sandbox Analyzer" nav → page titled "Threat Sandbox"
-   - "Compliance Center" nav → page titled "Compliance Evidence Engine"
-   Make the nav label and page title consistent.
-
-Re-run build + lint + unit tests until build and lint are clean and tests pass.
-
-## Required final report (paste this back to me verbatim)
-- Changes made (`file:line`).
-- `npm run build`: before vs after (error count / status).
-- `npm run lint`: before vs after (error count).
-- Unit test status.
-- Anything you could NOT fix and why. Be precise and honest.
+## Final report (verbatim)
+real `npm run build` and `npm run lint` before/after counts; the shared error
+helper + how many call-sites converted; mock-data removals (file:line); add-on
+labeling; new tests; anything unfixed + why.

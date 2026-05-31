@@ -1,49 +1,34 @@
-# Sprint 1 Brief — Agent B (Backend)
+# Sprint 2 Brief — Agent B (Backend)  [re-baselined 2026-05-31]
 
-You are working on the **Aetherix** endpoint security platform. The repo is a
-monorepo: a Rust endpoint agent (`agent/`), a FastAPI/Postgres backend
-(`apps/api/`), and a React/Vite console (`apps/console/`).
+You own ONLY `apps/api/`. Do not edit other dirs. Do not run git.
+Nothing is done without a passing test.
 
-**You own ONLY the `apps/api/` directory.** Do not edit `agent/`, `apps/console/`,
-or `docs/`.
+Setup: `docker compose up -d postgres` (host port **55432**); venv +
+`pip install -r requirements.txt`. Verified baseline: **`pytest -q` = 278 passed,
+1 skipped** against real Postgres. Run it first; don't weaken existing tests.
 
-## Rules
-- Nothing is "done" without a passing test. Do not overclaim.
-- Prefer Alembic migrations over ad-hoc runtime SQL (repo convention).
-- Do not run git. Leave your edits in the working tree.
-- Keep changes small and reviewable; match existing patterns.
+> NOTE: Accounts persistence and DLP↔EDR correlation are ALREADY DONE (verified) —
+> do not re-implement them.
 
-## Setup
-- Start Postgres: `docker compose up -d postgres` (run from repo root).
-- Create venv if missing:
-  `cd apps/api && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
-- Apply migrations: `alembic -c alembic.ini upgrade head`
-- Tests run against `aetherix_test` via `pytest -q`. **Run the suite FIRST** to
-  confirm a green baseline before changing anything. Do not weaken/skip existing tests.
+## Tasks (priority order)
+1. **Add RLS to the two unprotected tenant tables.** `module_actions` and
+   `endpoint_quarantine_inventory` have `customer_id` but **no Postgres RLS policy**
+   (others use `app.current_has_tenant_access(...)` in `db.py:~1671-1770`). Add
+   matching `create policy … for all using (app.current_has_tenant_access(
+   p_customer_id := customer_id))` for both, enable RLS, and add a test proving a
+   cross-tenant direct query is blocked at the DB layer (not just by `require()`).
+2. **Reconcile schema management.** Live schema is bootstrapped by
+   `db.init_schema()`, but an `alembic/` dir exists and `alembic upgrade head`
+   errors against a bootstrapped DB. Decide one source of truth: either make Alembic
+   authoritative (autogenerate a baseline matching `init_schema`, document the flow)
+   or remove/clearly-mark Alembic as unused. Add a CI-friendly check.
+3. **OAuth2: make it honest.** Either (a) implement the real flow
+   (`/oauth2/authorize` → `/oauth2/callback` → code exchange → token mint) on top of
+   the existing CRUD/state functions in `tenancy.py:977+`, with tests; OR (b) if out
+   of scope this sprint, gate/label it so nothing presents SSO as available. State
+   which you chose.
 
-## Tasks
-1. **Persist the Accounts backend** (currently a console-only "foundation" — the
-   README notes the backend still needs persisted accounts + authenticated tenant
-   scoping).
-   - Add an Alembic migration for an accounts table with the fields the console
-     expects: full name, email, status, role, 2FA state, password expiration,
-     account lockout, company assignments.
-   - Inspect `apps/api/app/services/tenancy.py`, `app/schemas.py`, and the routers in
-     `app/main.py` to match conventions and the role hierarchy
-     (Platform Owner → MSP Partner → Company Admin/Technician/Viewer).
-   - Add CRUD endpoints with proper `require(...)` permission checks and tenant
-     scoping (an MSP Partner sees/manages only their own companies' accounts).
-   - Write pytest integration tests for create/list/update, permission enforcement,
-     and tenant isolation.
-2. **Wire DLP↔EDR correlation.** `app/services/correlation.py` already does
-   FIM↔EDR sha256/path/process joins with severity uplift. Extend it to correlate
-   DLP events (a DLP events table reportedly exists) by sha256 / file_path /
-   endpoint, emit `evidence_controls`, and add tests for the new join paths.
-
-## Required final report (paste this back to me verbatim)
-- What you added (`file:line` for each change).
-- The Alembic migration name/revision.
-- New endpoints and their exact permission gates.
-- New tests and what each asserts.
-- `pytest -q` results before and after (counts).
-- Anything incomplete or risky. Be precise and honest.
+## Final report (verbatim)
+file:line of each change; the RLS policies + the cross-tenant block test; the
+schema-management decision + how it's enforced; OAuth2 choice; `pytest -q`
+before/after counts.
