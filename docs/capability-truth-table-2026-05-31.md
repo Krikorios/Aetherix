@@ -13,8 +13,13 @@ snapshots where claims outran code.
   `edr::rollback::persistence` parallelism flake (12 fails) — **PM could not
   reproduce it on committed code**; likely caused by that agent's in-progress
   edits or env. Treat as "watch", not confirmed.
-- **Console:** could not execute (`node_modules` absent in this sandbox);
-  assessed by code read only. ⚠️ not run
+- **Console:** after `npm install`, **verified by PM**: `build` clean (0 errors),
+  `lint` **0 errors / 153 warnings**, **28/28 unit tests pass**. ✅ run.
+  The earlier "~165 lint errors" were a **missing-`node_modules` artifact**, not
+  real errors. Caveat: the eslint config sets `no-explicit-any`, `no-unused-vars`,
+  `set-state-in-effect`, `purity` to `"warn"`, so "0 errors" partly reflects
+  severity config; the 153 warnings are real quality issues (62 `any`, 48 unused,
+  31 setState-in-effect, …).
 
 ---
 
@@ -77,18 +82,19 @@ snapshots where claims outran code.
 
 ---
 
-## Console (`apps/console/`) — not executed (no node_modules); code-read only
+## Console (`apps/console/`) — build/lint/tests run & verified by PM (after npm install)
 
 | Area | Verdict | Evidence | Notes |
 |---|---|---|---|
+| Build | **CLEAN** | `npm run build` 0 errors (verified) | `AntimalwareBehavior.tsx`/`EASMPage.tsx` compile clean. |
+| Lint | **0 errors / 153 warnings** | `npm run lint` (verified) | "~165 errors" was a missing-deps artifact. Warnings = real quality debt (see below), classified `warn` by config. |
+| Unit tests | **28/28 PASS** | `npm run test` (verified) | But only ~2/38 pages covered (API mocked). |
 | Backend wiring | **MOSTLY REAL** | ~22/36 pages use real `apiGet/apiPost`; ~12 MIXED (real fetch + mock fallback) | Dashboard, Policy*, Quarantine, Accounts, Compliance, Companies, Alerts wired. |
-| Mock data in components | **RISK** | ~31 `Date.now()` in component bodies across ~20 files (e.g. `AntimalwareBehavior.tsx:65`, `ExecutiveSummaryPage.tsx:69,197`) | Synthetic "updated 1h ago" timestamps; Exec Summary uses Date.now() in calcs (audit risk). |
-| Raw error leakage to users | **RISK** | ~91 sites render `err.message` directly (e.g. `CompliancePage.tsx:210`) | Enterprise red flag; sanitize. |
-| Nav↔title mismatches | **CLEAN** | spot-checked; aligned | Earlier audit's mismatch list appears already resolved. |
-| Build/syntax errors | **NONE found** | `AntimalwareBehavior.tsx`, `EASMPage.tsx` parse clean | Could not run real `tsc`/eslint here — confirm on your infra. |
+| Mock data in components | **RISK (warns)** | ~31 `Date.now()` in component bodies (e.g. `AntimalwareBehavior.tsx:65`, `ExecutiveSummaryPage.tsx:69,197`) | Synthetic timestamps; Exec Summary uses Date.now() in calcs. |
+| Raw error leakage to users | **PARTIAL** | The 3 specific items (Exec Summary footer, Compliance raw JSON, Queue "Not Found") are **resolved**; `api.ts` humanizes Pydantic errors. BUT ~91 sites still render `err.message` directly | Worst offenders fixed; broad pattern remains as polish. |
+| Nav↔title mismatches | **RESOLVED** | nav labels match page H1s (verified by two audits) | Earlier mismatch list already fixed in a prior sprint. |
 | Placeholder add-on pages in nav | **UX** | EmailSecurity/MobileSecurity/Sandbox are static AddOnPage | Nav implies availability. |
-| Test coverage | **THIN** | ~6 test files; ~2/38 pages covered; API mocked | |
-| Lint baseline | **UNVERIFIED HERE** | root `lint_output.txt` is stale (from another machine path) | Re-baseline on your infra; do not trust the committed file. |
+| Lint quality debt | **OPEN** | 153 warnings: 62 `any`, 48 unused-vars, 31 setState-in-effect, 6 purity, 4 exhaustive-deps, 2 only-export | Not blocking; worth burning down. |
 
 ---
 
@@ -99,7 +105,9 @@ snapshots where claims outran code.
 4. **RLS missing on `module_actions` + `endpoint_quarantine_inventory`.** (backend)
 5. **"Agentic AI" is case CRUD, not an AI agent.** (backend/docs)
 6. **IOC feed is hardcoded test data; YARA ships no rules.** (agent)
-7. **Console leaks raw errors (~91) and renders mock timestamps (~31).** (console)
+7. **Console: ~91 raw `err.message` sites + ~31 mock `Date.now()` timestamps** (the
+   3 worst-offender pages are already fixed; this is the broad pattern / 153 lint
+   warnings). Build/lint/tests are green. (console)
 8. **Possible agent test parallelism flake** (persistence) — reported once, not
    reproduced by PM on committed code; verify on your CI before trusting. (agent)
 9. **No signed release shipped yet** (pipeline exists, untriggered). (release)
